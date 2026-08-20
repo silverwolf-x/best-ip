@@ -15,7 +15,7 @@
 - 成功记录必须包含由 Coffee trace 返回并通过 IP 格式校验的真实出口 IP。
 - 隧道无法建立时也必须原子写入失败记录，但出口 IP 必须为 `null`，不得使用入口 IP、节点名称、地区标签或宿主 IP 伪造。
 - 活动扫描状态与结果读取分离：扫描器只负责采集和落盘，前端/API 只消费暂存文件与最终 manifest。
-- 顺序扫描完整通过之前，不进行节点级并发。
+- 所有真实节点均产生一份结构化暂存记录；节点之间可使用独立 Mihomo worker 做有界并发，但单个 worker 内不得重叠 selector 切换与 Coffee 请求。
 
 ### 网络隔离边界
 
@@ -93,12 +93,13 @@ runtime/results/<job_id>/
 
 ### 阶段 D：独立 Mihomo 有界并发
 
-仅当阶段 A 的顺序实测通过后实施：
+节点级有界并发已实现：
 
-- 每个 worker 使用独立 Mihomo 进程、配置目录、mixed-port、controller-port 和固定单节点配置。
-- worker 之间不共享 selector、连接池、临时目录或日志游标。
-- 采用小规模有界并发，先 2 workers，再根据结果决定是否提高。
-- 与顺序基线核对记录数、节点 identity、出口 IP、Coffee 字段和失败类型；任何串线证据都回退顺序模式。
+- 每个并发节点使用独立 Mihomo 进程、配置目录、mixed-port、controller-port、selector、连接池和日志游标。
+- 每个实例的 selector 只暴露当前检测节点，但保留完整代理定义以支持节点间拨号依赖。
+- 默认并发为 2，可通过 `BEST_IP_MAX_PARALLEL_NODES` 调整；单个 worker 内仍严格执行 `select + collect`，不重叠切换。
+- 单节点内的页面/trace，以及出口 IP 依赖的 lookup、global ping、portscan、pingcheck 已按依赖关系并行调度；related 仍按页面语义顺序轮询。
+- 仍需真实订阅实测核对记录数、节点 identity、出口 IP、Coffee 字段和失败类型；任何串线证据都回退顺序模式。
 
 ## 4. 验收标准
 
@@ -112,18 +113,24 @@ runtime/results/<job_id>/
 - 失败记录的 `exit_ip` 必须为 `null`。
 - 前端契约中不存在 AI 字段。
 
-### 真实顺序扫描
+### 真实全量扫描
 
-使用用户指定订阅完成网站端到端验收：
+使用正式订阅测试连接完成网站端到端验收；连接通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入，禁止把 token 写入本仓库。执行：
 
-- 原始配置数：25（供应商内容可能变化时记录实测值）。
-- metadata：5（供应商内容可能变化时记录实测值）。
-- 当前预期真实节点：20。
+```powershell
+$env:BEST_IP_TEST_SUBSCRIPTION_URL = "<正式订阅 URL>"
+uv run python scripts/verify_real_scan.py
+Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
+```
+
+验收要求：
+
+- 原始配置数、metadata 数和当前真实节点数以本次订阅实际返回为准，并记录实测值。
 - 暂存记录：真实节点数 / 真实节点数，不允许缺失。
-- 每个成功节点都有合法 Coffee trace 出口 IP、lookup 结构化结果和代理证据。
-- 每个失败节点都有明确隧道层错误，不伪造出口 IP。
+- 每个成功或部分节点都有合法 Coffee trace 出口 IP、lookup 结构化结果和代理证据；失败节点的出口 IP 为 `null`。
 - 从网站 `GET /api/scans/{job_id}/export` 得到新的完整 JSON；记录文件大小和 SHA-256。
 - 导出文件、日志和暂存文件不包含订阅 URL、Token 或节点凭据。
+- 脚本会逐节点读取结果、核对 selector 身份、manifest 和导出数量，作为每次后端采集改动后的闭环验收入口。
 
 ### 验证命令
 
@@ -131,8 +138,8 @@ runtime/results/<job_id>/
 2. `uv run ruff check .`
 3. `node --check frontend/app.js`
 4. `git diff --check`
-5. 启动本地网站，通过 API 发起真实全量扫描并下载完成态导出。
-6. 独立脚本核对 manifest、节点文件数、出口 IP 格式、失败真实性、敏感信息和 URL host 白名单。
+5. 启动本地网站，通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入正式订阅并运行 `uv run python scripts/verify_real_scan.py`。
+6. 脚本核对 manifest、节点文件数、出口 IP 格式、selector 身份、失败真实性、敏感信息和导出完整性。
 
 ## 5. 执行清单
 
@@ -143,8 +150,8 @@ runtime/results/<job_id>/
 - [x] 解耦 JobManager、结果读取 API 和扫描器活动状态
 - [x] 删除前端 GPT/Claude 展示与筛选
 - [x] 更新测试与 README
-- [ ] 完成顺序全量网站扫描并导出新 JSON（需用户提供/通过环境变量注入当前订阅；本轮未触发真实订阅）
-- [ ] 顺序正确性通过后尝试独立 Mihomo 有界并发
+- [x] 完成正式订阅全量网站扫描并导出新 JSON（实测任务 `9984538c804a4a14995b90618292412b`：20/20，完整 8，部分 0，失败 12；通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入）
+- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 2 workers；仍需真实订阅核验）
 
 ## 6. 历史结果说明
 

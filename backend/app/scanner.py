@@ -72,63 +72,83 @@ class CoffeeCollector:
                 "User-Agent": "Mozilla/5.0 best-ip/0.2 (Coffee-only; workspace Mihomo)"
             },
         ) as client:
-            page = await self._request(
-                client,
-                COFFEE_PAGE_URL,
-                payload="html",
-                timeout_seconds=self._deadline(12),
-            )
-            trace = await self._request(
-                client,
-                COFFEE_TRACE_URL,
-                payload="text",
-                timeout_seconds=self._deadline(8),
+            page, trace = await asyncio.gather(
+                self._request(
+                    client,
+                    COFFEE_PAGE_URL,
+                    payload="html",
+                    timeout_seconds=self._deadline(12),
+                ),
+                self._request(
+                    client,
+                    COFFEE_TRACE_URL,
+                    payload="text",
+                    timeout_seconds=self._deadline(8),
+                ),
             )
             exit_ip = _trace_ip(trace.get("data"))
 
             lookup_url = (
                 f"{COFFEE_ORIGIN}/api/ip/lookup/{quote(exit_ip, safe='')}" if exit_ip else ""
             )
-            lookup = (
-                await self._request(
-                    client,
-                    lookup_url,
-                    payload="json",
-                    timeout_seconds=self._deadline(45),
-                )
-                if exit_ip
-                else _missing_result("", "Coffee trace 未返回合法出口 IP")
-            )
-            lookup_data = lookup.get("data") if isinstance(lookup.get("data"), dict) else {}
-            if lookup.get("ok") and not _is_same_ip(lookup_data.get("ip"), exit_ip):
-                lookup = {
-                    **lookup,
-                    "ok": False,
-                    "error": "IP lookup 未返回与 Coffee trace 一致的 IP 数据",
-                }
-                lookup_data = {}
-
             if exit_ip:
-                global_ping = await self._request(
-                    client,
-                    _global_ping_url(exit_ip),
-                    payload="json",
-                    timeout_seconds=self._deadline(8),
+                lookup_task = asyncio.create_task(
+                    self._request(
+                        client,
+                        lookup_url,
+                        payload="json",
+                        timeout_seconds=self._deadline(45),
+                    )
                 )
-                port_scan = await self._request(
-                    client,
-                    f"{COFFEE_ORIGIN}/api/ip/portscan/{exit_ip}?probe=0",
-                    payload="json",
-                    timeout_seconds=self._deadline(8),
-                )
-                ping_check = await self._request(
-                    client,
-                    f"{COFFEE_ORIGIN}/api/ip/pingcheck/{exit_ip}",
-                    payload="json",
-                    timeout_seconds=self._deadline(8),
-                )
-                related = await self._related_result(client, exit_ip, lookup_data)
+                optional_tasks = [
+                    asyncio.create_task(
+                        self._request(
+                            client,
+                            _global_ping_url(exit_ip),
+                            payload="json",
+                            timeout_seconds=self._deadline(8),
+                        )
+                    ),
+                    asyncio.create_task(
+                        self._request(
+                            client,
+                            f"{COFFEE_ORIGIN}/api/ip/portscan/{exit_ip}?probe=0",
+                            payload="json",
+                            timeout_seconds=self._deadline(8),
+                        )
+                    ),
+                    asyncio.create_task(
+                        self._request(
+                            client,
+                            f"{COFFEE_ORIGIN}/api/ip/pingcheck/{exit_ip}",
+                            payload="json",
+                            timeout_seconds=self._deadline(8),
+                        )
+                    ),
+                ]
+                all_request_tasks = [lookup_task, *optional_tasks]
+                try:
+                    lookup = await lookup_task
+                    lookup_data = (
+                        lookup.get("data") if isinstance(lookup.get("data"), dict) else {}
+                    )
+                    if lookup.get("ok") and not _is_same_ip(lookup_data.get("ip"), exit_ip):
+                        lookup = {
+                            **lookup,
+                            "ok": False,
+                            "error": "IP lookup 未返回与 Coffee trace 一致的 IP 数据",
+                        }
+                        lookup_data = {}
+                    related = await self._related_result(client, exit_ip, lookup_data)
+                    global_ping, port_scan, ping_check = await asyncio.gather(*optional_tasks)
+                finally:
+                    for task in all_request_tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*all_request_tasks, return_exceptions=True)
             else:
+                lookup = _missing_result("", "Coffee trace 未返回合法出口 IP")
+                lookup_data = {}
                 reason = "未取得 Coffee trace 出口 IP，未请求依赖出口 IP 的接口"
                 global_ping = _missing_result("", reason)
                 port_scan = _missing_result("", reason)

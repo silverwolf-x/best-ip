@@ -23,10 +23,24 @@ class Settings:
     subscription_max_bytes: int = int(os.getenv("BEST_IP_SUBSCRIPTION_MAX_BYTES", 5 * 1024 * 1024))
     max_nodes: int = int(os.getenv("BEST_IP_MAX_NODES", "500"))
     max_parallel_jobs: int = int(os.getenv("BEST_IP_MAX_PARALLEL_JOBS", "2"))
+    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "2"))
     page_timeout_ms: int = int(os.getenv("BEST_IP_PAGE_TIMEOUT_MS", "45000"))
     subscription_timeout_seconds: float = float(
         os.getenv("BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS", "30")
     )
+
+    def __post_init__(self) -> None:
+        for name in (
+            "subscription_max_bytes",
+            "max_nodes",
+            "max_parallel_jobs",
+            "max_parallel_nodes",
+            "page_timeout_ms",
+        ):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} 必须大于 0")
+        if self.subscription_timeout_seconds <= 0:
+            raise ValueError("subscription_timeout_seconds 必须大于 0")
 
 
 settings = Settings()

@@ -1,11 +1,13 @@
 # Best IP
 
-通过工作区内的 Mihomo 核心逐个切换订阅节点，只经当前任务的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端先为每个真实节点写入原子 JSON，校验所有节点并生成 `manifest.json`，前端随后才读取已完成的暂存结果。
+通过独立工作区 Mihomo 实例有界并发检测订阅节点，只经各自的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端为每个真实节点写入原子 JSON，校验所有节点并生成 `manifest.json`；前端读取时机属于单独的展示层契约。
 
 ## 核心行为
 
 - 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开订阅地址。
 - 订阅 metadata（流量、重置、到期等信息项）不会作为节点；每个真实节点恰好产生一条成功、部分或失败终态记录。
+- 每个并发节点使用独立的 Mihomo 进程、mixed-port、controller、selector、连接池和临时工作目录；selector 只暴露当前检测节点，同时保留完整代理定义以支持节点间拨号依赖。
+- 单节点内，页面与 trace 并行请求；取得并核验出口 IP 后，global ping、portscan、pingcheck 和 related 查询并行调度，related 的轮询仍按顺序执行。
 - Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份。
 - Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径。
 - 不访问 GPT、Claude、OpenAI、Anthropic 或其他站外数据源；不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链。
@@ -54,6 +56,16 @@ git diff --check
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
+
+正式订阅闭环（订阅 token 只通过环境变量注入，不写入 Git）：
+
+```powershell
+$env:BEST_IP_TEST_SUBSCRIPTION_URL = "<正式订阅 URL>"
+uv run python scripts/verify_real_scan.py
+Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
+```
+
+脚本会创建真实扫描、轮询至终态，逐节点校验出口 IP/selector 证据、manifest、完整导出和凭据不泄露。可用 `BEST_IP_API_BASE` 指定后端地址、`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 调整整体验收超时。
 
 ## API
 
@@ -113,7 +125,8 @@ DELETE /api/scans/{id}
 |---|---:|---|
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
-| `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数；节点扫描当前严格顺序 |
+| `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
+| `BEST_IP_MAX_PARALLEL_NODES` | `2` | 单个扫描任务同时启动的独立 Mihomo 节点检测数 |
 | `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 检测超时 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
@@ -123,4 +136,5 @@ DELETE /api/scans/{id}
 - 只支持顶部含 `proxies` 列表的 Mihomo YAML；URI 列表和仅含远程 `proxy-providers` 的配置返回明确错误。
 - 不启动浏览器，不采集浏览器专属的 DNS 泄漏、WebRTC 或设备指纹结果。
 - Coffee 接口、字段、限流和异步 pending 语义属于外部服务，改版时必须先更新页面证据和 URL allowlist。
-- 节点严格顺序切换是保证出口归属的基线；只有顺序真实验收通过后，才可另行实现独立 Mihomo worker 的有界并发。
+- 节点并发受 `BEST_IP_MAX_PARALLEL_NODES` 限制；每个并发节点都有独立 Mihomo，但每个实例仍会加载该订阅的完整代理定义，因此节点很多时内存和进程开销会随并发数增加。
+- 当前改动只覆盖后端采集与暂存；扫描中的节点级前端展示仍需单独设计 API 读取边界和事实状态。

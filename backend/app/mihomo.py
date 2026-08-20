@@ -80,10 +80,12 @@ class MihomoProcess:
         proxies: list[dict[str, Any]],
         *,
         dns_config: dict[str, Any] | None = None,
+        selector_names: list[str] | None = None,
     ) -> None:
         self.core_path = core_path
         self.work_dir = work_dir
         self.proxies = proxies
+        self.selector_names = selector_names or [str(proxy["name"]) for proxy in proxies]
         self.dns_config = _build_dns_config(dns_config)
         self.mixed_port = self._free_port()
         self.controller_port = self._free_port()
@@ -135,7 +137,7 @@ class MihomoProcess:
                 {
                     "name": self.group_name,
                     "type": "select",
-                    "proxies": [proxy["name"] for proxy in self.proxies],
+                    "proxies": self.selector_names,
                 }
             ],
             "rules": [
@@ -241,7 +243,8 @@ class MihomoProcess:
                     if process.returncode is None:
                         with suppress(ProcessLookupError):
                             process.kill()
-                    await process.wait()
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=8)
         finally:
             self.process = None
             if self._log_handle:

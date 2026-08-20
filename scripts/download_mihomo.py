@@ -56,10 +56,15 @@ def select_asset(release: dict[str, Any]) -> dict[str, Any]:
         for asset in release.get("assets", [])
         if asset.get("name", "").startswith(prefix) and asset.get("name", "").endswith(suffix)
     ]
-    if len(candidates) != 1:
-        names = ", ".join(asset.get("name", "") for asset in candidates) or "无"
+    standard_candidates = [
+        asset
+        for asset in candidates
+        if "-" not in asset["name"][len(prefix) : -len(suffix)]
+    ]
+    if len(standard_candidates) != 1:
+        names = ", ".join(asset.get("name", "") for asset in standard_candidates) or "无"
         raise RuntimeError(f"无法唯一确定标准 Mihomo 资产，候选：{names}")
-    return candidates[0]
+    return standard_candidates[0]
 
 
 def download(url: str, destination: Path) -> None:

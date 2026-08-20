@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from backend.app.scanner import (
@@ -116,6 +118,53 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
     assert all(url.startswith("https://ip.net.coffee/") for url in requested)
     forbidden_hosts = ("chatgpt", "claude", "openai", "anthropic")
     assert not any(host in " ".join(requested).lower() for host in forbidden_hosts)
+
+
+@pytest.mark.asyncio
+async def test_collect_overlaps_independent_coffee_requests(monkeypatch) -> None:
+    active = 0
+    max_active = 0
+
+    async def fake_request(self, _client, url, *, payload, timeout_seconds):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.01)
+            data = {}
+            if url.endswith("/cdn-cgi/trace"):
+                data = "ip=203.0.113.10\n"
+            elif "/api/ip/lookup/" in url:
+                data = {"ip": "203.0.113.10"}
+            return {
+                "url": url,
+                "attempted": True,
+                "via_mihomo": True,
+                "proxy_url": self.proxy_url,
+                "target_host": COFFEE_HOST,
+                "ok": True,
+                "status_code": 200,
+                "elapsed_ms": 2,
+                "data": data,
+                "error": None,
+                "error_type": None,
+                "location": None,
+            }
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
+        job_id="job",
+        node_index=0,
+        node_name="node-a",
+        node_type="ss",
+        selected_proxy="node-a",
+        mihomo_instance="instance",
+    )
+
+    assert result["status"] == "success"
+    assert max_active >= 2
 
 
 @pytest.mark.asyncio

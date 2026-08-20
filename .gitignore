@@ -9,6 +9,7 @@ __pycache__/
 runtime/jobs/
 runtime/results/
 runtime/mihomo/*
+runtime/mihomo-*/
 !runtime/mihomo/.gitkeep
 
 # Editor files

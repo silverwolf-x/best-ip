@@ -4,6 +4,7 @@ import asyncio
 import copy
 import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +35,7 @@ class ScanJobManager:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self._semaphore = asyncio.Semaphore(app_settings.max_parallel_jobs)
+        self.node_parallelism = app_settings.max_parallel_nodes
 
     def create(self, subscription_url: str) -> dict[str, str]:
         job_id = uuid4().hex
@@ -51,7 +53,7 @@ class ScanJobManager:
             "failed_count": 0,
             "current_node": None,
             "manifest_ready": False,
-            "execution_mode": "sequential",
+            "execution_mode": "parallel" if self.node_parallelism > 1 else "sequential",
             "error": None,
         }
         self.tasks[job_id] = asyncio.create_task(self._run(job_id, subscription_url))
@@ -125,7 +127,6 @@ class ScanJobManager:
     async def _run(self, job_id: str, subscription_url: str) -> None:
         job = self.jobs[job_id]
         work_dir = JOBS_DIR / job_id
-        mihomo: MihomoProcess | None = None
         try:
             async with self._semaphore:
                 job["status"] = "preparing"
@@ -146,54 +147,32 @@ class ScanJobManager:
                 job["total"] = len(proxies)
                 result_store.initialize(job_id, _progress(job))
 
-                mihomo = MihomoProcess(
-                    self.settings.mihomo_path,
-                    work_dir,
-                    proxies,
-                    dns_config=subscription_dns,
-                )
-                job["message"] = "正在启动工作区 Mihomo 核心"
-                await mihomo.start()
-                collector = CoffeeCollector(
-                    mihomo.proxy_url,
-                    timeout_ms=self.settings.page_timeout_ms,
-                )
                 job["status"] = "running"
+                job["message"] = f"正在并行检测 {len(proxies)} 个节点"
                 await self._write_progress(job)
-
-                for index, proxy in enumerate(proxies):
-                    node_name = str(proxy["name"])
-                    node_type = str(proxy["type"])
-                    job["current_node"] = node_name
-                    job["message"] = f"正在检测 {index + 1}/{len(proxies)}：{node_name}"
-                    log_offset = mihomo.log_offset()
-                    try:
-                        selected = await mihomo.select(node_name)
-                        result = await collector.collect(
-                            job_id=job_id,
-                            node_index=index,
-                            node_name=node_name,
-                            node_type=node_type,
-                            selected_proxy=selected,
-                            mihomo_instance=mihomo.instance_id,
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        mihomo_error = mihomo.read_log_since(log_offset)
-                        result = _failed_node(
-                            job_id,
+                node_semaphore = asyncio.Semaphore(min(self.node_parallelism, len(proxies)))
+                node_tasks = [
+                    asyncio.create_task(
+                        self._scan_node(
+                            job,
+                            work_dir,
+                            proxies,
+                            proxy,
                             index,
-                            node_name,
-                            node_type,
-                            exc,
-                            mihomo_error=mihomo_error,
-                            mihomo=mihomo,
+                            subscription_dns,
+                            node_semaphore,
                         )
-                    result_store.write_node(job_id, index, result)
-                    _count_result(job, result)
-                    job["completed"] = index + 1
-                    await self._write_progress(job)
+                    )
+                    for index, proxy in enumerate(proxies)
+                ]
+                try:
+                    await asyncio.gather(*node_tasks)
+                except BaseException:
+                    for task in node_tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*node_tasks, return_exceptions=True)
+                    raise
 
                 job["current_node"] = None
                 job["finished_at"] = _now()
@@ -217,10 +196,70 @@ class ScanJobManager:
             job["error"] = _short_error(exc)
             await self._safe_write_progress(job)
         finally:
-            if mihomo:
-                await mihomo.stop()
             shutil.rmtree(work_dir, ignore_errors=True)
             job["finished_at"] = job.get("finished_at") or _now()
+
+    async def _scan_node(
+        self,
+        job: dict[str, Any],
+        work_dir: Path,
+        proxies: list[dict[str, Any]],
+        proxy: dict[str, Any],
+        index: int,
+        subscription_dns: dict[str, Any] | None,
+        node_semaphore: asyncio.Semaphore,
+    ) -> None:
+        async with node_semaphore:
+            node_name = str(proxy["name"])
+            node_type = str(proxy["type"])
+            mihomo = MihomoProcess(
+                self.settings.mihomo_path,
+                work_dir / f"node-{index:04d}",
+                proxies,
+                dns_config=subscription_dns,
+                selector_names=[node_name],
+            )
+            log_offset = 0
+            try:
+                job["message"] = f"正在并行检测 {index + 1}/{job['total']}：{node_name}"
+                await mihomo.start()
+                log_offset = mihomo.log_offset()
+                selected = await mihomo.select(node_name)
+                collector = CoffeeCollector(
+                    mihomo.proxy_url,
+                    timeout_ms=self.settings.page_timeout_ms,
+                )
+                result = await collector.collect(
+                    job_id=job["id"],
+                    node_index=index,
+                    node_name=node_name,
+                    node_type=node_type,
+                    selected_proxy=selected,
+                    mihomo_instance=mihomo.instance_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                mihomo_error = mihomo.read_log_since(log_offset)
+                result = _failed_node(
+                    job["id"],
+                    index,
+                    node_name,
+                    node_type,
+                    exc,
+                    mihomo_error=mihomo_error,
+                    mihomo=mihomo,
+                )
+            finally:
+                try:
+                    await mihomo.stop()
+                finally:
+                    shutil.rmtree(mihomo.work_dir, ignore_errors=True)
+
+            result_store.write_node(job["id"], index, result)
+            _count_result(job, result)
+            job["completed"] += 1
+            await self._write_progress(job)
 
     async def _write_progress(self, job: dict[str, Any]) -> None:
         result_store.write_progress(job["id"], _progress(job))
