@@ -1,6 +1,6 @@
 # Best IP
 
-通过工作区内的 Mihomo 核心逐个切换订阅节点，后端经 Mihomo 本地端口直接请求 `ip.net.coffee` 的 IP、GPT、Claude 页面及其检测接口，并把结果汇总到一个表格。扫描过程只使用 HTTP 请求，不下载或启动浏览器运行时。
+通过工作区内的 Mihomo 核心逐个切换订阅节点，后端经 Mihomo 本地端口以 `ip.net.coffee/ip/` 的 IP lookup 为评分与基础信息主源，同时检测 GPT/Claude 实际服务端点延迟及 Coffee 全球 Ping，并把结果汇总到一个表格。扫描过程只使用 HTTP 请求，不下载或启动浏览器运行时。
 
 ## 功能
 
@@ -8,11 +8,10 @@
 - Mihomo 只在 `127.0.0.1` 开启随机 mixed-port 和控制端口。
 - 节点之间依次切换；每个节点创建全新的 HTTP 连接池，避免旧代理隧道串线。
 - 每个节点直接请求：
-  - `https://ip.net.coffee/ip/`
-  - `https://ip.net.coffee/gpt/`
-  - `https://ip.net.coffee/claude/`
-  - 页面实际使用的 trace、IP 评分、IP 风险、GeoIP、GPT/Claude 连通性和服务状态接口。
-- 表格汇总出口 IP、位置、唯一综合评分、GPT/Claude 可用状态与全球延迟；重复评分不再拆成三列。
+  - `https://ip.net.coffee/ip/` 与 `/api/ip/lookup/{ip}`，作为评分、地理、ASN、网络属性和风险字段的唯一主数据源。
+  - `chatgpt.com`、`api.openai.com`、`claude.ai` 与 `anthropic.com`，只记录实际接入状态和请求延迟。
+  - IP 页使用的全球 8 地 Ping、端口扫描和 Pingcheck 辅助接口。
+- 表格汇总出口 IP、位置、唯一 IP 评分、GPT/Claude 接入状态与 Coffee 全球 Ping；不再从 GPT/Claude 风险接口重复获取基础信息或评分。
 - 点击节点按需读取完整 HTTP 检测 JSON，轮询接口只返回轻量摘要。
 - 支持实时进度、停止任务、搜索、状态筛选、排序和明暗主题。
 
@@ -99,7 +98,7 @@ DELETE /api/scans/{id}
 ## 隐私和安全
 
 - 订阅仅允许公开 HTTP/HTTPS 地址；后端拒绝本机、内网、回环和保留地址，降低 SSRF 风险。
-- 订阅 URL 不写日志、不存浏览器存储，也不返回扫描 API。
+- 用户提交的订阅 URL 不写日志、不存浏览器存储，也不返回扫描 API。前端按当前验收要求预填了公开测试 URL，正式部署前应替换或清空该默认值。
 - 节点凭据仅写入 `runtime/jobs/<任务 ID>` 临时目录，任务结束后删除。
 - Mihomo mixed-port 和 External Controller 都只监听 `127.0.0.1`，Controller 使用随机密钥。
 - 本项目没有用户认证。若部署到公网，必须在反向代理层增加认证、HTTPS、请求限速和并发限制。
@@ -129,7 +128,8 @@ docker run --rm -p 8000:8000 best-ip
 ## 已知限制
 
 - 当前直接支持顶部含 `proxies` 列表的 UTF-8 Mihomo YAML。Base64 URI 列表和仅含远程 `proxy-providers` 的配置不会发送到第三方转换服务，而是返回明确错误。
-- 按要求不使用自动化浏览器，因此不采集必须由浏览器执行的 DNS 泄漏、WebRTC 和设备指纹；IP 风险、地理、评分、AI 服务出口和可达性均直接采集。
+- 按要求不使用自动化浏览器，因此不采集必须由浏览器执行的 DNS 泄漏、WebRTC 和设备指纹；IP 风险、地理和评分由 IP lookup 采集，AI 页面只保留服务端点接入状态与延迟。
+- Coffee 全球 Ping 当前对 IPv6 可能返回 `no_request_id` 而没有延迟值；前端会明确标为上游未返回，不会误报成 8 地全部超时。
 - `ip.net.coffee` 是外部服务；网络波动、频率限制或接口改动可能产生部分结果。
 - 完整扫描耗时取决于节点数量和最慢节点。节点按顺序切换以保证结果属于正确出口。
 - 未提供真实订阅时，自动测试无法证明特定订阅节点的实际可用性。

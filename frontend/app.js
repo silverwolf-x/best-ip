@@ -52,15 +52,15 @@ const elements = {
 };
 
 const statusLabels = {
-  success: "完整",
-  partial: "部分",
-  failed: "失败",
+  success: "IP 完整",
+  partial: "IP 部分",
+  failed: "IP 失败",
 };
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("best-ip-theme", theme);
-  elements.themeButton.title = theme === "dark" ? "浅色主题" : "深色主题";
+  elements.themeButton.title = theme === "dark" ? "浅色模式" : "暗黑模式";
 }
 
 const savedTheme = localStorage.getItem("best-ip-theme");
@@ -302,7 +302,7 @@ function createResultRow(result) {
   nodeBtn.type = "button";
   nodeBtn.className = "node-name-btn";
   nodeBtn.textContent = result.node || "未命名";
-  nodeBtn.title = `${result.node} (点击查看合并全景数据)`;
+  nodeBtn.title = `${result.node} (点击查看 IP 详情与服务延迟)`;
   nodeBtn.addEventListener("click", () => openDetails(result));
   nodeCell.append(nodeBtn);
   row.append(nodeCell);
@@ -349,17 +349,19 @@ function createResultRow(result) {
   locCell.append(locSpan);
   row.append(locCell);
 
-  // 5. 网络属性与原生性
+  // 5. 网络属性与原生性 (对标 Net.Coffee 芯片规范)
   const propCell = document.createElement("td");
   const chipWrap = document.createElement("div");
   chipWrap.className = "tag-chips";
-  if (result.is_residential) {
-    chipWrap.innerHTML += '<span class="chip chip-res">🏠 住宅</span>';
-  } else if (result.is_datacenter) {
-    chipWrap.innerHTML += '<span class="chip chip-dc">🏢 机房</span>';
+  if (result.is_residential === true) {
+    chipWrap.innerHTML += '<span class="chip chip-ok">家庭住宅IP</span>';
+  } else if (result.is_datacenter === true) {
+    chipWrap.innerHTML += '<span class="chip chip-warn">机房IP</span>';
   }
-  if (result.is_native) {
-    chipWrap.innerHTML += '<span class="chip chip-native">✨ 原生</span>';
+  if (result.is_native === true) {
+    chipWrap.innerHTML += '<span class="chip chip-ok">原生 IP</span>';
+  } else if (result.is_native === false) {
+    chipWrap.innerHTML += '<span class="chip chip-warn">广播 IP</span>';
   }
   if (result.asn) {
     const asnSpan = document.createElement("span");
@@ -371,7 +373,7 @@ function createResultRow(result) {
   propCell.append(chipWrap);
   row.append(propCell);
 
-  // 6. 安全与纯净度 (合并)
+  // 6. IP lookup 安全与纯净度
   const secCell = document.createElement("td");
   const secSpan = document.createElement("div");
   secSpan.className = "cell-truncate";
@@ -390,12 +392,12 @@ function createResultRow(result) {
   secCell.append(secSpan);
   row.append(secCell);
 
-  // 7. 唯一综合评分
+  // 7. IP lookup 唯一评分
   const scoreCell = document.createElement("td");
   scoreCell.append(createScorePill(unifiedScore(result)));
   row.append(scoreCell);
 
-  // 8. AI 服务可用性（评分已合并，仅保留不同的连通状态）
+  // 8. GPT/Claude 仅展示实际服务端点的接入状态与延迟
   const aiCell = document.createElement("td");
   const aiWrap = document.createElement("div");
   aiWrap.className = "service-statuses";
@@ -406,27 +408,31 @@ function createResultRow(result) {
   aiCell.append(aiWrap);
   row.append(aiCell);
 
-  // 9. 全球 Ping 延迟条
+  // 9. ip.net.coffee 全球 8 地 Ping
   const pingCell = document.createElement("td");
   const pings = result.global_ping || [];
-  if (pings.length) {
+  if (isIpv6GlobalPingUnavailable(result)) {
+    pingCell.textContent = "上游未返回 IPv6 Ping";
+    pingCell.title = pings.find((p) => p.error)?.error || "ip.net.coffee 暂未返回 IPv6 全球 Ping";
+  } else if (pings.length) {
     const bar = document.createElement("div");
     bar.className = "mini-ping-bar";
     pings.forEach((p) => {
       const pNode = document.createElement("span");
       pNode.className = "mini-ping-node";
       const cls = p.ok ? (p.elapsed_ms < 80 ? "p-fast" : p.elapsed_ms < 180 ? "p-mid" : "p-slow") : "p-timeout";
-      pNode.innerHTML = `<span class="p-code">${p.code.toUpperCase()}</span> <span class="p-ms ${cls}">${p.ok ? `${p.elapsed_ms}ms` : "×"}</span>`;
-      pNode.title = `${p.name}: ${p.status || (p.elapsed_ms ? `${p.elapsed_ms}ms` : "超时")}`;
+      const value = p.ok ? `${escapeHtml(String(p.elapsed_ms))}ms` : escapeHtml(p.status || "未返回");
+      pNode.innerHTML = `<span class="p-code">${escapeHtml(p.code.toUpperCase())}</span> <span class="p-ms ${cls}">${value}</span>`;
+      pNode.title = `${p.name}: ${p.status || "未返回"}${p.error ? ` · ${p.error}` : ""}`;
       bar.append(pNode);
     });
     pingCell.append(bar);
   } else {
-    pingCell.textContent = "—";
+    pingCell.textContent = "未返回";
   }
   row.append(pingCell);
 
-  // 11. 耗时
+  // 10. 耗时
   const timeCell = document.createElement("td");
   timeCell.textContent = result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—";
   row.append(timeCell);
@@ -435,8 +441,17 @@ function createResultRow(result) {
 }
 
 function unifiedScore(result) {
-  const candidates = [result.score, result.ip_score, result.gpt_score, result.claude_score];
-  return candidates.find((value) => typeof value === "number") ?? null;
+  if (typeof result.score === "number") return result.score;
+  return typeof result.pages?.ip?.score === "number" ? result.pages.ip.score : null;
+}
+
+function isIpv6GlobalPingUnavailable(result) {
+  const pings = result.global_ping || [];
+  return Boolean(
+    result.exit_ip?.includes(":")
+      && pings.length
+      && pings.every((ping) => !ping.ok && ["等待结果", "未返回"].includes(ping.status)),
+  );
 }
 
 function serviceIsAvailable(access) {
@@ -454,6 +469,15 @@ function createServiceChip(label, access) {
   return chip;
 }
 
+function formatConnectivity(item) {
+  if (!item) return "未返回检测结果";
+  const parts = [item.ok ? "可达" : "不可达"];
+  if (typeof item.elapsed_ms === "number") parts.push(`${item.elapsed_ms}ms`);
+  if (item.status_code) parts.push(`HTTP ${item.status_code}`);
+  if (item.error) parts.push(item.error);
+  return parts.join(" · ");
+}
+
 function createScorePill(score) {
   const pill = document.createElement("span");
   if (typeof score !== "number") {
@@ -467,11 +491,9 @@ function createScorePill(score) {
 }
 
 function getScoreClass(score) {
-  if (score >= 90) return "score-great";
-  if (score >= 75) return "score-good";
-  if (score >= 50) return "score-mid";
-  if (score >= 25) return "score-low";
-  return "score-bad";
+  if (score >= 75) return "score-high";
+  if (score >= 45) return "score-mid";
+  return "score-low";
 }
 
 function compareResults(left, right) {
@@ -505,7 +527,7 @@ async function openDetails(summary) {
     state.activeDetailResult = result;
     renderMergedDetails(result);
   } catch (error) {
-    elements.detailContent.innerHTML = `<p class="error-banner">读取详情失败：${error.message}</p>`;
+    elements.detailContent.innerHTML = `<p class="error-box">读取详情失败：${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -515,33 +537,29 @@ function renderMergedDetails(result) {
   const gptPage = pages.gpt || {};
   const claudePage = pages.claude || {};
   const ipLookup = ipPage.result || {};
-  const gptRisk = gptPage.risk || {};
-  const claudeRisk = claudePage.risk || {};
-  const gptGeo = gptPage.geo || {};
-  const claudeGeo = claudePage.geo || {};
 
   const frag = document.createDocumentFragment();
 
-  // 1. 唯一合并综合网络属性与安全标记 (彻底去重)
+  // 1. IP lookup 是网络身份、评分和风险字段的唯一来源
   const unifiedSec = document.createElement("section");
   unifiedSec.className = "merged-card-section";
   unifiedSec.innerHTML = `
-    <div class="section-title"><span>🌐 节点综合身份与安全纯净度 (Unified Network & Risk)</span></div>
+    <div class="section-title"><span>🌐 IP 身份与安全纯净度</span></div>
     <dl class="dense-dl">
-      <dt>出口 IP / 网段</dt><dd><code>${result.exit_ip || "—"}</code> (${result.cidr || ipLookup.cidr || "—"})</dd>
-      <dt>网络属性</dt><dd>${result.is_residential === true ? "🏠 住宅宽带 (Residential)" : result.is_datacenter === true ? "🏢 机房托管 (Datacenter)" : "未知"} · ${result.is_native === true ? "✨ 原生 IP" : result.is_native === false ? "非原生 / 广播" : "原生性未知"} · ${result.company_type || "未知"}</dd>
-      <dt>ASN 归属</dt><dd>AS${result.asn || ipLookup.asn || "—"} (${result.as_org || ipLookup.asOrganization || ipLookup.company_name || "—"})</dd>
-      <dt>AI 判定与画像</dt><dd>${ipLookup.ai_verdict?.label || "—"} · ${result.traffic_profile || "人类偏多"}</dd>
-      <dt>安全与纯净度</dt><dd><strong>${result.security_status || "检测数据不足"}</strong> (VPN: ${formatBoolText(result.is_vpn)}, 代理: ${formatBoolText(result.is_proxy)}, Tor: ${formatBoolText(result.is_tor)}, 爬虫: ${formatBoolText(result.is_crawler)}, 滥用: ${formatBoolText(result.is_abuser)})</dd>
-      <dt>技术指标</dt><dd>反向 DNS: ${result.rdns || ipLookup.rdns || "—"} · RPKI: ${ipLookup.rpki_status ? `✓ ${ipLookup.rpki_status}` : "—"} · Reddit: ${typeof ipLookup.reddit_blocked === "boolean" ? ipLookup.reddit_blocked ? "⚠️ 已阻断" : "✅ 正常" : "—"}</dd>
+      <dt>出口 IP / 网段</dt><dd><code>${escapeHtml(result.exit_ip || "—")}</code> (${escapeHtml(result.cidr || ipLookup.cidr || "—")})</dd>
+      <dt>网络属性</dt><dd>${result.is_residential === true ? '<span class="chip chip-ok">家庭住宅IP</span>' : result.is_datacenter === true ? '<span class="chip chip-warn">机房IP</span>' : '<span class="chip">未知</span>'} · ${result.is_native === true ? '<span class="chip chip-ok">原生 IP</span>' : result.is_native === false ? '<span class="chip chip-warn">广播 IP</span>' : '<span class="chip">原生性未知</span>'} · ${escapeHtml(result.company_type || "未知")}</dd>
+      <dt>ASN 归属</dt><dd>AS${escapeHtml(String(result.asn || ipLookup.asn || "—"))} (${escapeHtml(result.as_org || ipLookup.asOrganization || ipLookup.company_name || "—")})</dd>
+      <dt>IP AI 判定与画像</dt><dd>${escapeHtml(ipLookup.ai_verdict?.label || "—")} · ${escapeHtml(result.traffic_profile || "人类偏多")}</dd>
+      <dt>安全与纯净度</dt><dd><strong>${escapeHtml(result.security_status || "检测数据不足")}</strong> (VPN: ${formatBoolText(result.is_vpn)}, 代理: ${formatBoolText(result.is_proxy)}, Tor: ${formatBoolText(result.is_tor)}, 爬虫: ${formatBoolText(result.is_crawler)}, 滥用: ${formatBoolText(result.is_abuser)})</dd>
+      <dt>技术指标</dt><dd>反向 DNS: ${escapeHtml(result.rdns || ipLookup.rdns || "—")} · RPKI: ${ipLookup.rpki_status ? `✓ ${escapeHtml(ipLookup.rpki_status)}` : "—"} · Reddit: ${typeof ipLookup.reddit_blocked === "boolean" ? (ipLookup.reddit_blocked ? "⚠️ 已阻断" : "✅ 正常") : "—"}</dd>
     </dl>
   `;
   frag.append(unifiedSec);
 
-  // 2. 唯一综合评分与 AI 服务可用性
+  // 2. IP 唯一评分与 GPT/Claude 实际端点延迟
   const serviceSec = document.createElement("section");
   serviceSec.className = "merged-card-section";
-  serviceSec.innerHTML = '<div class="section-title"><span>📊 综合评分与 AI 服务可用性</span></div>';
+  serviceSec.innerHTML = '<div class="section-title"><span>📊 IP 评分与 AI 接入延迟</span></div>';
 
   const score = unifiedScore(result);
   const scoreClass = typeof score === "number" ? getScoreClass(score) : "score-none";
@@ -549,45 +567,50 @@ function renderMergedDetails(result) {
   serviceGrid.className = "quality-grid";
   serviceGrid.innerHTML = `
     <div class="score-overview">
-      <span class="quality-label">Coffee 综合评分</span>
+      <span class="quality-label">IP 评分 (Trust Score)</span>
       <span class="big-score-badge ${scoreClass}">${score ?? "—"}</span>
-      <span class="quality-verdict">${typeof score !== "number" ? "暂无评分" : score >= 80 ? "极佳" : score >= 50 ? "良好" : "风险较高"}</span>
+      <span class="quality-verdict">${typeof score !== "number" ? "暂无评分" : score >= 75 ? "极度纯净 / 优质" : score >= 45 ? "中性 / 良好" : "高风险"}</span>
     </div>
     <div class="availability-card">
-      <div class="availability-header"><strong>ChatGPT / Codex</strong><span class="service-chip ${gptPage.restricted ? "restricted" : serviceIsAvailable(result.gpt_access) ? "available" : "unavailable"}">${gptPage.restricted ? "受限" : serviceIsAvailable(result.gpt_access) ? "可用" : "不可达"}</span></div>
+      <div class="availability-header"><strong>ChatGPT / Codex</strong><span class="service-chip ${serviceIsAvailable(result.gpt_access) ? "available" : "unavailable"}">${serviceIsAvailable(result.gpt_access) ? "可用" : "不可达"}</span></div>
       <dl class="dense-dl">
-        <dt>chatgpt.com</dt><dd>${gptPage.connectivity?.[0]?.ok ? `${gptPage.connectivity[0].elapsed_ms}ms` : "❌ 不可达"}</dd>
-        <dt>api.openai.com</dt><dd>${gptPage.connectivity?.[1]?.ok ? `${gptPage.connectivity[1].elapsed_ms}ms` : "❌ 不可达"}</dd>
-        <dt>官方状态</dt><dd>${gptPage.service_status?.overall || "—"}</dd>
+        <dt>chatgpt.com</dt><dd>${escapeHtml(formatConnectivity(gptPage.connectivity?.[0]))}</dd>
+        <dt>api.openai.com</dt><dd>${escapeHtml(formatConnectivity(gptPage.connectivity?.[1]))}</dd>
       </dl>
     </div>
     <div class="availability-card">
-      <div class="availability-header"><strong>Claude / Anthropic</strong><span class="service-chip ${claudePage.restricted ? "restricted" : serviceIsAvailable(result.claude_access) ? "available" : "unavailable"}">${claudePage.restricted ? "受限" : serviceIsAvailable(result.claude_access) ? "可用" : "不可达"}</span></div>
+      <div class="availability-header"><strong>Claude / Anthropic</strong><span class="service-chip ${serviceIsAvailable(result.claude_access) ? "available" : "unavailable"}">${serviceIsAvailable(result.claude_access) ? "可用" : "不可达"}</span></div>
       <dl class="dense-dl">
-        <dt>claude.ai</dt><dd>${claudePage.connectivity?.[0]?.ok ? `${claudePage.connectivity[0].elapsed_ms}ms` : "❌ 不可达"}</dd>
-        <dt>anthropic.com</dt><dd>${claudePage.connectivity?.[1]?.ok ? `${claudePage.connectivity[1].elapsed_ms}ms` : "❌ 不可达"}</dd>
-        <dt>官方状态</dt><dd>${claudePage.service_status?.overall || "—"}</dd>
+        <dt>claude.ai</dt><dd>${escapeHtml(formatConnectivity(claudePage.connectivity?.[0]))}</dd>
+        <dt>anthropic.com</dt><dd>${escapeHtml(formatConnectivity(claudePage.connectivity?.[1]))}</dd>
       </dl>
     </div>
   `;
   serviceSec.append(serviceGrid);
   frag.append(serviceSec);
 
-  // 3. 全球主要地区实时延迟 (Global Ping Grid)
+  // 3. ip.net.coffee 全球 8 地 Ping
   const pingSec = document.createElement("section");
   pingSec.className = "merged-card-section";
-  pingSec.innerHTML = '<div class="section-title"><span>🌐 全球 8 大枢纽实时延迟 (Global Latency Grid)</span></div>';
+  pingSec.innerHTML = '<div class="section-title"><span>🌐 Coffee 全球 8 地 Ping</span></div>';
   const pingGrid = document.createElement("div");
   pingGrid.className = "full-ping-grid";
-  (result.global_ping || []).forEach((p) => {
-    const cls = p.ok ? (p.elapsed_ms < 80 ? "p-fast" : p.elapsed_ms < 180 ? "p-mid" : "p-slow") : "p-timeout";
-    pingGrid.innerHTML += `
-      <div class="full-ping-cell">
-        <span><strong>${p.code.toUpperCase()}</strong> ${p.name}</span>
-        <strong class="${cls}">${p.ok ? `${p.elapsed_ms} ms` : "超时"}</strong>
-      </div>
-    `;
-  });
+  const globalPings = result.global_ping || [];
+  if (isIpv6GlobalPingUnavailable(result)) {
+    pingGrid.innerHTML = '<div class="full-ping-cell"><span>IPv6 全球 Ping</span><strong class="p-timeout">上游暂未返回</strong></div>';
+  } else if (!globalPings.length) {
+    pingGrid.innerHTML = '<div class="full-ping-cell"><span>全球 Ping</span><strong class="p-timeout">未返回检测结果</strong></div>';
+  } else {
+    globalPings.forEach((p) => {
+      const cls = p.ok ? (p.elapsed_ms < 80 ? "p-fast" : p.elapsed_ms < 180 ? "p-mid" : "p-slow") : "p-timeout";
+      pingGrid.innerHTML += `
+        <div class="full-ping-cell" title="${escapeHtml(p.error || "")}">
+          <span><strong>${escapeHtml(p.code.toUpperCase())}</strong> ${escapeHtml(p.name)}</span>
+          <strong class="${cls}">${p.ok ? `${escapeHtml(String(p.elapsed_ms))} ms` : escapeHtml(p.status || "未返回")}</strong>
+        </div>
+      `;
+    });
+  }
   pingSec.append(pingGrid);
   frag.append(pingSec);
 
@@ -599,16 +622,16 @@ function renderMergedDetails(result) {
   const portSummary = ports == null
     ? "未返回检测结果"
     : portEntries.length
-      ? portEntries.map(([port, portStatus]) => `${port}: ${portStatus === "open" ? "🟢 开放" : "⚪ 关闭"}`).join(" · ")
+      ? portEntries.map(([port, portStatus]) => `${escapeHtml(port)}: ${portStatus === "open" ? "🟢 开放" : "⚪ 关闭"}`).join(" · ")
       : "未发现已报告的开放端口";
   const pingcheck = result.ping_check || {};
   envSec.innerHTML = `
     <div class="section-title"><span>🔌 端口状态、网络可达性与客户端环境</span></div>
     <dl class="dense-dl">
       <dt>开放端口检测</dt><dd>${portSummary}</dd>
-      <dt>Pingcheck 可达</dt><dd>${pingcheck.verdict ? `${pingcheck.verdict} (可用率 ${Math.round((pingcheck.ok_ratio || 0) * 100)}%)` : "未返回检测结果"}</dd>
+      <dt>Pingcheck 可达</dt><dd>${pingcheck.verdict ? `${escapeHtml(pingcheck.verdict)} (可用率 ${Math.round((pingcheck.ok_ratio || 0) * 100)}%)` : "未返回检测结果"}</dd>
       <dt>DNS / WebRTC</dt><dd>未检测（HTTP 扫描不具备浏览器侧泄漏检测能力）</dd>
-      <dt>客户端环境</dt><dd>时区: ${clientEnv.timezone} · 语言: ${clientEnv.language} · 平台: ${clientEnv.platform}</dd>
+      <dt>客户端环境</dt><dd>时区: ${escapeHtml(clientEnv.timezone)} · 语言: ${escapeHtml(clientEnv.language)} · 平台: ${escapeHtml(clientEnv.platform)}</dd>
     </dl>
   `;
   frag.append(envSec);
@@ -628,7 +651,13 @@ function formatBoolText(val) {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(str == null ? "" : str).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c]));
 }
 
 function setScanning(scanning) {

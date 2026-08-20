@@ -28,8 +28,13 @@ def test_frontend_is_served() -> None:
     assert response.status_code == 200
     assert "Best IP" in response.text
     assert response.text.count('data-sort="score"') == 1
-    assert "综合评分" in response.text
-    assert "AI 服务可用性" in response.text
-    assert "IP 评分" not in response.text
+    assert "IP 评分" in response.text
+    assert "AI 接入与延迟" in response.text
+    assert "Coffee 全球 8 地 Ping" in response.text
+    assert 'value="https://sub.nekocloud.host/nekocloud/token=/' in response.text
+    assert 'data-sort="ip_score"' not in response.text
+    assert 'data-sort="gpt_score"' not in response.text
+    assert 'data-sort="claude_score"' not in response.text
+    assert "综合评分" not in response.text
     assert "ChatGPT 质量" not in response.text
     assert "Claude 质量" not in response.text

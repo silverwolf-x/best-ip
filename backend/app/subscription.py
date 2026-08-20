@@ -15,7 +15,7 @@ class SubscriptionError(ValueError):
 
 
 MIHOMO_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
-PUBLIC_DOH_URL = "https://cloudflare-dns.com/dns-query"
+PUBLIC_DOH_URL = "https://1.1.1.1/dns-query"
 
 
 async def validate_public_url(url: str) -> None:

@@ -69,5 +69,5 @@ async def test_validate_public_url_blocks_local_targets(url: str) -> None:
 
 @pytest.mark.asyncio
 async def test_validate_real_test_subscription_url() -> None:
-    test_url = "https://my.inet.im/x/x6fG5XkO?t=auto"
+    test_url = "https://sub.nekocloud.host/nekocloud/token=/05d194d5a0f47593060b9fe951a6313b"
     await validate_public_url(test_url)

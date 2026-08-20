@@ -3,57 +3,72 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="通过 Mihomo 逐节点汇总 IP、GPT 与 Claude 深度检测结果与全球延迟">
+  <meta name="description" content="通过 Mihomo 逐节点采集 IP 评分与基础信息，并检测 GPT、Claude 接入延迟和全球 Ping">
   <meta name="api-base" content="">
-  <title>Best IP · 节点全景检测与同类合并</title>
-  <link rel="stylesheet" href="/styles.css?v=20260820-3">
-  <script src="/app.js?v=20260820-3" defer></script>
+  <title>Best IP · IP 评分与节点检测</title>
+  <link rel="stylesheet" href="/styles.css?v=20260820-5">
+  <script src="/app.js?v=20260820-5" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-left">
-      <a class="brand" href="/" aria-label="Best IP 首页">
-        <span class="brand-mark" aria-hidden="true">B</span>
-        <span class="brand-title">Best IP</span>
-      </a>
-      <span class="brand-desc">Coffee 同类深度合并 · 全景节点检测</span>
-    </div>
+  <div class="container">
+    <!-- Net.Coffee 对标顶部导航栏 -->
+    <nav class="nav">
+      <div class="nav-scroll">
+        <a href="https://ip.net.coffee/" target="_blank" rel="noopener" title="首页 - IP 查询与分流测试"><span class="full">IP查询</span><span class="short">查询</span></a>
+        <a href="https://ip.net.coffee/claude/" target="_blank" rel="noopener" title="Claude AI IP 检测 - IP 纯净度"><span class="full">Claude AI IP 检测</span><span class="short">Claude</span></a>
+        <a href="/ip/" class="active" aria-current="page"><span class="full">IP评分 (订阅检测)</span><span class="short">评分</span></a>
+        <a href="https://ip.net.coffee/gpt/" target="_blank" rel="noopener" title="ChatGPT · Codex IP 风险检测" class="pc-only-new"><span class="full">GPT 检测</span><span class="short">GPT</span></a>
+        <a href="https://ip.net.coffee/link/" target="_blank" rel="noopener" title="全球网络连通性测试" class="pc-only-new"><span class="full">网络连通</span><span class="short">连通</span></a>
+        <a href="https://ip.net.coffee/dns/" target="_blank" rel="noopener" title="DNS 泄露检测"><span class="full">DNS泄露</span><span class="short">DNS</span></a>
+        <a href="https://ip.net.coffee/webrtc/" target="_blank" rel="noopener" title="WebRTC IP 泄露检测"><span class="full">WebRTC</span><span class="short">UDP</span></a>
+        <a href="https://ip.net.coffee/ping/" target="_blank" rel="noopener" title="全球 Ping 延迟测试" class="pc-only-new"><span class="full">全球Ping</span><span class="short">Ping</span></a>
+        <a href="https://ip.net.coffee/status/" target="_blank" rel="noopener" title="服务可用性查询"><span class="full">服务状态</span><span class="short">状态</span></a>
+      </div>
 
-    <!-- 紧凑输入表单直接置于顶部工具栏 -->
-    <form id="scanForm" class="topbar-scan-form">
+      <div class="nav-tools">
+        <div id="scanStatusBadge" class="scan-status-badge" hidden>
+          <span class="pulse-dot"></span>
+          <span id="scanStatusText">准备中</span>
+          <strong id="scanProgressCount">0/0</strong>
+        </div>
+        <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
+        <button id="themeButton" class="icon-btn" type="button" aria-label="切换主题模式" title="切换主题">◐</button>
+      </div>
+    </nav>
+
+    <!-- 主标题与描述行（严格对标 ip.net.coffee/ip/） -->
+    <header class="page-header">
+      <div class="ip-section-header">
+        <h1>IP 评分查询 · 订阅全景检测</h1>
+      </div>
+      <p class="desc">IP深度查询，家宽 or 机房 、人机流量、多源比对、地理经纬度、端口、滥用、黑名单、全球延迟一手掌握</p>
+    </header>
+
+    <!-- 搜索/扫描输入区（对标 .search-bar） -->
+    <form id="scanForm" class="search-bar">
       <div class="input-wrap">
-        <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴 Mihomo YAML 订阅链接 (如 https://...)" required>
+        <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" value="https://sub.nekocloud.host/nekocloud/token=/05d194d5a0f47593060b9fe951a6313b" placeholder="粘贴 Mihomo YAML 订阅链接 (如 https://...)，自动逐节点切换与深度检测" required>
         <button id="revealButton" class="reveal-btn" type="button" aria-label="切换显示">👁️</button>
       </div>
       <button id="startButton" class="btn btn-primary" type="submit">开始检测</button>
       <button id="cancelButton" class="btn btn-cancel" type="button" hidden>停止</button>
     </form>
 
-    <div class="topbar-right">
-      <div id="scanStatusBadge" class="scan-status-badge" hidden>
-        <span class="pulse-dot"></span>
-        <span id="scanStatusText">准备中</span>
-        <strong id="scanProgressCount">0/0</strong>
-      </div>
-      <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
-      <button id="themeButton" class="icon-btn" type="button" aria-label="切换主题" title="切换主题">◐</button>
-    </div>
-  </header>
+    <p id="errorMessage" class="error-box" role="alert" hidden></p>
 
-  <main class="app-layout">
-    <!-- 顶部紧凑控制栏：统计 + 快捷标签 + 搜索 + 导出 -->
-    <section class="toolbar-panel">
+    <!-- 控制面板：统计指标 + 快捷标签 + 搜索过滤 + 导出 -->
+    <section class="toolbar-panel card">
       <div class="stats-ribbon">
         <div class="stat-pill"><span class="stat-lbl">总节点</span><strong id="totalStat">0</strong></div>
         <div class="stat-pill"><span class="stat-lbl">已检测</span><strong id="completedStat">0</strong></div>
-        <div class="stat-pill success"><span class="stat-lbl">完整就绪</span><strong id="successStat">0</strong></div>
+        <div class="stat-pill success"><span class="stat-lbl">IP 信息完整</span><strong id="successStat">0</strong></div>
         <div class="stat-pill warn"><span class="stat-lbl">部分/异常</span><strong id="issueStat">0</strong></div>
       </div>
 
       <div class="filter-controls">
         <div class="quick-tags" id="quickTags" role="group" aria-label="快捷筛选">
           <button type="button" class="tag-btn active" data-tag="all">全部</button>
-          <button type="button" class="tag-btn" data-tag="dual_ai">综合极佳且双 AI 可用 (≥80)</button>
+          <button type="button" class="tag-btn" data-tag="dual_ai">IP 高分且双 AI 可用 (≥80)</button>
           <button type="button" class="tag-btn" data-tag="residential">🏠 纯净住宅</button>
           <button type="button" class="tag-btn" data-tag="native">✨ 原生 IP</button>
           <button type="button" class="tag-btn" data-tag="clean">🛡️ 纯净无风险</button>
@@ -77,11 +92,10 @@
           <button id="exportJsonBtn" class="btn btn-secondary" type="button" title="导出 JSON">导出 JSON</button>
         </div>
       </div>
-      <p id="errorMessage" class="error-banner" role="alert" hidden></p>
     </section>
 
-    <!-- 核心表格置于首屏最上方，高密度展现所有关键指标 -->
-    <section class="table-container">
+    <!-- 核心表格置于首屏，高密度展示所有关键指标 -->
+    <section class="card table-container">
       <table class="main-table">
         <thead>
           <tr>
@@ -90,10 +104,10 @@
             <th scope="col" style="width: 165px;"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
             <th scope="col" style="width: 200px;"><button class="sort-btn" data-sort="location">位置 & 运营商</button></th>
             <th scope="col" style="width: 170px;"><button class="sort-btn" data-sort="is_residential">网络属性与原生性</button></th>
-            <th scope="col" style="width: 170px;"><button class="sort-btn" data-sort="security_status">安全与纯净度 (合并)</button></th>
-            <th scope="col" style="width: 90px;"><button class="sort-btn" data-sort="score">综合评分</button></th>
-            <th scope="col" style="width: 150px;">AI 服务可用性</th>
-            <th scope="col" style="min-width: 240px;">全球 8 枢纽实时延迟</th>
+            <th scope="col" style="width: 170px;"><button class="sort-btn" data-sort="security_status">安全与纯净度 (IP 源)</button></th>
+            <th scope="col" style="width: 90px;"><button class="sort-btn" data-sort="score">IP 评分</button></th>
+            <th scope="col" style="width: 150px;">AI 接入与延迟</th>
+            <th scope="col" style="min-width: 240px;">Coffee 全球 8 地 Ping</th>
             <th scope="col" style="width: 75px;"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
           </tr>
         </thead>
@@ -101,10 +115,15 @@
       </table>
       <div id="emptyResults" class="empty-state">
         <p class="empty-title">暂无检测结果</p>
-        <p class="empty-desc">在顶部输入 Mihomo YAML 订阅地址并点击「开始检测」即可立即逐节点扫描。</p>
+        <p class="empty-desc">在上方输入框粘贴 Mihomo YAML 订阅链接并点击「开始检测」，后端将逐个切换节点并进行全景 HTTP 深度探测。</p>
       </div>
     </section>
-  </main>
+
+    <!-- 对标 Net.Coffee 页脚 -->
+    <footer class="footer">
+      &copy; 2026 Net.Coffee · IP查询 · Claude AI 检测 · IP评分 · Best IP 节点全景检测
+    </footer>
+  </div>
 
   <!-- 单一合并源全景详情弹窗 -->
   <dialog id="detailDialog" class="detail-dialog">
