@@ -7,12 +7,13 @@ __pycache__/
 
 # Runtime secrets and generated files
 runtime/jobs/
+runtime/results/
 runtime/mihomo/*
 !runtime/mihomo/.gitkeep
 
 # Editor files
 .vscode/
 .idea/
-
+.claude/
 # Local configuration
 .env

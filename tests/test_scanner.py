@@ -3,190 +3,155 @@ from __future__ import annotations
 import pytest
 
 from backend.app.scanner import (
-    HttpScanner,
-    _access_summary,
-    _location,
-    _numeric_score,
-    _page_status,
-    _trace_value,
+    COFFEE_HOST,
+    GLOBAL_PING_NODES,
+    CoffeeCollector,
+    _global_ping_url,
+    _trace_ip,
+    _validate_coffee_url,
 )
 
 
-def test_trace_value_extracts_requested_field() -> None:
-    trace = "fl=29f\nh=chatgpt.com\nip=203.0.113.10\nloc=US\n"
-
-    assert _trace_value(trace, "ip") == "203.0.113.10"
-    assert _trace_value(trace, "loc") == "US"
-    assert _trace_value(None, "ip") == ""
+def test_trace_ip_supports_ipv4_and_ipv6() -> None:
+    assert _trace_ip("fl=1\nip=203.0.113.10\n") == "203.0.113.10"
+    assert _trace_ip("ip=2001:db8::10\n") == "2001:db8::10"
+    assert _trace_ip("ip=not-an-ip\n") == ""
 
 
-def test_page_status_combines_page_and_api_requests() -> None:
-    assert _page_status({"ok": True}, {"ok": True}) == "success"
-    assert _page_status({"ok": True}, {"ok": False}) == "partial"
-    assert _page_status({"ok": False}, {"ok": False}) == "failed"
+def test_coffee_allowlist_rejects_unapproved_paths_and_queries() -> None:
+    _validate_coffee_url("https://ip.net.coffee/ip/")
+    _validate_coffee_url("https://ip.net.coffee/cdn-cgi/trace")
+    _validate_coffee_url("https://ip.net.coffee/api/ip/lookup/203.0.113.10")
+    _validate_coffee_url("https://ip.net.coffee/api/ip/portscan/203.0.113.10?probe=0")
+    _validate_coffee_url(_global_ping_url("203.0.113.10"))
+
+    for url in (
+        "https://ip.net.coffee/gpt/",
+        "https://ip.net.coffee/api/ip/portscan/203.0.113.10?probe=1",
+        "https://ip.net.coffee/api/ping/global?host=203.0.113.10&node=n01",
+        "https://example.com/ip/",
+        "http://ip.net.coffee/ip/",
+        "https://ip.net.coffee/ip/?next=https://example.com",
+    ):
+        with pytest.raises(ValueError):
+            _validate_coffee_url(url)
 
 
-def test_access_summary_reports_connectivity() -> None:
-    connectivity = [
-        {"name": "chatgpt.com", "ok": True, "elapsed_ms": 123},
-        {"name": "api.openai.com", "ok": False, "elapsed_ms": 456},
-    ]
-
-    assert _access_summary(connectivity) == (
-        "chatgpt.com 可达 123ms · api.openai.com 不可达"
-    )
-
-
-def test_location_and_score_normalization() -> None:
-    assert _location(
-        {"country": "United States", "region": "CA", "city": "LA", "isp": "Example"}
-    ) == "United States CA LA Example"
-    assert _numeric_score(88.4) == 88
-    assert _numeric_score("88") is None
+def test_global_ping_uses_exact_fixed_node_set() -> None:
+    url = _global_ping_url("2001:db8::10")
+    assert "host=2001%3Adb8%3A%3A10" in url
+    assert url.count("node=") == len(GLOBAL_PING_NODES)
 
 
 @pytest.mark.asyncio
-async def test_scan_node_uses_ip_lookup_as_the_only_profile_source(monkeypatch) -> None:
-    scanner = HttpScanner("http://127.0.0.1:7890", timeout_ms=1000)
-    requested_urls: list[str] = []
-    measured_exit_ips: list[str] = []
+async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(monkeypatch) -> None:
+    requested: list[str] = []
 
-    async def fake_request(_client, url, *, payload, any_response=False):
-        requested_urls.append(url)
-        response = {
+    async def fake_request(self, _client, url, *, payload, timeout_seconds):
+        requested.append(url)
+        base = {
             "url": url,
+            "attempted": True,
+            "via_mihomo": True,
+            "proxy_url": self.proxy_url,
+            "target_host": COFFEE_HOST,
             "ok": True,
             "status_code": 200,
-            "elapsed_ms": 25,
-            "data": None,
+            "elapsed_ms": 2,
             "error": None,
+            "error_type": None,
+            "location": None,
         }
-        if url == "https://ip.net.coffee/cdn-cgi/trace":
-            response["data"] = "ip=198.51.100.10\nloc=US\n"
-        elif url == "https://chatgpt.com/cdn-cgi/trace":
-            response["data"] = "ip=198.51.100.20\nloc=US\n"
-        elif url == "https://claude.ai/cdn-cgi/trace":
-            response["data"] = "ip=198.51.100.30\nloc=US\n"
-        elif url == "https://api.openai.com/":
-            response["status_code"] = 421
-        elif url == "https://ip.net.coffee/api/ip/lookup/198.51.100.10":
-            response["data"] = {
-                "ip": "198.51.100.10",
+        if url.endswith("/ip/"):
+            base["data"] = {"content_type": "text/html", "title": "IP"}
+        elif url.endswith("/cdn-cgi/trace"):
+            base["data"] = "ip=203.0.113.10\n"
+        elif "/api/ip/lookup/" in url:
+            base["data"] = {
+                "ip": "203.0.113.10",
                 "trust_score": 91,
                 "country": "United States",
-                "region": "California",
-                "city": "Los Angeles",
-                "isp": "IP Lookup ISP",
+                "city": "Example",
+                "isp": "Example ISP",
                 "asn": 64500,
-                "asOrganization": "IP Lookup ASN",
+                "asOrganization": "Example ASN",
                 "isResidential": True,
                 "is_datacenter": False,
-                "is_bogon": False,
                 "is_vpn": False,
                 "is_proxy": False,
                 "is_tor": False,
                 "is_crawler": False,
                 "is_abuser": False,
-                "company_type": "isp",
             }
         elif "/api/ip/portscan/" in url:
-            response["data"] = {"ports": {}}
+            base["data"] = {"ports": {"443": "closed"}}
         elif "/api/ip/pingcheck/" in url:
-            response["data"] = {
+            base["data"] = {
                 "verdict": "reachable",
                 "reachable": True,
-                "ok_nodes": 18,
-                "total_nodes": 18,
-                "ok_ratio": 1.0,
+                "ok_nodes": 4,
+                "total_nodes": 4,
             }
-        elif url not in {
-            "https://ip.net.coffee/ip/",
-            "https://www.anthropic.com/cdn-cgi/trace",
-        }:
-            raise AssertionError(f"unexpected request: {url}")
-        return response
+        elif "/api/ping/global" in url:
+            base["data"] = {"results": {"n04": 20}, "timeouts": [], "pending": []}
+        else:
+            raise AssertionError(f"unexpected URL: {url}")
+        return base
 
-    async def fake_global_ping(_client, exit_ip):
-        measured_exit_ips.append(exit_ip)
-        return []
-
-    monkeypatch.setattr(scanner, "_request", fake_request)
-    monkeypatch.setattr(scanner, "_measure_global_ping", fake_global_ping)
-
-    result = await scanner.scan_node("node-a", "vless")
+    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
+    result = await collector.collect(
+        job_id="job",
+        node_index=0,
+        node_name="node-a",
+        node_type="vless",
+        selected_proxy="node-a",
+        mihomo_instance="instance",
+    )
 
     assert result["status"] == "success"
-    assert result["exit_ip"] == "198.51.100.10"
-    assert measured_exit_ips == ["198.51.100.10"]
-    assert result["score"] == 91
-    assert result["location"] == "United States California Los Angeles IP Lookup ISP"
-    assert result["asn"] == 64500
-    assert result["as_org"] == "IP Lookup ASN"
-    assert result["is_residential"] is True
-    assert result["security_status"].startswith("🛡️")
-    assert "score" not in result["pages"]["gpt"]
-    assert "risk" not in result["pages"]["gpt"]
-    assert "geo" not in result["pages"]["claude"]
-    assert not any("/api/iprisk/" in url for url in requested_urls)
-    assert not any("/api/geoip/" in url for url in requested_urls)
-    assert not any("status.json" in url for url in requested_urls)
-    assert "https://ip.net.coffee/gpt/" not in requested_urls
-    assert "https://ip.net.coffee/claude/" not in requested_urls
+    assert result["exit_ip"] == "203.0.113.10"
+    assert result["coffee"]["lookup"]["trust_score"] == 91
+    assert result["proxy_evidence"]["direct_fallback"] is False
+    assert all(url.startswith("https://ip.net.coffee/") for url in requested)
+    forbidden_hosts = ("chatgpt", "claude", "openai", "anthropic")
+    assert not any(host in " ".join(requested).lower() for host in forbidden_hosts)
 
 
 @pytest.mark.asyncio
-async def test_global_ping_maps_coffee_node_results(monkeypatch) -> None:
-    scanner = HttpScanner("http://127.0.0.1:7890", timeout_ms=1000)
-    requested_urls: list[str] = []
-
-    async def fake_request(_client, url, *, payload, any_response=False):
-        requested_urls.append(url)
+async def test_collect_failure_has_null_exit_ip(monkeypatch) -> None:
+    async def fake_request(self, _client, url, *, payload, timeout_seconds):
         return {
             "url": url,
-            "ok": True,
-            "status_code": 200,
-            "elapsed_ms": 100,
-            "data": {
-                "results": {"n02": 14.4, "n03": 88},
-                "timeouts": ["n01"],
-                "pending": ["n04"],
-            },
-            "error": None,
+            "attempted": True,
+            "via_mihomo": True,
+            "proxy_url": self.proxy_url,
+            "target_host": COFFEE_HOST,
+            "ok": url.endswith("/ip/"),
+            "status_code": 200 if url.endswith("/ip/") else 502,
+            "elapsed_ms": 1,
+            "data": {"content_type": "text/html"} if url.endswith("/ip/") else None,
+            "error": None if url.endswith("/ip/") else "HTTP 502",
+            "error_type": None,
+            "location": None,
         }
 
-    monkeypatch.setattr(scanner, "_request", fake_request)
-
-    result = await scanner._measure_global_ping(object(), "203.0.113.9")
-
-    assert len(requested_urls) == 1
-    assert requested_urls[0].startswith(
-        "https://ip.net.coffee/api/ping/global?host=203.0.113.9&"
+    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
+        job_id="job",
+        node_index=0,
+        node_name="node-a",
+        node_type="ss",
+        selected_proxy="node-a",
+        mihomo_instance="instance",
     )
-    assert requested_urls[0].count("node=") == 8
-    assert len(result) == 8
-    by_node = {item["node"]: item for item in result}
-    assert by_node["n02"]["elapsed_ms"] == 14
-    assert by_node["n02"]["ok"] is True
-    assert by_node["n01"]["status"] == "超时"
-    assert by_node["n04"]["status"] == "等待结果"
-    assert by_node["n09"]["status"] == "未返回"
+    assert result["status"] == "failed"
+    assert result["exit_ip"] is None
+    assert result["completeness"]["complete"] is False
 
 
-def test_failed_node_has_profile_defaults() -> None:
-    from backend.app.jobs import _failed_node
-
-    failed = _failed_node("node-1", "vless", Exception("connection timed out"))
-    assert failed["node"] == "node-1"
-    assert failed["status"] == "failed"
-    assert failed["score"] is None
-    assert "ip_score" not in failed
-    assert "gpt_score" not in failed
-    assert "claude_score" not in failed
-    assert failed["is_residential"] is None
-    assert failed["is_datacenter"] is None
-    assert failed["is_native"] is None
-    assert failed["is_vpn"] is None
-    assert failed["security_status"] == "检测失败"
-    assert failed["asn"] is None
-    assert failed["as_org"] == ""
-    assert "timed out" in failed["error"]
+def test_collector_rejects_non_mihomo_proxy() -> None:
+    with pytest.raises(ValueError):
+        CoffeeCollector("http://127.0.0.1:12345/path", timeout_ms=1000)
+    with pytest.raises(ValueError):
+        CoffeeCollector("http://10.0.0.1:12345", timeout_ms=1000)

@@ -1,13 +1,4 @@
-const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content || "";
-const apiBase = configuredApiBase || (location.port === "5173" ? "http://127.0.0.1:8000" : "");
-
-// 客户端本地指纹与环境信息
-const clientEnv = {
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "未知",
-  language: navigator.language || "zh-CN",
-  platform: navigator.platform || "Windows",
-  cookie: navigator.cookieEnabled ? "已启用" : "已禁用",
-};
+const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, "") || "";
 
 const state = {
   job: null,
@@ -15,9 +6,9 @@ const state = {
   sortKey: "node",
   sortDirection: "asc",
   pollTimer: null,
-  pollFailures: 0,
-  currentTag: "all",
+  pollGeneration: 0,
   activeDetailResult: null,
+  detailGeneration: 0,
 };
 
 const elements = {
@@ -38,7 +29,6 @@ const elements = {
   issueStat: document.querySelector("#issueStat"),
   resultSearch: document.querySelector("#resultSearch"),
   statusFilter: document.querySelector("#statusFilter"),
-  quickTags: document.querySelector("#quickTags"),
   exportCsvBtn: document.querySelector("#exportCsvBtn"),
   exportJsonBtn: document.querySelector("#exportJsonBtn"),
   resultBody: document.querySelector("#resultBody"),
@@ -51,11 +41,11 @@ const elements = {
   closeDialog: document.querySelector("#closeDialog"),
 };
 
-const statusLabels = {
-  success: "IP 完整",
-  partial: "IP 部分",
-  failed: "IP 失败",
-};
+const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
+
+function apiUrl(path) {
+  return `${configuredApiBase}${path}`;
+}
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -63,9 +53,7 @@ function applyTheme(theme) {
   elements.themeButton.title = theme === "dark" ? "浅色模式" : "暗黑模式";
 }
 
-const savedTheme = localStorage.getItem("best-ip-theme");
-applyTheme(savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
-
+applyTheme(localStorage.getItem("best-ip-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 elements.themeButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
@@ -76,83 +64,35 @@ elements.revealButton.addEventListener("click", () => {
   elements.revealButton.textContent = revealing ? "🔒" : "👁️";
 });
 
-// Quick Tags Filter
-elements.quickTags?.addEventListener("click", (event) => {
-  const btn = event.target.closest(".tag-btn");
-  if (!btn) return;
-  elements.quickTags.querySelectorAll(".tag-btn").forEach((b) => b.classList.remove("active"));
-  btn.classList.add("active");
-  state.currentTag = btn.dataset.tag;
-  renderRows();
-});
-
-// Export CSV
-elements.exportCsvBtn?.addEventListener("click", () => {
-  if (!state.results.length) return;
-  const headers = ["节点名称", "协议", "状态", "出口IP", "地理位置", "ASN", "网络属性", "IP原生性", "安全纯净度", "人机画像", "综合评分", "GPT状态", "Claude状态", "耗时(ms)"];
-  const rows = state.results.map((r) => [
-    `"${(r.node || "").replace(/"/g, '""')}"`,
-    `"${(r.type || "").replace(/"/g, '""')}"`,
-    `"${r.status || ""}"`,
-    `"${r.exit_ip || ""}"`,
-    `"${(r.location || "").replace(/"/g, '""')}"`,
-    `"AS${r.asn || ""} ${r.as_org || ""}"`,
-    `"${r.is_residential ? "住宅宽带" : r.is_datacenter ? "机房/托管" : "未知"}"`,
-    `"${r.is_native ? "原生 IP" : "非原生/广播"}"`,
-    `"${(r.security_status || "").replace(/"/g, '""')}"`,
-    `"${r.traffic_profile || "未知"}"`,
-    unifiedScore(r),
-    `"${(r.gpt_access || "").replace(/"/g, '""')}"`,
-    `"${(r.claude_access || "").replace(/"/g, '""')}"`,
-    r.elapsed_ms ?? "",
-  ]);
-  const csvContent = "﻿" + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  downloadBlob(csvContent, `best-ip-results-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8;");
-});
-
-// Export JSON
-elements.exportJsonBtn?.addEventListener("click", () => {
-  if (!state.results.length) return;
-  const jsonContent = JSON.stringify(state.results, null, 2);
-  downloadBlob(jsonContent, `best-ip-results-${new Date().toISOString().slice(0, 10)}.json`, "application/json");
-});
-
-function downloadBlob(content, filename, contentType) {
-  const blob = new Blob([content], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 elements.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const subscriptionUrl = elements.subscriptionUrl.value.trim();
   if (!subscriptionUrl) return;
-
   clearTimeout(state.pollTimer);
+  const generation = ++state.pollGeneration;
   state.job = null;
   state.results = [];
-  state.pollFailures = 0;
+  state.activeDetailResult = null;
+  state.detailGeneration += 1;
+  if (elements.detailDialog.open) elements.detailDialog.close();
   setScanning(true);
-  elements.errorMessage.hidden = true;
+  showError("");
   elements.scanStatusBadge.hidden = false;
   elements.scanStatusText.textContent = "创建任务";
   elements.scanProgressCount.textContent = "0/0";
+  renderRows();
 
   try {
-    const response = await fetch(`${apiBase}/api/scans`, {
+    const response = await fetch(apiUrl("/api/scans"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscription_url: subscriptionUrl }),
     });
-    const data = await readResponse(response);
-    state.job = data;
-    await pollJob();
+    const created = await readResponse(response);
+    state.job = created;
+    await pollJob(created.id, generation);
   } catch (error) {
-    showFatalError(error.message);
+    if (generation === state.pollGeneration) showFatalError(error.message);
   }
 });
 
@@ -160,43 +100,26 @@ elements.cancelButton.addEventListener("click", async () => {
   if (!state.job?.id) return;
   elements.cancelButton.disabled = true;
   try {
-    await fetch(`${apiBase}/api/scans/${state.job.id}`, { method: "DELETE" });
-    elements.scanStatusText.textContent = "停止中";
+    const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
+    state.job = await readResponse(response);
+    renderProgress(state.job);
+    setScanning(false);
   } catch (error) {
+    elements.cancelButton.disabled = false;
     showInlineError(`停止失败：${error.message}`);
   }
 });
 
 elements.resultSearch.addEventListener("input", renderRows);
 elements.statusFilter.addEventListener("change", renderRows);
-
-document.querySelectorAll(".sort-btn").forEach((button) => {
-  button.addEventListener("click", () => {
-    const key = button.dataset.sort;
-    if (state.sortKey === key) {
-      state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
-    } else {
-      state.sortKey = key;
-      state.sortDirection = (key === "node" || key === "location") ? "asc" : "desc";
-    }
-    document.querySelectorAll(".sort-btn").forEach((item) => {
-      const active = item.dataset.sort === state.sortKey;
-      item.classList.toggle("active", active);
-      item.classList.toggle("asc", active && state.sortDirection === "asc");
-      item.closest("th")?.setAttribute(
-        "aria-sort",
-        active ? (state.sortDirection === "asc" ? "ascending" : "descending") : "none",
-      );
-    });
-    renderRows();
-  });
-});
-
 elements.closeDialog.addEventListener("click", () => elements.detailDialog.close());
+elements.detailDialog.addEventListener("close", () => {
+  state.detailGeneration += 1;
+  state.activeDetailResult = null;
+});
 elements.detailDialog.addEventListener("click", (event) => {
   if (event.target === elements.detailDialog) elements.detailDialog.close();
 });
-
 elements.copyJsonBtn.addEventListener("click", async () => {
   if (!state.activeDetailResult) return;
   try {
@@ -208,85 +131,109 @@ elements.copyJsonBtn.addEventListener("click", async () => {
   }
 });
 
-async function pollJob() {
-  if (!state.job?.id) return;
-  try {
-    const response = await fetch(`${apiBase}/api/scans/${state.job.id}`, { cache: "no-store" });
-    const job = await readResponse(response);
-    state.job = job;
-    state.results = (job.results || []).map((result, index) => ({ ...result, _index: index }));
-    state.pollFailures = 0;
-    renderJob(job);
+elements.exportCsvBtn.addEventListener("click", () => {
+  if (state.job?.status !== "completed" || !state.job.manifest_ready || !state.results.length) return;
+  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "ASN", "网络属性", "安全状态", "评分", "耗时(ms)"];
+  const rows = state.results.map((result) => [
+    csv(result.node),
+    csv(result.type),
+    csv(statusLabels[result.status] || result.status),
+    csv(result.exit_ip || ""),
+    csv(result.location || ""),
+    csv(result.asn ? `AS${result.asn} ${result.as_org || ""}` : ""),
+    csv(result.is_residential === true ? "住宅" : result.is_datacenter === true ? "机房" : "未知"),
+    csv(result.security_status || ""),
+    result.score ?? "",
+    result.elapsed_ms ?? "",
+  ]);
+  downloadBlob("﻿" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n"), `best-ip-results-${dateStamp()}.csv`, "text/csv;charset=utf-8;");
+});
 
-    if (["completed", "failed", "cancelled"].includes(job.status)) {
-      setScanning(false);
-      return;
-    }
-    state.pollTimer = setTimeout(pollJob, 1000);
+elements.exportJsonBtn.addEventListener("click", async () => {
+  if (state.job?.status !== "completed" || !state.job.manifest_ready) return;
+  elements.exportJsonBtn.disabled = true;
+  try {
+    const response = await fetch(apiUrl(`/api/scans/${state.job.id}/export`), { cache: "no-store" });
+    const data = await readResponse(response);
+    downloadBlob(JSON.stringify(data, null, 2), `best-ip-results-${dateStamp()}.json`, "application/json");
   } catch (error) {
-    state.pollFailures += 1;
-    showInlineError(`读取进度失败，重试中：${error.message}`);
-    if (state.pollFailures >= 5) {
+    showInlineError(`导出 JSON 失败：${error.message}`);
+  } finally {
+    setScanning(false);
+  }
+});
+
+function csv(value) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
+
+function dateStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function downloadBlob(content, filename, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+async function pollJob(jobId, generation) {
+  if (!jobId || generation !== state.pollGeneration) return;
+  try {
+    const response = await fetch(apiUrl(`/api/scans/${jobId}`), { cache: "no-store" });
+    const job = await readResponse(response);
+    if (generation !== state.pollGeneration) return;
+    state.job = job;
+    renderProgress(job);
+    if (job.status === "completed" && job.manifest_ready) {
+      state.results = Array.isArray(job.results) ? job.results.map((item, index) => ({ ...item, _index: item.node_index ?? index })) : [];
+      renderRows();
       setScanning(false);
       return;
     }
-    state.pollTimer = setTimeout(pollJob, 1800);
+    state.results = [];
+    renderRows();
+    if (["failed", "cancelled"].includes(job.status)) {
+      setScanning(false);
+      return;
+    }
+    state.pollTimer = setTimeout(() => pollJob(jobId, generation), 1000);
+  } catch (error) {
+    if (generation !== state.pollGeneration) return;
+    showInlineError(`读取进度失败，重试中：${error.message}`);
+    state.pollTimer = setTimeout(() => pollJob(jobId, generation), 2000);
   }
 }
 
-function renderJob(job) {
+function renderProgress(job) {
   const total = Number(job.total || 0);
   const completed = Number(job.completed || 0);
   elements.scanProgressCount.textContent = `${completed}/${total}`;
-  elements.scanStatusText.textContent = job.status === "running" ? `检测中 (${job.current_node || ""})` : (jobTitle(job.status));
-  elements.errorMessage.hidden = !job.error;
-  elements.errorMessage.textContent = job.error || "";
-
+  elements.scanStatusText.textContent = job.status === "running" && job.current_node
+    ? `检测中 · ${job.current_node}`
+    : jobTitle(job.status);
   elements.totalStat.textContent = String(total);
   elements.completedStat.textContent = String(completed);
-  const successes = state.results.filter((item) => item.status === "success").length;
-  elements.successStat.textContent = String(successes);
-  elements.issueStat.textContent = String(state.results.length - successes);
-  renderRows();
+  elements.successStat.textContent = String(job.success_count || 0);
+  elements.issueStat.textContent = String((job.partial_count || 0) + (job.failed_count || 0));
+  showError(job.error || "");
 }
 
 function renderRows() {
   const query = elements.resultSearch.value.trim().toLocaleLowerCase("zh-CN");
   const status = elements.statusFilter.value;
-  const tag = state.currentTag;
-
   const rows = state.results
     .filter((result) => status === "all" || result.status === status)
     .filter((result) => {
-      if (tag === "dual_ai") return unifiedScore(result) >= 80 && serviceIsAvailable(result.gpt_access) && serviceIsAvailable(result.claude_access);
-      if (tag === "residential") return result.is_residential === true;
-      if (tag === "native") return result.is_native === true;
-      if (tag === "clean") return result.security_status?.startsWith("🛡️") === true;
-      if (tag === "gpt_ok") return serviceIsAvailable(result.gpt_access);
-      if (tag === "claude_ok") return serviceIsAvailable(result.claude_access);
-      if (tag === "issues") return result.status === "failed" || result.status === "partial" || !serviceIsAvailable(result.gpt_access) || !serviceIsAvailable(result.claude_access);
-      return true;
-    })
-    .filter((result) => {
       if (!query) return true;
-      const haystacks = [
-        result.node,
-        result.type,
-        result.exit_ip,
-        result.location,
-        result.as_org,
-        result.security_status,
-        result.asn ? `AS${result.asn}` : "",
-        result.is_residential ? "住宅" : "",
-        result.is_datacenter ? "机房" : "",
-        result.is_native ? "原生" : "",
-        result.gpt_access,
-        result.claude_access,
-      ];
-      return haystacks.some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query));
+      return [result.node, result.type, result.exit_ip, result.location, result.as_org, result.error, result.security_status, result.asn ? `AS${result.asn}` : ""]
+        .some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query));
     })
     .sort(compareResults);
-
   const fragment = document.createDocumentFragment();
   rows.forEach((result) => fragment.append(createResultRow(result)));
   elements.resultBody.replaceChildren(fragment);
@@ -295,416 +242,138 @@ function renderRows() {
 
 function createResultRow(result) {
   const row = document.createElement("tr");
-
-  // 1. 节点名称 & 协议
-  const nodeCell = document.createElement("td");
-  const nodeBtn = document.createElement("button");
-  nodeBtn.type = "button";
-  nodeBtn.className = "node-name-btn";
-  nodeBtn.textContent = result.node || "未命名";
-  nodeBtn.title = `${result.node} (点击查看 IP 详情与服务延迟)`;
-  nodeBtn.addEventListener("click", () => openDetails(result));
-  nodeCell.append(nodeBtn);
-  row.append(nodeCell);
-
-  // 2. 状态
-  const statusCell = document.createElement("td");
-  const badge = document.createElement("span");
-  badge.className = `status-badge ${result.status || "failed"}`;
-  badge.textContent = statusLabels[result.status] || result.status;
-  statusCell.append(badge);
-  row.append(statusCell);
-
-  // 3. 出口 IP
-  const ipCell = document.createElement("td");
-  if (result.exit_ip) {
-    const ipWrap = document.createElement("div");
-    ipWrap.className = "ip-cell";
-    const ipSpan = document.createElement("span");
-    ipSpan.textContent = result.exit_ip;
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "mini-copy";
-    copyBtn.textContent = "📋";
-    copyBtn.title = "复制出口 IP";
-    copyBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await navigator.clipboard.writeText(result.exit_ip);
-      copyBtn.textContent = "✓";
-      setTimeout(() => { copyBtn.textContent = "📋"; }, 1500);
-    });
-    ipWrap.append(ipSpan, copyBtn);
-    ipCell.append(ipWrap);
-  } else {
-    ipCell.textContent = "—";
-  }
-  row.append(ipCell);
-
-  // 4. 地理位置 & 运营商
-  const locCell = document.createElement("td");
-  const locSpan = document.createElement("div");
-  locSpan.className = "cell-truncate";
-  locSpan.textContent = result.location || "—";
-  locSpan.title = result.location || "";
-  locCell.append(locSpan);
-  row.append(locCell);
-
-  // 5. 网络属性与原生性 (对标 Net.Coffee 芯片规范)
-  const propCell = document.createElement("td");
-  const chipWrap = document.createElement("div");
-  chipWrap.className = "tag-chips";
-  if (result.is_residential === true) {
-    chipWrap.innerHTML += '<span class="chip chip-ok">家庭住宅IP</span>';
-  } else if (result.is_datacenter === true) {
-    chipWrap.innerHTML += '<span class="chip chip-warn">机房IP</span>';
-  }
-  if (result.is_native === true) {
-    chipWrap.innerHTML += '<span class="chip chip-ok">原生 IP</span>';
-  } else if (result.is_native === false) {
-    chipWrap.innerHTML += '<span class="chip chip-warn">广播 IP</span>';
-  }
-  if (result.asn) {
-    const asnSpan = document.createElement("span");
-    asnSpan.className = "chip chip-asn";
-    asnSpan.textContent = `AS${result.asn}`;
-    asnSpan.title = result.as_org || "";
-    chipWrap.append(asnSpan);
-  }
-  propCell.append(chipWrap);
-  row.append(propCell);
-
-  // 6. IP lookup 安全与纯净度
-  const secCell = document.createElement("td");
-  const secSpan = document.createElement("div");
-  secSpan.className = "cell-truncate";
-  if (result.security_status) {
-    secSpan.textContent = result.security_status;
-    secSpan.title = result.security_status;
-    if (result.security_status.includes("⚠️")) {
-      secSpan.style.color = "var(--danger)";
-      secSpan.style.fontWeight = "700";
-    } else {
-      secSpan.style.color = "var(--good)";
-    }
-  } else {
-    secSpan.textContent = "—";
-  }
-  secCell.append(secSpan);
-  row.append(secCell);
-
-  // 7. IP lookup 唯一评分
-  const scoreCell = document.createElement("td");
-  scoreCell.append(createScorePill(unifiedScore(result)));
-  row.append(scoreCell);
-
-  // 8. GPT/Claude 仅展示实际服务端点的接入状态与延迟
-  const aiCell = document.createElement("td");
-  const aiWrap = document.createElement("div");
-  aiWrap.className = "service-statuses";
-  aiWrap.append(
-    createServiceChip("GPT", result.gpt_access),
-    createServiceChip("Claude", result.claude_access),
-  );
-  aiCell.append(aiWrap);
-  row.append(aiCell);
-
-  // 9. ip.net.coffee 全球 8 地 Ping
-  const pingCell = document.createElement("td");
-  const pings = result.global_ping || [];
-  if (isIpv6GlobalPingUnavailable(result)) {
-    pingCell.textContent = "上游未返回 IPv6 Ping";
-    pingCell.title = pings.find((p) => p.error)?.error || "ip.net.coffee 暂未返回 IPv6 全球 Ping";
-  } else if (pings.length) {
-    const bar = document.createElement("div");
-    bar.className = "mini-ping-bar";
-    pings.forEach((p) => {
-      const pNode = document.createElement("span");
-      pNode.className = "mini-ping-node";
-      const cls = p.ok ? (p.elapsed_ms < 80 ? "p-fast" : p.elapsed_ms < 180 ? "p-mid" : "p-slow") : "p-timeout";
-      const value = p.ok ? `${escapeHtml(String(p.elapsed_ms))}ms` : escapeHtml(p.status || "未返回");
-      pNode.innerHTML = `<span class="p-code">${escapeHtml(p.code.toUpperCase())}</span> <span class="p-ms ${cls}">${value}</span>`;
-      pNode.title = `${p.name}: ${p.status || "未返回"}${p.error ? ` · ${p.error}` : ""}`;
-      bar.append(pNode);
-    });
-    pingCell.append(bar);
-  } else {
-    pingCell.textContent = "未返回";
-  }
-  row.append(pingCell);
-
-  // 10. 耗时
-  const timeCell = document.createElement("td");
-  timeCell.textContent = result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—";
-  row.append(timeCell);
-
+  appendTextCell(row, result.node || "未命名", (cell) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "node-name-btn";
+    button.textContent = result.node || "未命名";
+    button.addEventListener("click", () => openDetails(result));
+    cell.replaceChildren(button);
+  });
+  appendTextCell(row, statusLabels[result.status] || result.status || "失败", (cell) => {
+    cell.className = `status-badge ${result.status || "failed"}`;
+    cell.title = result.error || "";
+  });
+  appendTextCell(row, result.exit_ip || "—");
+  appendTextCell(row, result.location || result.error || "—");
+  appendTextCell(row, `${result.is_residential === true ? "住宅" : result.is_datacenter === true ? "机房" : "未知"} · ${result.is_native === true ? "原生" : result.is_native === false ? "非原生" : "原生性未知"} · ${result.asn ? `AS${result.asn}` : "ASN 未知"}`);
+  appendTextCell(row, result.security_status || "检测数据不足");
+  appendTextCell(row, result.score == null ? "—" : String(result.score));
+  appendTextCell(row, pingSummary(result.global_ping));
+  appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
   return row;
 }
 
-function unifiedScore(result) {
-  if (typeof result.score === "number") return result.score;
-  return typeof result.pages?.ip?.score === "number" ? result.pages.ip.score : null;
+function appendTextCell(row, text, configure) {
+  const cell = document.createElement("td");
+  cell.textContent = text;
+  if (configure) configure(cell);
+  row.append(cell);
 }
 
-function isIpv6GlobalPingUnavailable(result) {
-  const pings = result.global_ping || [];
-  return Boolean(
-    result.exit_ip?.includes(":")
-      && pings.length
-      && pings.every((ping) => !ping.ok && ["等待结果", "未返回"].includes(ping.status)),
-  );
-}
-
-function serviceIsAvailable(access) {
-  if (!access || access.includes("地区受限")) return false;
-  return access.split("·").some((part) => part.includes(" 可达 "));
-}
-
-function createServiceChip(label, access) {
-  const chip = document.createElement("span");
-  const restricted = Boolean(access?.includes("地区受限"));
-  const available = serviceIsAvailable(access);
-  chip.className = `service-chip ${restricted ? "restricted" : available ? "available" : access ? "unavailable" : "unknown"}`;
-  chip.textContent = `${label} ${restricted ? "受限" : available ? "可用" : access ? "不可达" : "未知"}`;
-  chip.title = access || `${label} 未返回检测结果`;
-  return chip;
-}
-
-function formatConnectivity(item) {
-  if (!item) return "未返回检测结果";
-  const parts = [item.ok ? "可达" : "不可达"];
-  if (typeof item.elapsed_ms === "number") parts.push(`${item.elapsed_ms}ms`);
-  if (item.status_code) parts.push(`HTTP ${item.status_code}`);
-  if (item.error) parts.push(item.error);
-  return parts.join(" · ");
-}
-
-function createScorePill(score) {
-  const pill = document.createElement("span");
-  if (typeof score !== "number") {
-    pill.className = "score-pill score-none";
-    pill.textContent = "—";
-    return pill;
-  }
-  pill.className = `score-pill ${getScoreClass(score)}`;
-  pill.textContent = String(score);
-  return pill;
-}
-
-function getScoreClass(score) {
-  if (score >= 75) return "score-high";
-  if (score >= 45) return "score-mid";
-  return "score-low";
+function pingSummary(pings) {
+  if (!Array.isArray(pings) || !pings.length) return "未返回";
+  return pings.map((ping) => `${String(ping.code || "").toUpperCase()} ${ping.ok ? `${ping.elapsed_ms}ms` : ping.status || "未返回"}`).join(" · ");
 }
 
 function compareResults(left, right) {
   const direction = state.sortDirection === "asc" ? 1 : -1;
   const leftValue = left[state.sortKey];
   const rightValue = right[state.sortKey];
-  if (typeof leftValue === "number" || typeof rightValue === "number") {
-    return ((leftValue ?? -1) - (rightValue ?? -1)) * direction;
-  }
-  return String(leftValue || "").localeCompare(String(rightValue || ""), "zh-CN", {
-    numeric: true,
-    sensitivity: "base",
-  }) * direction;
+  if (typeof leftValue === "number" || typeof rightValue === "number") return ((leftValue ?? -1) - (rightValue ?? -1)) * direction;
+  return String(leftValue || "").localeCompare(String(rightValue || ""), "zh-CN", { numeric: true, sensitivity: "base" }) * direction;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 深度合并唯一事实源详情弹窗 (Merged Single Source of Truth Dialog)
-// ─────────────────────────────────────────────────────────────
+document.querySelectorAll(".sort-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    const key = button.dataset.sort;
+    if (state.sortKey === key) state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+    else {
+      state.sortKey = key;
+      state.sortDirection = key === "node" || key === "location" ? "asc" : "desc";
+    }
+    renderRows();
+  });
+});
+
 async function openDetails(summary) {
-  elements.detailTitle.textContent = `${summary.node} (${summary.type || "未知"})`;
-  elements.detailSubtitle.textContent = `出口: ${summary.exit_ip || "未知"} · 位置: ${summary.location || "未知"}`;
-  elements.detailContent.innerHTML = '<p class="text-muted" style="padding:20px 0;text-align:center;">正在读取全量数据...</p>';
+  if (state.job?.status !== "completed" || !state.job.manifest_ready) {
+    showInlineError("完整 manifest 生成后才能读取节点详情");
+    return;
+  }
+  const generation = ++state.detailGeneration;
+  elements.detailTitle.textContent = `${summary.node || "节点"} (${summary.type || "未知"})`;
+  elements.detailSubtitle.textContent = `出口：${summary.exit_ip || "未知"} · ${summary.location || "位置未知"}`;
+  elements.detailContent.innerHTML = '<p class="text-muted">正在读取已暂存的完整 Coffee 结果...</p>';
   elements.detailDialog.showModal();
-
   try {
-    const response = await fetch(
-      `${apiBase}/api/scans/${state.job.id}/results/${summary._index}`,
-      { cache: "no-store" },
-    );
+    const response = await fetch(apiUrl(`/api/scans/${state.job.id}/results/${summary._index}`), { cache: "no-store" });
     const result = await readResponse(response);
+    if (generation !== state.detailGeneration) return;
     state.activeDetailResult = result;
-    renderMergedDetails(result);
+    renderDetails(result);
   } catch (error) {
-    elements.detailContent.innerHTML = `<p class="error-box">读取详情失败：${escapeHtml(error.message)}</p>`;
+    if (generation === state.detailGeneration) elements.detailContent.innerHTML = `<p class="error-box">读取详情失败：${escapeHtml(error.message)}</p>`;
   }
 }
 
-function renderMergedDetails(result) {
-  const pages = result.pages || {};
-  const ipPage = pages.ip || {};
-  const gptPage = pages.gpt || {};
-  const claudePage = pages.claude || {};
-  const ipLookup = ipPage.result || {};
-
-  const frag = document.createDocumentFragment();
-
-  // 1. IP lookup 是网络身份、评分和风险字段的唯一来源
-  const unifiedSec = document.createElement("section");
-  unifiedSec.className = "merged-card-section";
-  unifiedSec.innerHTML = `
-    <div class="section-title"><span>🌐 IP 身份与安全纯净度</span></div>
+function renderDetails(result) {
+  const lookup = result.coffee?.lookup || {};
+  const content = document.createDocumentFragment();
+  const section = document.createElement("section");
+  section.className = "merged-card-section";
+  section.innerHTML = `
+    <div class="section-title"><span>🌐 Coffee IP 结构化结果</span></div>
     <dl class="dense-dl">
-      <dt>出口 IP / 网段</dt><dd><code>${escapeHtml(result.exit_ip || "—")}</code> (${escapeHtml(result.cidr || ipLookup.cidr || "—")})</dd>
-      <dt>网络属性</dt><dd>${result.is_residential === true ? '<span class="chip chip-ok">家庭住宅IP</span>' : result.is_datacenter === true ? '<span class="chip chip-warn">机房IP</span>' : '<span class="chip">未知</span>'} · ${result.is_native === true ? '<span class="chip chip-ok">原生 IP</span>' : result.is_native === false ? '<span class="chip chip-warn">广播 IP</span>' : '<span class="chip">原生性未知</span>'} · ${escapeHtml(result.company_type || "未知")}</dd>
-      <dt>ASN 归属</dt><dd>AS${escapeHtml(String(result.asn || ipLookup.asn || "—"))} (${escapeHtml(result.as_org || ipLookup.asOrganization || ipLookup.company_name || "—")})</dd>
-      <dt>IP AI 判定与画像</dt><dd>${escapeHtml(ipLookup.ai_verdict?.label || "—")} · ${escapeHtml(result.traffic_profile || "人类偏多")}</dd>
-      <dt>安全与纯净度</dt><dd><strong>${escapeHtml(result.security_status || "检测数据不足")}</strong> (VPN: ${formatBoolText(result.is_vpn)}, 代理: ${formatBoolText(result.is_proxy)}, Tor: ${formatBoolText(result.is_tor)}, 爬虫: ${formatBoolText(result.is_crawler)}, 滥用: ${formatBoolText(result.is_abuser)})</dd>
-      <dt>技术指标</dt><dd>反向 DNS: ${escapeHtml(result.rdns || ipLookup.rdns || "—")} · RPKI: ${ipLookup.rpki_status ? `✓ ${escapeHtml(ipLookup.rpki_status)}` : "—"} · Reddit: ${typeof ipLookup.reddit_blocked === "boolean" ? (ipLookup.reddit_blocked ? "⚠️ 已阻断" : "✅ 正常") : "—"}</dd>
-    </dl>
-  `;
-  frag.append(unifiedSec);
-
-  // 2. IP 唯一评分与 GPT/Claude 实际端点延迟
-  const serviceSec = document.createElement("section");
-  serviceSec.className = "merged-card-section";
-  serviceSec.innerHTML = '<div class="section-title"><span>📊 IP 评分与 AI 接入延迟</span></div>';
-
-  const score = unifiedScore(result);
-  const scoreClass = typeof score === "number" ? getScoreClass(score) : "score-none";
-  const serviceGrid = document.createElement("div");
-  serviceGrid.className = "quality-grid";
-  serviceGrid.innerHTML = `
-    <div class="score-overview">
-      <span class="quality-label">IP 评分 (Trust Score)</span>
-      <span class="big-score-badge ${scoreClass}">${score ?? "—"}</span>
-      <span class="quality-verdict">${typeof score !== "number" ? "暂无评分" : score >= 75 ? "极度纯净 / 优质" : score >= 45 ? "中性 / 良好" : "高风险"}</span>
-    </div>
-    <div class="availability-card">
-      <div class="availability-header"><strong>ChatGPT / Codex</strong><span class="service-chip ${serviceIsAvailable(result.gpt_access) ? "available" : "unavailable"}">${serviceIsAvailable(result.gpt_access) ? "可用" : "不可达"}</span></div>
-      <dl class="dense-dl">
-        <dt>chatgpt.com</dt><dd>${escapeHtml(formatConnectivity(gptPage.connectivity?.[0]))}</dd>
-        <dt>api.openai.com</dt><dd>${escapeHtml(formatConnectivity(gptPage.connectivity?.[1]))}</dd>
-      </dl>
-    </div>
-    <div class="availability-card">
-      <div class="availability-header"><strong>Claude / Anthropic</strong><span class="service-chip ${serviceIsAvailable(result.claude_access) ? "available" : "unavailable"}">${serviceIsAvailable(result.claude_access) ? "可用" : "不可达"}</span></div>
-      <dl class="dense-dl">
-        <dt>claude.ai</dt><dd>${escapeHtml(formatConnectivity(claudePage.connectivity?.[0]))}</dd>
-        <dt>anthropic.com</dt><dd>${escapeHtml(formatConnectivity(claudePage.connectivity?.[1]))}</dd>
-      </dl>
-    </div>
-  `;
-  serviceSec.append(serviceGrid);
-  frag.append(serviceSec);
-
-  // 3. ip.net.coffee 全球 8 地 Ping
-  const pingSec = document.createElement("section");
-  pingSec.className = "merged-card-section";
-  pingSec.innerHTML = '<div class="section-title"><span>🌐 Coffee 全球 8 地 Ping</span></div>';
-  const pingGrid = document.createElement("div");
-  pingGrid.className = "full-ping-grid";
-  const globalPings = result.global_ping || [];
-  if (isIpv6GlobalPingUnavailable(result)) {
-    pingGrid.innerHTML = '<div class="full-ping-cell"><span>IPv6 全球 Ping</span><strong class="p-timeout">上游暂未返回</strong></div>';
-  } else if (!globalPings.length) {
-    pingGrid.innerHTML = '<div class="full-ping-cell"><span>全球 Ping</span><strong class="p-timeout">未返回检测结果</strong></div>';
-  } else {
-    globalPings.forEach((p) => {
-      const cls = p.ok ? (p.elapsed_ms < 80 ? "p-fast" : p.elapsed_ms < 180 ? "p-mid" : "p-slow") : "p-timeout";
-      pingGrid.innerHTML += `
-        <div class="full-ping-cell" title="${escapeHtml(p.error || "")}">
-          <span><strong>${escapeHtml(p.code.toUpperCase())}</strong> ${escapeHtml(p.name)}</span>
-          <strong class="${cls}">${p.ok ? `${escapeHtml(String(p.elapsed_ms))} ms` : escapeHtml(p.status || "未返回")}</strong>
-        </div>
-      `;
-    });
-  }
-  pingSec.append(pingGrid);
-  frag.append(pingSec);
-
-  // 4. 端口、DNS、UDP 与本地环境
-  const envSec = document.createElement("section");
-  envSec.className = "merged-card-section";
-  const ports = result.port_scan;
-  const portEntries = ports && typeof ports === "object" ? Object.entries(ports) : [];
-  const portSummary = ports == null
-    ? "未返回检测结果"
-    : portEntries.length
-      ? portEntries.map(([port, portStatus]) => `${escapeHtml(port)}: ${portStatus === "open" ? "🟢 开放" : "⚪ 关闭"}`).join(" · ")
-      : "未发现已报告的开放端口";
-  const pingcheck = result.ping_check || {};
-  envSec.innerHTML = `
-    <div class="section-title"><span>🔌 端口状态、网络可达性与客户端环境</span></div>
-    <dl class="dense-dl">
-      <dt>开放端口检测</dt><dd>${portSummary}</dd>
-      <dt>Pingcheck 可达</dt><dd>${pingcheck.verdict ? `${escapeHtml(pingcheck.verdict)} (可用率 ${Math.round((pingcheck.ok_ratio || 0) * 100)}%)` : "未返回检测结果"}</dd>
-      <dt>DNS / WebRTC</dt><dd>未检测（HTTP 扫描不具备浏览器侧泄漏检测能力）</dd>
-      <dt>客户端环境</dt><dd>时区: ${escapeHtml(clientEnv.timezone)} · 语言: ${escapeHtml(clientEnv.language)} · 平台: ${escapeHtml(clientEnv.platform)}</dd>
-    </dl>
-  `;
-  frag.append(envSec);
-
-  // 5. 原始 JSON 折叠
-  const rawDetails = document.createElement("details");
-  rawDetails.innerHTML = `<summary>查看该节点完整 JSON 原始数据</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
-  frag.append(rawDetails);
-
-  elements.detailContent.replaceChildren(frag);
+      <dt>出口 IP / 网段</dt><dd><code>${escapeHtml(result.exit_ip || "—")}</code> · ${escapeHtml(result.cidr || lookup.cidr || "—")}</dd>
+      <dt>位置 / 运营商</dt><dd>${escapeHtml(result.location || "未知")} · ${escapeHtml(result.as_org || "未知")}</dd>
+      <dt>评分</dt><dd><strong>${escapeHtml(String(result.score ?? "—"))}</strong></dd>
+      <dt>网络属性</dt><dd>${result.is_residential === true ? "住宅" : result.is_datacenter === true ? "机房" : "未知"} · ${result.is_native === true ? "原生" : result.is_native === false ? "非原生" : "未知"}</dd>
+      <dt>安全状态</dt><dd>${escapeHtml(result.security_status || "检测数据不足")}</dd>
+      <dt>完整性</dt><dd>${result.completeness?.complete ? "全部接口完成" : `部分接口未完成：${escapeHtml((result.completeness?.missing || []).join("、"))}`}</dd>
+      <dt>代理证据</dt><dd>${escapeHtml(JSON.stringify(result.proxy_evidence || {}))}</dd>
+    </dl>`;
+  content.append(section);
+  const raw = document.createElement("details");
+  raw.innerHTML = `<summary>查看完整暂存 JSON</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+  content.append(raw);
+  elements.detailContent.replaceChildren(content);
 }
 
-function formatBoolText(val) {
-  if (val === true) return "是";
-  if (val === false) return "否";
-  return "—";
-}
-
-function escapeHtml(str) {
-  return String(str == null ? "" : str).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[c]));
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
 
 function setScanning(scanning) {
+  const ready = !scanning && state.job?.status === "completed" && state.job?.manifest_ready === true;
   elements.startButton.disabled = scanning;
   elements.startButton.textContent = scanning ? "检测中..." : "开始检测";
   elements.cancelButton.hidden = !scanning;
   elements.cancelButton.disabled = false;
+  elements.exportCsvBtn.disabled = !ready;
+  elements.exportJsonBtn.disabled = !ready;
 }
 
-function showInlineError(message) {
-  elements.errorMessage.hidden = false;
+function showError(message) {
+  elements.errorMessage.hidden = !message;
   elements.errorMessage.textContent = message;
 }
 
-function showFatalError(message) {
-  setScanning(false);
-  elements.scanStatusBadge.hidden = true;
-  showInlineError(message);
-}
-
-function jobTitle(status) {
-  return ({
-    queued: "排队中",
-    preparing: "准备中",
-    running: "扫描中",
-    cancelling: "停止中",
-    cancelled: "已停止",
-    completed: "已完成",
-    failed: "失败",
-  })[status] || status;
-}
+function showInlineError(message) { showError(message); }
+function showFatalError(message) { setScanning(false); elements.scanStatusBadge.hidden = true; showError(message); }
+function jobTitle(status) { return ({ queued: "排队中", preparing: "准备中", running: "扫描中", completed: "已完成", failed: "失败", cancelled: "已停止" }[status] || status || "准备中"); }
 
 async function readResponse(response) {
   let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(`后端异常 (HTTP ${response.status})`);
-  }
-  if (!response.ok) throw new Error(data.detail || `请求失败 (HTTP ${response.status})`);
+  try { data = await response.json(); }
+  catch { const error = new Error(`后端异常 (HTTP ${response.status})`); error.status = response.status; throw error; }
+  if (!response.ok) { const error = new Error(data.detail || `请求失败 (HTTP ${response.status})`); error.status = response.status; throw error; }
   return data;
 }
 
 async function checkHealth() {
   try {
-    const response = await fetch(`${apiBase}/api/health`, { cache: "no-store" });
-    const data = await readResponse(response);
+    const data = await readResponse(await fetch(apiUrl("/api/health"), { cache: "no-store" }));
     if (!data.mihomo_ready) throw new Error("Mihomo 未就绪");
     elements.healthStatus.textContent = "后端就绪";
     elements.healthStatus.className = "health ready";
@@ -714,4 +383,5 @@ async function checkHealth() {
   }
 }
 
+setScanning(false);
 checkHealth();

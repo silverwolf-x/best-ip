@@ -307,6 +307,7 @@ h1 {
   border: 1px solid var(--border-strong);
 }
 .btn-secondary:hover { background: var(--bg-hover); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Net.Coffee 核心卡片容器 ── */
 .card {
@@ -516,6 +517,7 @@ h1 {
 .mini-copy:hover { color: var(--text); background: var(--bg-hover); }
 
 .cell-truncate { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.failure-reason { color: var(--danger); font-weight: 600; }
 
 .tag-chips { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .chip {

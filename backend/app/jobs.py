@@ -7,13 +7,24 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from .config import JOBS_DIR, Settings, settings
-from .mihomo import MihomoProcess
-from .scanner import HttpScanner
-from .subscription import download_subscription, parse_subscription
+from .config import JOBS_DIR, RESULTS_DIR, Settings, settings
+from .mihomo import MihomoError, MihomoProcess
+from .result_store import ResultStoreError, result_store
+from .scanner import CoffeeCollector
+from .subscription import (
+    SubscriptionError,
+    download_subscription,
+    extract_subscription_dns,
+    is_subscription_metadata,
+    parse_subscription,
+)
 
 
 class JobNotFoundError(KeyError):
+    pass
+
+
+class JobNotReadyError(RuntimeError):
     pass
 
 
@@ -33,31 +44,62 @@ class ScanJobManager:
             "created_at": _now(),
             "finished_at": None,
             "total": 0,
+            "skipped": 0,
             "completed": 0,
+            "success_count": 0,
+            "partial_count": 0,
+            "failed_count": 0,
             "current_node": None,
-            "results": [],
+            "manifest_ready": False,
+            "execution_mode": "sequential",
             "error": None,
         }
         self.tasks[job_id] = asyncio.create_task(self._run(job_id, subscription_url))
         return {"id": job_id, "status": "queued"}
 
-    def get(self, job_id: str, *, include_details: bool = False) -> dict[str, Any]:
+    def get(self, job_id: str) -> dict[str, Any]:
         job = self.jobs.get(job_id)
         if job is None:
             raise JobNotFoundError(job_id)
         snapshot = copy.deepcopy(job)
-        if not include_details:
-            snapshot["results"] = [
-                {key: value for key, value in result.items() if key != "pages"}
-                for result in snapshot["results"]
-            ]
+        if job.get("status") == "completed" and job.get("manifest_ready"):
+            try:
+                snapshot["manifest"] = result_store.read_manifest(job_id)
+                snapshot["results"] = result_store.read_summaries(job_id)
+            except ResultStoreError as exc:
+                snapshot["status"] = "failed"
+                snapshot["manifest_ready"] = False
+                snapshot["error"] = str(exc)
+                snapshot["results"] = []
+        else:
+            snapshot["results"] = []
         return snapshot
 
     def get_result(self, job_id: str, index: int) -> dict[str, Any]:
         job = self.jobs.get(job_id)
-        if job is None or index < 0 or index >= len(job["results"]):
+        if job is None:
             raise JobNotFoundError(job_id)
-        return copy.deepcopy(job["results"][index])
+        if job.get("status") != "completed" or not job.get("manifest_ready"):
+            raise JobNotReadyError("扫描尚未生成 completed manifest")
+        try:
+            manifest = result_store.read_manifest(job_id)
+            total = manifest.get("total")
+            if not isinstance(total, int) or index < 0 or index >= total:
+                raise JobNotFoundError(job_id)
+            return result_store.read_node(job_id, index)
+        except ResultStoreError as exc:
+            raise JobNotFoundError(job_id) from exc
+
+    def export(self, job_id: str) -> dict[str, Any]:
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise JobNotFoundError(job_id)
+        if job.get("status") != "completed" or not job.get("manifest_ready"):
+            raise JobNotReadyError("扫描尚未生成 completed manifest")
+        try:
+            return result_store.export(job_id, copy.deepcopy(job))
+        except ResultStoreError as exc:
+            raise JobNotReadyError(str(exc)) from exc
 
     async def cancel(self, job_id: str) -> dict[str, Any]:
         job = self.jobs.get(job_id)
@@ -67,6 +109,10 @@ class ScanJobManager:
         if task and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if job.get("status") == "queued":
+            job["status"] = "cancelled"
+            job["message"] = "扫描已取消"
+            job["finished_at"] = _now()
         return self.get(job_id)
 
     async def shutdown(self) -> None:
@@ -89,63 +135,185 @@ class ScanJobManager:
                     max_bytes=self.settings.subscription_max_bytes,
                     timeout_seconds=self.settings.subscription_timeout_seconds,
                 )
-                proxies = parse_subscription(content, max_nodes=self.settings.max_nodes)
+                subscription_dns = extract_subscription_dns(content)
+                parsed_proxies = parse_subscription(content, max_nodes=self.settings.max_nodes)
+                proxies = [
+                    proxy for proxy in parsed_proxies if not is_subscription_metadata(proxy)
+                ]
+                job["skipped"] = len(parsed_proxies) - len(proxies)
+                if not proxies:
+                    raise SubscriptionError("订阅中没有可检测的代理节点")
                 job["total"] = len(proxies)
+                result_store.initialize(job_id, _progress(job))
 
-                mihomo = MihomoProcess(self.settings.mihomo_path, work_dir, proxies)
+                mihomo = MihomoProcess(
+                    self.settings.mihomo_path,
+                    work_dir,
+                    proxies,
+                    dns_config=subscription_dns,
+                )
                 job["message"] = "正在启动工作区 Mihomo 核心"
                 await mihomo.start()
-                scanner = HttpScanner(mihomo.proxy_url, timeout_ms=self.settings.page_timeout_ms)
+                collector = CoffeeCollector(
+                    mihomo.proxy_url,
+                    timeout_ms=self.settings.page_timeout_ms,
+                )
                 job["status"] = "running"
+                await self._write_progress(job)
 
-                for index, proxy in enumerate(proxies, start=1):
+                for index, proxy in enumerate(proxies):
                     node_name = str(proxy["name"])
                     node_type = str(proxy["type"])
                     job["current_node"] = node_name
-                    job["message"] = f"正在检测 {index}/{len(proxies)}：{node_name}"
+                    job["message"] = f"正在检测 {index + 1}/{len(proxies)}：{node_name}"
+                    log_offset = mihomo.log_offset()
                     try:
-                        await mihomo.select(node_name)
-                        result = await scanner.scan_node(node_name, node_type)
+                        selected = await mihomo.select(node_name)
+                        result = await collector.collect(
+                            job_id=job_id,
+                            node_index=index,
+                            node_name=node_name,
+                            node_type=node_type,
+                            selected_proxy=selected,
+                            mihomo_instance=mihomo.instance_id,
+                        )
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
-                        result = _failed_node(node_name, node_type, exc)
-                    job["results"].append(result)
-                    job["completed"] = index
+                        mihomo_error = mihomo.read_log_since(log_offset)
+                        result = _failed_node(
+                            job_id,
+                            index,
+                            node_name,
+                            node_type,
+                            exc,
+                            mihomo_error=mihomo_error,
+                            mihomo=mihomo,
+                        )
+                    result_store.write_node(job_id, index, result)
+                    _count_result(job, result)
+                    job["completed"] = index + 1
+                    await self._write_progress(job)
 
-                job["status"] = "completed"
-                job["message"] = f"扫描完成，共 {len(proxies)} 个节点"
                 job["current_node"] = None
+                job["finished_at"] = _now()
+                result_store.finalize(job_id, job)
+                job["status"] = "completed"
+                job["manifest_ready"] = True
+                suffix = f"，已跳过 {job['skipped']} 个订阅信息项" if job["skipped"] else ""
+                job["message"] = f"扫描完成，共 {len(proxies)} 个节点{suffix}"
+                await self._write_progress(job)
         except asyncio.CancelledError:
             job["status"] = "cancelled"
             job["message"] = "扫描已取消"
             job["current_node"] = None
+            job["finished_at"] = _now()
+            await self._safe_write_progress(job)
         except Exception as exc:
             job["status"] = "failed"
             job["message"] = "扫描任务失败"
             job["current_node"] = None
+            job["finished_at"] = _now()
             job["error"] = _short_error(exc)
+            await self._safe_write_progress(job)
         finally:
             if mihomo:
                 await mihomo.stop()
             shutil.rmtree(work_dir, ignore_errors=True)
-            job["finished_at"] = _now()
+            job["finished_at"] = job.get("finished_at") or _now()
+
+    async def _write_progress(self, job: dict[str, Any]) -> None:
+        result_store.write_progress(job["id"], _progress(job))
+
+    async def _safe_write_progress(self, job: dict[str, Any]) -> None:
+        try:
+            if (RESULTS_DIR / job["id"]).exists():
+                await self._write_progress(job)
+        except (OSError, ResultStoreError):
+            pass
 
 
-def _failed_node(node_name: str, node_type: str, exc: Exception) -> dict[str, Any]:
+def _progress(job: dict[str, Any]) -> dict[str, Any]:
     return {
+        "job_id": job["id"],
+        "status": job.get("status"),
+        "phase": job.get("message"),
+        "total": job.get("total", 0),
+        "skipped": job.get("skipped", 0),
+        "completed": job.get("completed", 0),
+        "success_count": job.get("success_count", 0),
+        "partial_count": job.get("partial_count", 0),
+        "failed_count": job.get("failed_count", 0),
+        "current_node": job.get("current_node"),
+        "manifest_ready": job.get("manifest_ready", False),
+        "updated_at": _now(),
+        "error": job.get("error"),
+    }
+
+
+def _count_result(job: dict[str, Any], result: dict[str, Any]) -> None:
+    status = result.get("status")
+    if status == "success":
+        job["success_count"] += 1
+    elif status == "partial":
+        job["partial_count"] += 1
+    else:
+        job["failed_count"] += 1
+
+
+def _failed_node(
+    job_id: str,
+    index: int,
+    node_name: str,
+    node_type: str,
+    exc: Exception,
+    *,
+    mihomo_error: str = "",
+    mihomo: MihomoProcess | None = None,
+) -> dict[str, Any]:
+    error = _merge_error(
+        _short_error(exc),
+        _summarize_mihomo_error(mihomo_error) if mihomo_error else None,
+    )
+    return {
+        "schema_version": 1,
+        "job_id": job_id,
+        "node_index": index,
         "node": node_name,
         "type": node_type,
         "status": "failed",
-        "exit_ip": "",
+        "error": error,
+        "phase": "selector" if isinstance(exc, MihomoError) else "collector",
+        "started_at": _now(),
+        "finished_at": _now(),
+        "exit_ip": None,
+        "selected_proxy": None,
+        "requested_proxy": node_name,
+        "proxy_evidence": {
+            "transport": "workspace_mihomo_mixed_port",
+            "proxy_url": mihomo.proxy_url if mihomo else None,
+            "mihomo_instance": mihomo.instance_id if mihomo else None,
+            "selector": MihomoProcess.group_name,
+            "requested_proxy": node_name,
+            "selection_confirmed": False,
+            "target_origin": "https://ip.net.coffee",
+            "trust_env": False,
+            "direct_fallback": False,
+        },
+        "requests": {},
+        "coffee": {},
+        "completeness": {
+            "complete": False,
+            "required": {"page": False, "trace": False, "lookup": False},
+            "optional": {},
+            "missing": ["selector_or_collector"],
+        },
+        "transport_error": error,
         "cidr": "",
         "rdns": "",
         "ai_verdict": "",
-        "egress_ips": {"cf": "", "gpt": "", "claude": ""},
         "location": "",
         "score": None,
-        "gpt_access": "",
-        "claude_access": "",
         "is_residential": None,
         "is_datacenter": None,
         "is_native": None,
@@ -162,10 +330,26 @@ def _failed_node(node_name: str, node_type: str, exc: Exception) -> dict[str, An
         "global_ping": [],
         "port_scan": None,
         "ping_check": None,
+        "related_domains": [],
         "elapsed_ms": 0,
-        "pages": {},
-        "error": _short_error(exc),
     }
+
+
+def _summarize_mihomo_error(message: str) -> str:
+    if "dns resolve failed" in message:
+        return "节点服务器域名无法解析"
+    if "REALITY authentication failed" in message:
+        return "节点 REALITY 认证失败"
+    if "context deadline exceeded" in message:
+        return "连接节点服务器超时"
+    if "connection refused" in message:
+        return "节点服务器拒绝连接"
+    return "Mihomo 节点连接失败"
+
+
+def _merge_error(*messages: str | None) -> str:
+    parts = [" ".join(message.split()) for message in messages if message]
+    return "；".join(dict.fromkeys(parts))[:2000]
 
 
 def _now() -> str:
@@ -176,4 +360,5 @@ def _short_error(exc: Exception) -> str:
     return " ".join(str(exc).split())[:1000] or exc.__class__.__name__
 
 
+# Imported by FastAPI at module scope; one manager owns all active tasks.
 job_manager = ScanJobManager()

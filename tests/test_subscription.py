@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from backend.app.subscription import SubscriptionError, parse_subscription, validate_public_url
+from backend.app.subscription import (
+    SubscriptionError,
+    extract_subscription_dns,
+    parse_subscription,
+    validate_public_url,
+)
 
 
 def test_parse_mihomo_yaml_subscription() -> None:
@@ -20,11 +25,25 @@ proxies:
     port: 443
     password: secret
 """
-
     proxies = parse_subscription(content, max_nodes=10)
-
     assert [proxy["name"] for proxy in proxies] == ["node-a", "node-b"]
     assert proxies[1]["type"] == "trojan"
+
+
+def test_extract_subscription_dns_returns_mapping() -> None:
+    content = b"""
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  nameserver:
+    - https://dns.example/dns-query
+proxies: []
+"""
+    assert extract_subscription_dns(content) == {
+        "enable": True,
+        "enhanced-mode": "fake-ip",
+        "nameserver": ["https://dns.example/dns-query"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -38,6 +57,8 @@ proxies:
             "重名",
         ),
         (b"proxies:\n  - name: no-type", "缺少有效类型"),
+        (b"proxies:\n  - {name: direct, type: direct}", "直连/拒绝"),
+        (b"proxies:\n  - {name: reject, type: reject}", "直连/拒绝"),
     ],
 )
 def test_parse_subscription_rejects_invalid_documents(content: bytes, message: str) -> None:
@@ -47,9 +68,24 @@ def test_parse_subscription_rejects_invalid_documents(content: bytes, message: s
 
 def test_parse_subscription_rejects_over_limit() -> None:
     content = b"proxies:\n  - {name: a, type: ss}\n  - {name: b, type: ss}\n"
-
     with pytest.raises(SubscriptionError, match="超过上限"):
         parse_subscription(content, max_nodes=1)
+
+
+def test_subscription_metadata_does_not_consume_node_limit() -> None:
+    content = """
+proxies:
+  - name: node-a
+    type: ss
+  - name: 剩余流量：500 GB
+  - name: 套餐到期：2026-11-01
+""".encode()
+    proxies = parse_subscription(content, max_nodes=1)
+    assert [proxy["name"] for proxy in proxies] == [
+        "node-a",
+        "剩余流量：500 GB",
+        "套餐到期：2026-11-01",
+    ]
 
 
 @pytest.mark.asyncio
@@ -60,14 +96,9 @@ def test_parse_subscription_rejects_over_limit() -> None:
         "http://[::1]/subscription",
         "http://localhost/subscription",
         "file:///tmp/subscription",
+        "https://user:pass@example.com/subscription",
     ],
 )
-async def test_validate_public_url_blocks_local_targets(url: str) -> None:
+async def test_validate_public_url_blocks_local_or_credential_targets(url: str) -> None:
     with pytest.raises(SubscriptionError):
         await validate_public_url(url)
-
-
-@pytest.mark.asyncio
-async def test_validate_real_test_subscription_url() -> None:
-    test_url = "https://sub.nekocloud.host/nekocloud/token=/05d194d5a0f47593060b9fe951a6313b"
-    await validate_public_url(test_url)

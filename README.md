@@ -1,59 +1,52 @@
 # Best IP
 
-通过工作区内的 Mihomo 核心逐个切换订阅节点，后端经 Mihomo 本地端口以 `ip.net.coffee/ip/` 的 IP lookup 为评分与基础信息主源，同时检测 GPT/Claude 实际服务端点延迟及 Coffee 全球 Ping，并把结果汇总到一个表格。扫描过程只使用 HTTP 请求，不下载或启动浏览器运行时。
+通过工作区内的 Mihomo 核心逐个切换订阅节点，只经当前任务的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端先为每个真实节点写入原子 JSON，校验所有节点并生成 `manifest.json`，前端随后才读取已完成的暂存结果。
 
-## 功能
+## 核心行为
 
-- 粘贴一个顶部含 `proxies` 的 Mihomo/Clash YAML 订阅地址。
-- Mihomo 只在 `127.0.0.1` 开启随机 mixed-port 和控制端口。
-- 节点之间依次切换；每个节点创建全新的 HTTP 连接池，避免旧代理隧道串线。
-- 每个节点直接请求：
-  - `https://ip.net.coffee/ip/` 与 `/api/ip/lookup/{ip}`，作为评分、地理、ASN、网络属性和风险字段的唯一主数据源。
-  - `chatgpt.com`、`api.openai.com`、`claude.ai` 与 `anthropic.com`，只记录实际接入状态和请求延迟。
-  - IP 页使用的全球 8 地 Ping、端口扫描和 Pingcheck 辅助接口。
-- 表格汇总出口 IP、位置、唯一 IP 评分、GPT/Claude 接入状态与 Coffee 全球 Ping；不再从 GPT/Claude 风险接口重复获取基础信息或评分。
-- 点击节点按需读取完整 HTTP 检测 JSON，轮询接口只返回轻量摘要。
-- 支持实时进度、停止任务、搜索、状态筛选、排序和明暗主题。
+- 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开订阅地址。
+- 订阅 metadata（流量、重置、到期等信息项）不会作为节点；每个真实节点恰好产生一条成功、部分或失败终态记录。
+- Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份。
+- Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径。
+- 不访问 GPT、Claude、OpenAI、Anthropic 或其他站外数据源；不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链。
+- 节点扫描阶段不做 Coffee 的宿主 DNS、固定 IP 连接或 direct fallback；所有 Coffee HTTP 请求都交给当前 Mihomo mixed-port。
+- 失败节点的 `exit_ip` 始终为 JSON `null`，并保存阶段、请求和 Mihomo 错误；不得使用入口 IP、节点名或宿主 IP 伪造结果。
 
-## 目录
+## 结果生命周期
+
+每个任务使用独立目录：
 
 ```text
-backend/app/                 FastAPI API 与 HTTP 扫描服务
-frontend/                    独立静态前端
-runtime/mihomo/mihomo.exe    本地 Windows x64 核心（不提交 Git）
-scripts/download_mihomo.py   跨平台核心下载与 SHA-256 校验
-tests/                       单元与 API 测试
-PLAN.md                      跨会话计划、进度与验证账本
+runtime/results/<job_id>/
+  nodes/0000.json
+  nodes/0001.json
+  progress.json
+  manifest.json
 ```
+
+节点文件和进度文件使用同目录临时文件、`flush`、`fsync`、`os.replace` 原子发布。`manifest.json` 只有在节点索引完整、状态/出口 IP 约束、文件大小和 SHA-256 校验都通过后才生成。任务 API 在 manifest 出现前只返回进度；单节点详情和导出在此之前返回 HTTP 409。
+
+`runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志，任务结束后清理；运行目录不提交 Git。Windows 用户态程序能保证的是应用层 Coffee 请求边界，不能声称隔离宿主物理网卡或其他进程的网络。
 
 ## Windows 本地运行
 
-要求：Windows x64、[uv](https://docs.astral.sh/uv/)。项目使用工作区 `.venv`，不需要全局安装 Python 包。
+要求：Windows x64、[uv](https://docs.astral.sh/uv/)。
 
 ```powershell
-# 安装/同步 Python 依赖到 .venv
 uv sync --dev
-
-# 若 runtime/mihomo/mihomo.exe 不存在，下载并校验官方最新核心
 uv run python scripts/download_mihomo.py
-
-# 启动本地前后端（后端同时托管 frontend 静态文件）
 uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-打开 <http://127.0.0.1:8000>。没有任何浏览器组件安装步骤。
-
-开发时也可单独托管前端：
-
-```powershell
-uv run python -m http.server 5173 --directory frontend
-```
+打开 <http://127.0.0.1:8000>。前端默认使用同源 `/api/...`，不会自动改写到固定 loopback API；分离开发时请在 HTML 的 `meta[name="api-base"]` 中显式配置后端地址。
 
 ## 验证
 
 ```powershell
+uv run pytest -q
 uv run ruff check .
-uv run pytest
+node --check frontend/app.js
+git diff --check
 ```
 
 健康检查：
@@ -64,7 +57,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/health
 
 ## API
 
-### 创建任务
+### 创建扫描
 
 ```http
 POST /api/scans
@@ -73,15 +66,15 @@ Content-Type: application/json
 {"subscription_url":"https://example.com/subscription"}
 ```
 
-返回 `202` 和任务 ID。订阅 URL 不会出现在任务查询结果中。
+响应 `202` 和任务 ID。订阅地址不会写入任务状态、manifest 或导出。
 
-### 查询进度与摘要
+### 查询进度/完成摘要
 
 ```http
 GET /api/scans/{id}
 ```
 
-状态可能为 `queued`、`preparing`、`running`、`completed`、`failed` 或 `cancelled`。`results` 随进度增量增加，但不包含体积较大的完整详情。
+扫描中只返回状态、计数、当前节点和空 `results`；状态为 `completed` 且 `manifest_ready=true` 后，才返回暂存 manifest 的轻量摘要。
 
 ### 查询单节点完整结果
 
@@ -89,47 +82,45 @@ GET /api/scans/{id}
 GET /api/scans/{id}/results/{index}
 ```
 
+仅在完成 manifest 后可用；结果直接从已校验节点 JSON 读取。
+
+### 导出完整任务 JSON
+
+```http
+GET /api/scans/{id}/export
+```
+
+仅在 manifest 完整校验通过后返回。导出包含 Coffee 原始结构化 payload、请求证据、完整性状态和每节点记录。
+
 ### 停止任务
 
 ```http
 DELETE /api/scans/{id}
 ```
 
-## 隐私和安全
+取消任务不会生成 completed manifest，也不会把未完成扫描伪装为完成。
 
-- 订阅仅允许公开 HTTP/HTTPS 地址；后端拒绝本机、内网、回环和保留地址，降低 SSRF 风险。
-- 用户提交的订阅 URL 不写日志、不存浏览器存储，也不返回扫描 API。前端按当前验收要求预填了公开测试 URL，正式部署前应替换或清空该默认值。
-- 节点凭据仅写入 `runtime/jobs/<任务 ID>` 临时目录，任务结束后删除。
-- Mihomo mixed-port 和 External Controller 都只监听 `127.0.0.1`，Controller 使用随机密钥。
-- 本项目没有用户认证。若部署到公网，必须在反向代理层增加认证、HTTPS、请求限速和并发限制。
+## 安全边界
+
+- 订阅 URL 仅允许公开 HTTP/HTTPS，拒绝认证信息、本机、内网、回环和保留地址；重定向逐跳重新验证。
+- 订阅下载和 Mihomo 节点连接属于准备/传输控制面；Coffee 数据面不复用其直连客户端或 DNS 解析路径。
+- 节点配置可能含代理凭据，只写入临时 Mihomo 目录并在任务结束清理；结果文件使用字段 allowlist，不保存订阅 URL。
+- 本项目没有用户认证。若部署到公网，必须在反向代理层增加认证、HTTPS、限速和并发限制。
 
 ## 配置
 
 | 变量 | 默认值 | 说明 |
 |---|---:|---|
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
-| `BEST_IP_MAX_NODES` | `500` | 单订阅节点上限；超过时明确报错 |
-| `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
-| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次 HTTP 检测超时 |
+| `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
+| `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数；节点扫描当前严格顺序 |
+| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 检测超时 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
-| `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 下载订阅超时 |
-
-## Docker / GitHub 部署
-
-Docker 构建会下载并校验当前最新 Linux x64 Mihomo，不安装浏览器运行时：
-
-```bash
-docker build -t best-ip .
-docker run --rm -p 8000:8000 best-ip
-```
-
-仓库包含 `.github/workflows/ci.yml`，推送或提交 PR 时执行 Ruff 和 Pytest。GitHub 仓库本身不能常驻 Python 服务；可将容器部署到支持长进程的平台。
+| `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
 
 ## 已知限制
 
-- 当前直接支持顶部含 `proxies` 列表的 UTF-8 Mihomo YAML。Base64 URI 列表和仅含远程 `proxy-providers` 的配置不会发送到第三方转换服务，而是返回明确错误。
-- 按要求不使用自动化浏览器，因此不采集必须由浏览器执行的 DNS 泄漏、WebRTC 和设备指纹；IP 风险、地理和评分由 IP lookup 采集，AI 页面只保留服务端点接入状态与延迟。
-- Coffee 全球 Ping 当前对 IPv6 可能返回 `no_request_id` 而没有延迟值；前端会明确标为上游未返回，不会误报成 8 地全部超时。
-- `ip.net.coffee` 是外部服务；网络波动、频率限制或接口改动可能产生部分结果。
-- 完整扫描耗时取决于节点数量和最慢节点。节点按顺序切换以保证结果属于正确出口。
-- 未提供真实订阅时，自动测试无法证明特定订阅节点的实际可用性。
+- 只支持顶部含 `proxies` 列表的 Mihomo YAML；URI 列表和仅含远程 `proxy-providers` 的配置返回明确错误。
+- 不启动浏览器，不采集浏览器专属的 DNS 泄漏、WebRTC 或设备指纹结果。
+- Coffee 接口、字段、限流和异步 pending 语义属于外部服务，改版时必须先更新页面证据和 URL allowlist。
+- 节点严格顺序切换是保证出口归属的基线；只有顺序真实验收通过后，才可另行实现独立 Mihomo worker 的有界并发。

@@ -9,6 +9,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 RUNTIME_DIR = ROOT_DIR / "runtime"
 JOBS_DIR = RUNTIME_DIR / "jobs"
+RESULTS_DIR = RUNTIME_DIR / "results"
 
 
 def _default_mihomo_path() -> Path:

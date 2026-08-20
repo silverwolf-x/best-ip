@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import ipaddress
+import re
 import socket
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -16,6 +18,18 @@ class SubscriptionError(ValueError):
 
 MIHOMO_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 PUBLIC_DOH_URL = "https://1.1.1.1/dns-query"
+SUBSCRIPTION_METADATA_PATTERNS = (
+    re.compile(r"^(?:剩余流量|流量剩余)[：:]\s*\d+(?:\.\d+)?\s*[KMGTPE]?B\b", re.I),
+    re.compile(r"^(?:距离下次重置(?:剩余)?|下次重置)[：:]\s*\d+\s*天"),
+    re.compile(r"^(?:套餐到期|到期时间)[：:]\s*\d{4}[-/.]\d{1,2}[-/.]\d{1,2}"),
+    re.compile(r"^官网[：:]\s*(?:https?://)?(?:[\w-]+\.)+[\w-]+", re.I),
+    re.compile(r"^群组[：:]\s*(?:https?://)?(?:t\.me/|(?:[\w-]+\.)+[\w-]+)", re.I),
+)
+
+
+def is_subscription_metadata(proxy: dict[str, Any]) -> bool:
+    name = str(proxy.get("name") or "").strip()
+    return any(pattern.match(name) for pattern in SUBSCRIPTION_METADATA_PATTERNS)
 
 
 async def validate_public_url(url: str) -> None:
@@ -124,6 +138,16 @@ async def download_subscription(
     raise SubscriptionError("订阅地址重定向次数过多")
 
 
+def extract_subscription_dns(content: bytes) -> dict[str, Any] | None:
+    try:
+        document = yaml.safe_load(content.decode("utf-8-sig"))
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if not isinstance(document, dict) or not isinstance(document.get("dns"), dict):
+        return None
+    return copy.deepcopy(document["dns"])
+
+
 def parse_subscription(content: bytes, *, max_nodes: int) -> list[dict[str, Any]]:
     try:
         document = yaml.safe_load(content.decode("utf-8-sig"))
@@ -136,20 +160,30 @@ def parse_subscription(content: bytes, *, max_nodes: int) -> list[dict[str, Any]
     proxies = document["proxies"]
     if not proxies:
         raise SubscriptionError("订阅中没有节点")
-    if len(proxies) > max_nodes:
-        raise SubscriptionError(f"订阅含 {len(proxies)} 个节点，超过上限 {max_nodes}")
+    detectable_count = sum(
+        1
+        for proxy in proxies
+        if not isinstance(proxy, dict) or not is_subscription_metadata(proxy)
+    )
+    if detectable_count > max_nodes:
+        raise SubscriptionError(f"订阅含 {detectable_count} 个节点，超过上限 {max_nodes}")
 
     names: set[str] = set()
     normalized: list[dict[str, Any]] = []
     for index, proxy in enumerate(proxies, start=1):
         if not isinstance(proxy, dict):
             raise SubscriptionError(f"第 {index} 个节点配置不是对象")
+        if is_subscription_metadata(proxy):
+            normalized.append(dict(proxy))
+            continue
         name = proxy.get("name")
         proxy_type = proxy.get("type")
         if not isinstance(name, str) or not name.strip():
             raise SubscriptionError(f"第 {index} 个节点缺少有效名称")
         if not isinstance(proxy_type, str) or not proxy_type.strip():
             raise SubscriptionError(f"节点“{name}”缺少有效类型")
+        if proxy_type.strip().lower() in {"direct", "reject"}:
+            raise SubscriptionError(f"节点“{name}”使用了不允许的直连/拒绝类型")
         if name in names:
             raise SubscriptionError(f"订阅含重名节点：“{name}”")
         names.add(name)

@@ -1,0 +1,5124 @@
+{
+  "id": "1aff3b23ea9f405b84e01919ed13229d",
+  "status": "completed",
+  "message": "扫描完成，共 20 个节点，已跳过 5 个订阅信息项",
+  "created_at": "2026-08-20T18:15:39.971986+00:00",
+  "finished_at": "2026-08-20T18:17:07.262781+00:00",
+  "total": 20,
+  "skipped": 5,
+  "completed": 20,
+  "current_node": null,
+  "results": [
+    {
+      "node": "🇭🇰香港•移联01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3583,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3239,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3564,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3564,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2327,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2678,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2678,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3326,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇭🇰香港•移联02",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3437,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3375,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2891,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2891,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3420,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3104,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3104,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3024,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇹🇼台湾•移联01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3647,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2847,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3631,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3631,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2834,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 1827,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 1827,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3361,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇸🇬新加坡•移联01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3661,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2989,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3644,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3644,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2724,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2446,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2446,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2788,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇸🇬新加坡•移联02",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3640,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2787,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3109,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3109,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3623,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3408,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3408,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2385,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇯🇵日本•移联01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3243,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3033,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3226,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3226,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2721,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2734,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2734,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2455,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇯🇵日本•移联02",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 4043,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2659,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3918,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3918,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 1466,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 4024,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 4024,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 1973,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇺🇸美国•移联01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3775,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3760,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3345,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3345,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3324,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3654,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3654,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2036,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇺🇸美国•移联02",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点服务器域名无法解析",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 3255,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3168,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 2599,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2599,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 1823,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3227,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3227,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2961,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇸🇬新加坡•联通01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点 REALITY 认证失败",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 4635,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3344,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3354,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3354,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3610,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3524,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3524,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 4608,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇯🇵日本•联通01",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；节点 REALITY 认证失败",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 4184,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3563,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 3963,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3963,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 2903,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 4166,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 4166,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 3752,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇭🇰香港•电信01",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "82.152.161.135",
+      "cidr": "82.152.161.0/24",
+      "rdns": "",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "82.152.161.135",
+        "gpt": "2602:fa4f:1ca:5d56:7249:a3cb:4828:9971",
+        "claude": "2602:fa4f:1ca:5d56:7249:a3cb:4828:9971"
+      },
+      "location": "Hong Kong Hong Kong Hytron Network Services Limited",
+      "score": 76,
+      "gpt_access": "chatgpt.com 可达 1694ms · api.openai.com 可达 1718ms",
+      "claude_access": "claude.ai 可达 1692ms · anthropic.com 可达 1689ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 202662,
+      "as_org": "Hytron Network Services Limited",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 2,
+          "status": "2 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 54,
+          "status": "54 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 34,
+          "status": "34 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 152,
+          "status": "152 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 143,
+          "status": "143 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 199,
+          "status": "199 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 172,
+          "status": "172 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "22": "open",
+        "8080": "closed",
+        "25": "closed",
+        "8443": "closed",
+        "80": "closed",
+        "443": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 3,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 5598,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "82.152.161.135",
+          "score": 76,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1654,
+            "data": "fl=1176f117\nh=ip.net.coffee\nip=82.152.161.135\nts=1787249806.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=HKG\nsliver=none\nhttp=http/1.1\nloc=HK\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/82.152.161.135",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 609,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "82.152.161.135",
+            "cidr": "82.152.161.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Hytron Network Services Limited",
+            "abuser_score": "0.0132 (Elevated)",
+            "datacenter_name": "hytron.io",
+            "asn": 202662,
+            "asOrganization": "Hytron Network Services Limited",
+            "country": "Hong Kong",
+            "countryCode": "hk",
+            "region": "",
+            "city": "Hong Kong",
+            "src": "g1",
+            "rdns": "",
+            "asname": "AS-Hytron",
+            "range": {
+              "first": "82.152.161.0",
+              "last": "82.152.161.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "residential",
+            "rpki_status": "valid",
+            "trust_score": 76,
+            "asn_tbps": "500-1000Gbps",
+            "asn_ipv4_count": 21760,
+            "asn_allocated": "2022-09-28",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Hong Kong",
+                "country_code": "hk",
+                "region": "",
+                "city": "Hong Kong",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Hong Kong",
+                "country_code": "hk",
+                "registered_country": "United Kingdom",
+                "registered_country_code": "gb",
+                "region": "",
+                "city": "Hong Kong",
+                "lat": 22.2842,
+                "lon": 114.1759,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "Hong Kong",
+                "country_code": "hk",
+                "region": "Kowloon",
+                "city": "Hong Kong",
+                "lat": 22.3193,
+                "lon": 114.169
+              },
+              {
+                "src": "g7",
+                "country": "Hong Kong",
+                "country_code": "hk",
+                "region": "Kowloon",
+                "city": "Hong Kong",
+                "lat": 22.3193,
+                "lon": 114.169
+              }
+            ],
+            "registered_country_code": "gb",
+            "registered_country": "United Kingdom",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "elevated",
+              "abuser_score_raw": "0.0132 (Elevated)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Hong Kong",
+                "country_code": "hk",
+                "region": "",
+                "city": "Hong Kong",
+                "seen_at": 1785777421
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 202662,
+                "asn_org": "Hytron Network Services Limited",
+                "seen_at": 1785777421
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Hytron Network Services Limited",
+                "company_type": "hosting",
+                "seen_at": 1785777422
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "2401:b60:e3b2:5d51:cbdb:b8ec:cdd5:3309",
+                "country_code": "tw",
+                "city": "",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787223920
+              },
+              {
+                "ip": "2401:b60:e200:10::1000",
+                "country_code": "hk",
+                "city": "Kau Wa Keng",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787188390
+              },
+              {
+                "ip": "2a0e:aa07:e04d:b067:af79:ea9f:cd5a:d4f7",
+                "country_code": "us",
+                "city": "Fremont",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787121959
+              },
+              {
+                "ip": "89.185.27.223",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787098249
+              },
+              {
+                "ip": "82.152.161.36",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787097428
+              },
+              {
+                "ip": "83.147.61.120",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "Private Customer",
+                "seen_at": 1787034785
+              },
+              {
+                "ip": "82.152.163.36",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1787025663
+              },
+              {
+                "ip": "82.152.165.61",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1786901227
+              },
+              {
+                "ip": "38.150.15.91",
+                "country_code": "us",
+                "city": "New York",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1786813680
+              },
+              {
+                "ip": "2401:b60:e0d8:5b::2",
+                "country_code": "hk",
+                "city": "",
+                "company": "Hytron Network Services Limited",
+                "seen_at": 1786798097
+              },
+              {
+                "ip": "83.147.60.245",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "IPXO",
+                "seen_at": 1786792737
+              },
+              {
+                "ip": "83.147.60.242",
+                "country_code": "hk",
+                "city": "Hong Kong",
+                "company": "IPXO",
+                "seen_at": 1786792458
+              }
+            ],
+            "isp": "Hytron Network Services Limited"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "2602:fa4f:1ca:5d56:7249:a3cb:4828:9971",
+          "access": "chatgpt.com 可达 1694ms · api.openai.com 可达 1718ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1694,
+            "data": "fl=80f162\nh=chatgpt.com\nip=2602:fa4f:1ca:5d56:7249:a3cb:4828:9971\nts=1787249806.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=TPE\nsliver=none\nhttp=http/1.1\nloc=TW\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1694,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1718,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "2602:fa4f:1ca:5d56:7249:a3cb:4828:9971",
+          "access": "claude.ai 可达 1692ms · anthropic.com 可达 1689ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1692,
+            "data": "fl=80f229\nh=claude.ai\nip=2602:fa4f:1ca:5d56:7249:a3cb:4828:9971\nts=1787249806.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=TPE\nsliver=none\nhttp=http/1.1\nloc=TW\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1692,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1689,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇭🇰香港•电信02",
+      "type": "vless",
+      "status": "failed",
+      "error": "ConnectError；未取得 ip.net.coffee 出口 IP；连接节点服务器超时",
+      "exit_ip": "",
+      "cidr": "",
+      "rdns": "",
+      "ai_verdict": "",
+      "egress_ips": {
+        "cf": "",
+        "gpt": "",
+        "claude": ""
+      },
+      "location": "",
+      "score": null,
+      "gpt_access": "chatgpt.com 不可达 · api.openai.com 不可达",
+      "claude_access": "claude.ai 不可达 · anthropic.com 不可达",
+      "is_residential": null,
+      "is_datacenter": null,
+      "is_native": null,
+      "traffic_profile": "未知",
+      "company_type": "未知",
+      "is_vpn": null,
+      "is_proxy": null,
+      "is_tor": null,
+      "is_crawler": null,
+      "is_abuser": null,
+      "security_status": "检测数据不足",
+      "asn": null,
+      "as_org": "",
+      "global_ping": [],
+      "port_scan": null,
+      "ping_check": null,
+      "elapsed_ms": 5023,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "failed",
+          "exit_ip": "",
+          "score": null,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 5007,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "lookup_request": {
+            "url": "",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 0,
+            "error": "未取得 ip.net.coffee 出口 IP"
+          },
+          "result": null,
+          "error": "ConnectError；未取得 ip.net.coffee 出口 IP"
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "chatgpt.com 不可达 · api.openai.com 不可达",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 5006,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 5006,
+              "error": "ConnectError"
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 5005,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "failed",
+          "exit_ip": "",
+          "access": "claude.ai 不可达 · anthropic.com 不可达",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": false,
+            "status_code": null,
+            "elapsed_ms": 5006,
+            "data": null,
+            "error": "ConnectError",
+            "error_type": "ConnectError"
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 5006,
+              "error": "ConnectError"
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": false,
+              "status_code": null,
+              "elapsed_ms": 5005,
+              "error": "ConnectError"
+            }
+          ],
+          "error": "ConnectError"
+        }
+      }
+    },
+    {
+      "node": "🇹🇼台湾•电信01",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "85.149.222.42",
+      "cidr": "85.149.222.0/24",
+      "rdns": "",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "85.149.222.42",
+        "gpt": "85.149.222.42",
+        "claude": "85.149.222.42"
+      },
+      "location": "Singapore Cylix",
+      "score": 72,
+      "gpt_access": "chatgpt.com 可达 1571ms · api.openai.com 可达 1569ms",
+      "claude_access": "claude.ai 可达 1618ms · anthropic.com 可达 1554ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 202400,
+      "as_org": "Taipei101 Network LTD",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 25,
+          "status": "25 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 245,
+          "status": "245 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 183,
+          "status": "183 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 141,
+          "status": "141 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 169,
+          "status": "169 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 206,
+          "status": "206 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 191,
+          "status": "191 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "22": "open",
+        "80": "closed",
+        "443": "closed",
+        "8443": "closed",
+        "8080": "closed",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 4,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4855,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "85.149.222.42",
+          "score": 72,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1499,
+            "data": "fl=80f450\nh=ip.net.coffee\nip=85.149.222.42\nts=1787249817.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=TPE\nsliver=none\nhttp=http/1.1\nloc=TW\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/85.149.222.42",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 518,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "85.149.222.42",
+            "cidr": "85.149.222.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Qiyuan Chen",
+            "abuser_score": "0.0156 (Elevated)",
+            "datacenter_name": "TAIPEI101 NETWORK LTD",
+            "asn": 202400,
+            "asOrganization": "Taipei101 Network LTD",
+            "country": "Singapore",
+            "countryCode": "sg",
+            "region": "",
+            "city": "",
+            "src": "g1",
+            "rdns": "",
+            "asname": "TAIPEI101-NETWORK-LLC",
+            "range": {
+              "first": "85.149.222.0",
+              "last": "85.149.222.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "residential",
+            "rpki_status": "valid",
+            "trust_score": 72,
+            "asn_tbps": "200-300Gbps",
+            "asn_ipv4_count": 256,
+            "asn_allocated": "2022-10-10",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Taiwan",
+                "country_code": "tw",
+                "registered_country": "Singapore",
+                "registered_country_code": "sg",
+                "region": "",
+                "city": "",
+                "lat": 24.0,
+                "lon": 121.0,
+                "accuracy_km": 200
+              },
+              {
+                "src": "g3",
+                "country": "Taiwan",
+                "country_code": "tw",
+                "region": "Taiwan",
+                "city": "Taitung",
+                "lat": 22.6621,
+                "lon": 121.49
+              },
+              {
+                "src": "g7",
+                "country": "Taiwan",
+                "country_code": "tw",
+                "region": "Taiwan",
+                "city": "Taitung",
+                "lat": 22.6621,
+                "lon": 121.49
+              }
+            ],
+            "registered_country_code": "sg",
+            "registered_country": "Singapore",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "elevated",
+              "abuser_score_raw": "0.0156 (Elevated)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "s5595de2a.adsl.online.nl",
+                "via": "rapiddns reverse-IP"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "",
+                "seen_at": 1785904191
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 202400,
+                "asn_org": "Taipei101 Network LTD",
+                "seen_at": 1785904191
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Qiyuan Chen",
+                "company_type": "hosting",
+                "seen_at": 1785904191
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "85.149.222.118",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1787047006
+              },
+              {
+                "ip": "85.149.222.57",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785564110
+              },
+              {
+                "ip": "2602:faa8:204:4f66::1",
+                "country_code": "us",
+                "city": "",
+                "company": "TAIPEI101 NETWORK LLC",
+                "seen_at": 1785564106
+              },
+              {
+                "ip": "85.149.222.62",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785498560
+              },
+              {
+                "ip": "85.149.222.109",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785180963
+              },
+              {
+                "ip": "85.149.222.90",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785169637
+              },
+              {
+                "ip": "85.149.222.99",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785168694
+              },
+              {
+                "ip": "85.149.222.24",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1785156704
+              },
+              {
+                "ip": "85.149.222.51",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1784437112
+              },
+              {
+                "ip": "85.149.222.103",
+                "country_code": "sg",
+                "city": "",
+                "company": "Qiyuan Chen",
+                "seen_at": 1783063089
+              },
+              {
+                "ip": "2602:faa8:204:37b4::1",
+                "country_code": "us",
+                "city": "",
+                "company": "TAIPEI101 NETWORK LLC",
+                "seen_at": 1782387696
+              }
+            ],
+            "isp": "Cylix"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "85.149.222.42",
+          "access": "chatgpt.com 可达 1571ms · api.openai.com 可达 1569ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1571,
+            "data": "fl=80f241\nh=chatgpt.com\nip=85.149.222.42\nts=1787249817.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=TPE\nsliver=010-tier1\nhttp=http/1.1\nloc=TW\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1571,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1569,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "85.149.222.42",
+          "access": "claude.ai 可达 1618ms · anthropic.com 可达 1554ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1618,
+            "data": "fl=80f433\nh=claude.ai\nip=85.149.222.42\nts=1787249817.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=TPE\nsliver=none\nhttp=http/1.1\nloc=TW\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1618,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1554,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇸🇬新加坡•电信01",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "172.104.40.39",
+      "cidr": "172.104.40.0/24",
+      "rdns": "172-104-40-39.ip.linodeusercontent.com",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "172.104.40.39",
+        "gpt": "172.104.40.39",
+        "claude": "172.104.40.39"
+      },
+      "location": "Singapore Singapore Akamai Connected Cloud",
+      "score": 68,
+      "gpt_access": "chatgpt.com 可达 1439ms · api.openai.com 可达 1455ms",
+      "claude_access": "claude.ai 可达 1654ms · anthropic.com 可达 1391ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 34,
+          "status": "34 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 75,
+          "status": "75 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 2,
+          "status": "2 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 168,
+          "status": "168 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 206,
+          "status": "206 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 165,
+          "status": "165 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 156,
+          "status": "156 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "8443": "closed",
+        "8080": "closed",
+        "443": "closed",
+        "22": "open",
+        "80": "closed",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 4,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 5095,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "172.104.40.39",
+          "score": 68,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 2088,
+            "data": "fl=1244f81\nh=ip.net.coffee\nip=172.104.40.39\nts=1787249822.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=none\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/172.104.40.39",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 204,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "172.104.40.39",
+            "cidr": "172.104.40.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode",
+            "abuser_score": "0.0282 (Elevated)",
+            "datacenter_name": "linode.akamai.com",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "Singapore",
+            "countryCode": "sg",
+            "region": "",
+            "city": "Singapore",
+            "src": "g1",
+            "rdns": "172-104-40-39.ip.linodeusercontent.com",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "172.104.40.0",
+              "last": "172.104.40.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "valid",
+            "trust_score": 68,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Singapore",
+                "country_code": "sg",
+                "registered_country": "United States",
+                "registered_country_code": "us",
+                "region": "",
+                "city": "Singapore",
+                "lat": 1.2872,
+                "lon": 103.8507,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "lat": 1.35208,
+                "lon": 103.82
+              },
+              {
+                "src": "g7",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "North West",
+                "city": "Singapore",
+                "lat": 1.35208,
+                "lon": 103.82
+              }
+            ],
+            "registered_country_code": "us",
+            "registered_country": "United States",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "elevated",
+              "abuser_score_raw": "0.0282 (Elevated)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "172-104-40-39.ip.linodeusercontent.com",
+                "via": "reverse DNS"
+              },
+              {
+                "domain": "linodeusercontent.com",
+                "via": "reverse DNS (root)"
+              },
+              {
+                "domain": "linode.com",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "serbizhub.net",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "unggul.net",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "vimilu.com",
+                "via": "rapiddns reverse-IP"
+              },
+              {
+                "domain": "li1620-39.members.linode.com",
+                "via": "rapiddns reverse-IP"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "seen_at": 1784630601
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1784630601
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode",
+                "company_type": "hosting",
+                "seen_at": 1784630601
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.104.40.39",
+          "access": "chatgpt.com 可达 1439ms · api.openai.com 可达 1455ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1439,
+            "data": "fl=632f185\nh=chatgpt.com\nip=172.104.40.39\nts=1787249822.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=none\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1439,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1455,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.104.40.39",
+          "access": "claude.ai 可达 1654ms · anthropic.com 可达 1391ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1654,
+            "data": "fl=963f31\nh=claude.ai\nip=172.104.40.39\nts=1787249822.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=none\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1654,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1391,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇸🇬新加坡•电信02",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "139.162.9.92",
+      "cidr": "139.162.0.1/32",
+      "rdns": "139-162-9-92.ip.linodeusercontent.com",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "139.162.9.92",
+        "gpt": "139.162.9.92",
+        "claude": "139.162.9.92"
+      },
+      "location": "Singapore Singapore Akamai Connected Cloud",
+      "score": 89,
+      "gpt_access": "chatgpt.com 可达 1457ms · api.openai.com 可达 1720ms",
+      "claude_access": "claude.ai 可达 1530ms · anthropic.com 可达 1467ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 31,
+          "status": "31 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 70,
+          "status": "70 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 2,
+          "status": "2 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 175,
+          "status": "175 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 179,
+          "status": "179 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 157,
+          "status": "157 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 156,
+          "status": "156 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "443": "closed",
+        "8443": "closed",
+        "8080": "closed",
+        "22": "open",
+        "80": "closed",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 4,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4607,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "139.162.9.92",
+          "score": 89,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1440,
+            "data": "fl=998f9\nh=ip.net.coffee\nip=139.162.9.92\nts=1787249827.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=none\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/139.162.9.92",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 196,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "139.162.9.92",
+            "cidr": "139.162.0.1/32",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode, LLC",
+            "abuser_score": "0.0597 (High)",
+            "datacenter_name": "Linode",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "Singapore",
+            "countryCode": "sg",
+            "region": "",
+            "city": "Singapore",
+            "src": "g1",
+            "rdns": "139-162-9-92.ip.linodeusercontent.com",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "139.162.0.1",
+              "last": "139.162.0.1",
+              "count": 1,
+              "prefix": 32
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "notfound",
+            "trust_score": 89,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Singapore",
+                "country_code": "sg",
+                "registered_country": "The Netherlands",
+                "registered_country_code": "nl",
+                "region": "",
+                "city": "Singapore",
+                "lat": 1.2872,
+                "lon": 103.8507,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "lat": 1.35208,
+                "lon": 103.82
+              },
+              {
+                "src": "g7",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "North West",
+                "city": "Singapore",
+                "lat": 1.35208,
+                "lon": 103.82
+              }
+            ],
+            "registered_country_code": "nl",
+            "registered_country": "The Netherlands",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "high",
+              "abuser_score_raw": "0.0597 (High)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "139-162-9-92.ip.linodeusercontent.com",
+                "via": "reverse DNS"
+              },
+              {
+                "domain": "linodeusercontent.com",
+                "via": "reverse DNS (root)"
+              },
+              {
+                "domain": "linode.com",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "hknis.net",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "autobuy.tw",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "bidderbidease.yeahtargeter.com",
+                "via": "rapiddns reverse-IP"
+              },
+              {
+                "domain": "gw-sin-bid.yeahtargeter.com",
+                "via": "rapiddns reverse-IP"
+              },
+              {
+                "domain": "li851-92.members.linode.com",
+                "via": "rapiddns reverse-IP"
+              },
+              {
+                "domain": "sg.ngk.ink",
+                "via": "rapiddns reverse-IP"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Singapore",
+                "country_code": "sg",
+                "region": "",
+                "city": "Singapore",
+                "seen_at": 1785572385
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1785572385
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode, LLC",
+                "company_type": "hosting",
+                "seen_at": 1785572385
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.9.92",
+          "access": "chatgpt.com 可达 1457ms · api.openai.com 可达 1720ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1457,
+            "data": "fl=411f24\nh=chatgpt.com\nip=139.162.9.92\nts=1787249827.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=010-tier1\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1457,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1720,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.9.92",
+          "access": "claude.ai 可达 1530ms · anthropic.com 可达 1467ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1530,
+            "data": "fl=410f576\nh=claude.ai\nip=139.162.9.92\nts=1787249827.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SIN\nsliver=none\nhttp=http/1.1\nloc=SG\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1530,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1467,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇯🇵日本•电信01",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "139.162.122.173",
+      "cidr": "139.162.122.0/24",
+      "rdns": "",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "139.162.122.173",
+        "gpt": "139.162.122.173",
+        "claude": "139.162.122.173"
+      },
+      "location": "Japan Tokyo Tokyo Akamai Connected Cloud",
+      "score": 75,
+      "gpt_access": "chatgpt.com 可达 1199ms · api.openai.com 可达 1200ms",
+      "claude_access": "claude.ai 可达 1192ms · anthropic.com 可达 1198ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 54,
+          "status": "54 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 2,
+          "status": "2 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 69,
+          "status": "69 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 105,
+          "status": "105 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 135,
+          "status": "135 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 229,
+          "status": "229 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 250,
+          "status": "250 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "8443": "closed",
+        "80": "closed",
+        "8080": "closed",
+        "443": "closed",
+        "22": "open",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 4,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4534,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "139.162.122.173",
+          "score": 75,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1189,
+            "data": "fl=1008f67\nh=ip.net.coffee\nip=139.162.122.173\nts=1787249831.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=none\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/139.162.122.173",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 191,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "139.162.122.173",
+            "cidr": "139.162.122.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode, LLC",
+            "abuser_score": "0.0305 (High)",
+            "datacenter_name": "linode.akamai.com",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "Japan",
+            "countryCode": "jp",
+            "region": "Tokyo",
+            "city": "Tokyo",
+            "src": "g1",
+            "rdns": "",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "139.162.122.0",
+              "last": "139.162.122.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "notfound",
+            "trust_score": 75,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Japan",
+                "country_code": "jp",
+                "registered_country": "Netherlands",
+                "registered_country_code": "nl",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": 35.6893,
+                "lon": 139.6899,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Shibuya City",
+                "lat": 35.6764,
+                "lon": 139.65
+              },
+              {
+                "src": "g7",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": 35.6893,
+                "lon": 139.6899
+              }
+            ],
+            "registered_country_code": "nl",
+            "registered_country": "Netherlands",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "high",
+              "abuser_score_raw": "0.0305 (High)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "linodeusercontent.com",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "li1606-173.members.linode.com",
+                "via": "rapiddns reverse-IP"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "seen_at": 1777700088
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1777700088
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode, LLC",
+                "company_type": "hosting",
+                "seen_at": 1777700088
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.122.173",
+          "access": "chatgpt.com 可达 1199ms · api.openai.com 可达 1200ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1199,
+            "data": "fl=1009f26\nh=chatgpt.com\nip=139.162.122.173\nts=1787249831.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=none\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1199,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1200,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.122.173",
+          "access": "claude.ai 可达 1192ms · anthropic.com 可达 1198ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1192,
+            "data": "fl=1009f73\nh=claude.ai\nip=139.162.122.173\nts=1787249831.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=none\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1192,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1198,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇯🇵日本•电信02",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "139.162.83.128",
+      "cidr": "139.162.83.0/24",
+      "rdns": "139-162-83-128.ip.linodeusercontent.com",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "139.162.83.128",
+        "gpt": "139.162.83.128",
+        "claude": "139.162.83.128"
+      },
+      "location": "Japan Tokyo Tokyo Akamai Connected Cloud",
+      "score": 46,
+      "gpt_access": "chatgpt.com 可达 1289ms · api.openai.com 可达 1288ms",
+      "claude_access": "claude.ai 可达 1287ms · anthropic.com 可达 1288ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人机混合 / 爬虫偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": true,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": true,
+      "security_status": "⚠️ 代理 · 滥用记录",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 54,
+          "status": "54 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 2,
+          "status": "2 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 110,
+          "status": "110 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 183,
+          "status": "183 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 128,
+          "status": "128 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 229,
+          "status": "229 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 256,
+          "status": "256 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "22": "open",
+        "8443": "closed",
+        "8080": "closed",
+        "80": "closed",
+        "443": "closed",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 4,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4989,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "139.162.83.128",
+          "score": 46,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1290,
+            "data": "fl=1173f23\nh=ip.net.coffee\nip=139.162.83.128\nts=1787249836.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=none\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/139.162.83.128",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 408,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "139.162.83.128",
+            "cidr": "139.162.83.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": true,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": true,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode, LLC",
+            "abuser_score": "0.0305 (High)",
+            "datacenter_name": "linode.akamai.com",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "Japan",
+            "countryCode": "jp",
+            "region": "Tokyo",
+            "city": "Tokyo",
+            "src": "g1",
+            "rdns": "139-162-83-128.ip.linodeusercontent.com",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "139.162.83.0",
+              "last": "139.162.83.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "notfound",
+            "trust_score": 46,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": true,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "Japan",
+                "country_code": "jp",
+                "registered_country": "The Netherlands",
+                "registered_country_code": "nl",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": 35.6893,
+                "lon": 139.6899,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Shibuya City",
+                "lat": 35.6764,
+                "lon": 139.65
+              },
+              {
+                "src": "g7",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "lat": 35.6893,
+                "lon": 139.6899
+              }
+            ],
+            "registered_country_code": "nl",
+            "registered_country": "The Netherlands",
+            "intelligence": {
+              "threats": [
+                {
+                  "label": "Open proxy",
+                  "severity": "bad"
+                },
+                {
+                  "label": "历史滥用记录",
+                  "severity": "warn"
+                }
+              ],
+              "abuser_level": "high",
+              "abuser_score_raw": "0.0305 (High)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "139-162-83-128.ip.linodeusercontent.com",
+                "via": "reverse DNS"
+              },
+              {
+                "domain": "linodeusercontent.com",
+                "via": "reverse DNS (root)"
+              },
+              {
+                "domain": "linode.com",
+                "via": "neighbor rDNS /24"
+              },
+              {
+                "domain": "l-1.us",
+                "via": "neighbor rDNS /24"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "Japan",
+                "country_code": "jp",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "seen_at": 1783491483
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1783491483
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode, LLC",
+                "company_type": "hosting",
+                "seen_at": 1783491483
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.83.128",
+          "access": "chatgpt.com 可达 1289ms · api.openai.com 可达 1288ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1289,
+            "data": "fl=448f565\nh=chatgpt.com\nip=139.162.83.128\nts=1787249836.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=001-tier1\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1289,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 1288,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "139.162.83.128",
+          "access": "claude.ai 可达 1287ms · anthropic.com 可达 1288ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 1287,
+            "data": "fl=382f317\nh=claude.ai\nip=139.162.83.128\nts=1787249836.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=NRT\nsliver=none\nhttp=http/1.1\nloc=JP\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1287,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1288,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇺🇸美国•电信01",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "172.238.39.144",
+      "cidr": "172.238.39.0/24",
+      "rdns": "172-238-39-144.ip.linodeusercontent.com",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "172.238.39.144",
+        "gpt": "172.238.39.144",
+        "claude": "172.238.39.144"
+      },
+      "location": "United States Washington Tukwila Akamai Connected Cloud",
+      "score": 74,
+      "gpt_access": "chatgpt.com 可达 986ms · api.openai.com 可达 960ms",
+      "claude_access": "claude.ai 可达 958ms · anthropic.com 可达 975ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 157,
+          "status": "157 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 124,
+          "status": "124 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 193,
+          "status": "193 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 31,
+          "status": "31 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 33,
+          "status": "33 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 160,
+          "status": "160 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 138,
+          "status": "138 ms",
+          "error": null
+        }
+      ],
+      "port_scan": null,
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 2,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4484,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "172.238.39.144",
+          "score": 74,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 991,
+            "data": "fl=745f99\nh=ip.net.coffee\nip=172.238.39.144\nts=1787249841.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=none\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/172.238.39.144",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 203,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "172.238.39.144",
+            "cidr": "172.238.39.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode",
+            "abuser_score": "0.004 (Low)",
+            "datacenter_name": "linode.akamai.com",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "United States",
+            "countryCode": "us",
+            "region": "Washington",
+            "city": "Tukwila",
+            "src": "g1",
+            "rdns": "172-238-39-144.ip.linodeusercontent.com",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "172.238.39.0",
+              "last": "172.238.39.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "valid",
+            "trust_score": 74,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "United States",
+                "country_code": "us",
+                "registered_country": "United States",
+                "registered_country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4775,
+                "lon": -122.2589,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4748,
+                "lon": -122.273
+              },
+              {
+                "src": "g7",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4775,
+                "lon": -122.2589
+              }
+            ],
+            "registered_country_code": "us",
+            "registered_country": "United States",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "low",
+              "abuser_score_raw": "0.004 (Low)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "172-238-39-144.ip.linodeusercontent.com",
+                "via": "reverse DNS"
+              },
+              {
+                "domain": "linodeusercontent.com",
+                "via": "reverse DNS (root)"
+              },
+              {
+                "domain": "linode.com",
+                "via": "neighbor rDNS /24"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "seen_at": 1784083043
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1784083043
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode",
+                "company_type": "hosting",
+                "seen_at": 1784083043
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.238.39.144",
+          "access": "chatgpt.com 可达 986ms · api.openai.com 可达 960ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 986,
+            "data": "fl=745f151\nh=chatgpt.com\nip=172.238.39.144\nts=1787249841.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=none\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 986,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 960,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.238.39.144",
+          "access": "claude.ai 可达 958ms · anthropic.com 可达 975ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 958,
+            "data": "fl=543f239\nh=claude.ai\nip=172.238.39.144\nts=1787249841.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=none\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 958,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 975,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "node": "🇺🇸美国•电信02",
+      "type": "vless",
+      "status": "success",
+      "error": null,
+      "exit_ip": "172.239.175.28",
+      "cidr": "172.239.175.0/24",
+      "rdns": "172-239-175-28.ip.linodeusercontent.com",
+      "ai_verdict": "IDC",
+      "egress_ips": {
+        "cf": "172.239.175.28",
+        "gpt": "172.239.175.28",
+        "claude": "172.239.175.28"
+      },
+      "location": "United States Washington Tukwila Akamai Connected Cloud",
+      "score": 85,
+      "gpt_access": "chatgpt.com 可达 980ms · api.openai.com 可达 977ms",
+      "claude_access": "claude.ai 可达 974ms · anthropic.com 可达 1022ms",
+      "is_residential": false,
+      "is_datacenter": true,
+      "is_native": null,
+      "traffic_profile": "人类访问偏多",
+      "company_type": "Hosting（机房托管）",
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "is_crawler": false,
+      "is_abuser": false,
+      "security_status": "🛡️ 极度纯净 (无风险标记)",
+      "asn": 63949,
+      "as_org": "Akamai Technologies, Inc.",
+      "global_ping": [
+        {
+          "code": "cn",
+          "name": "上海",
+          "node": "n01",
+          "ok": false,
+          "elapsed_ms": null,
+          "status": "超时",
+          "error": null
+        },
+        {
+          "code": "hk",
+          "name": "香港",
+          "node": "n02",
+          "ok": true,
+          "elapsed_ms": 152,
+          "status": "152 ms",
+          "error": null
+        },
+        {
+          "code": "jp",
+          "name": "东京",
+          "node": "n03",
+          "ok": true,
+          "elapsed_ms": 124,
+          "status": "124 ms",
+          "error": null
+        },
+        {
+          "code": "sg",
+          "name": "新加坡",
+          "node": "n04",
+          "ok": true,
+          "elapsed_ms": 169,
+          "status": "169 ms",
+          "error": null
+        },
+        {
+          "code": "us",
+          "name": "洛杉矶",
+          "node": "n09",
+          "ok": true,
+          "elapsed_ms": 29,
+          "status": "29 ms",
+          "error": null
+        },
+        {
+          "code": "ca",
+          "name": "温哥华",
+          "node": "n11",
+          "ok": true,
+          "elapsed_ms": 33,
+          "status": "33 ms",
+          "error": null
+        },
+        {
+          "code": "de",
+          "name": "法兰克福",
+          "node": "n13",
+          "ok": true,
+          "elapsed_ms": 162,
+          "status": "162 ms",
+          "error": null
+        },
+        {
+          "code": "fr",
+          "name": "巴黎",
+          "node": "n15",
+          "ok": true,
+          "elapsed_ms": 138,
+          "status": "138 ms",
+          "error": null
+        }
+      ],
+      "port_scan": {
+        "22": "open",
+        "80": "closed",
+        "443": "closed",
+        "8443": "closed",
+        "8080": "closed",
+        "25": "closed"
+      },
+      "ping_check": {
+        "verdict": "reachable",
+        "reachable": true,
+        "ok_nodes": 2,
+        "total_nodes": 4,
+        "ok_ratio": 1.0
+      },
+      "elapsed_ms": 4004,
+      "pages": {
+        "ip": {
+          "name": "ip",
+          "url": "https://ip.net.coffee/ip/",
+          "status": "success",
+          "exit_ip": "172.239.175.28",
+          "score": 85,
+          "trace": {
+            "url": "https://ip.net.coffee/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 982,
+            "data": "fl=543f257\nh=ip.net.coffee\nip=172.239.175.28\nts=1787249845.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=none\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "lookup_request": {
+            "url": "https://ip.net.coffee/api/ip/lookup/172.239.175.28",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 191,
+            "error": null,
+            "error_type": null
+          },
+          "result": {
+            "ip": "172.239.175.28",
+            "cidr": "172.239.175.0/24",
+            "is_bogon": false,
+            "is_datacenter": true,
+            "isResidential": false,
+            "is_vpn": false,
+            "is_proxy": false,
+            "is_tor": false,
+            "is_crawler": false,
+            "is_abuser": false,
+            "is_mobile": false,
+            "company_type": "hosting",
+            "company_name": "Linode",
+            "abuser_score": "0.0037 (Low)",
+            "datacenter_name": "linode.akamai.com",
+            "asn": 63949,
+            "asOrganization": "Akamai Technologies, Inc.",
+            "country": "United States",
+            "countryCode": "us",
+            "region": "Washington",
+            "city": "Tukwila",
+            "src": "g1",
+            "rdns": "172-239-175-28.ip.linodeusercontent.com",
+            "asname": "AKAMAI-LINODE-AP",
+            "range": {
+              "first": "172.239.175.0",
+              "last": "172.239.175.255",
+              "count": 256,
+              "prefix": 24
+            },
+            "asn_kind": "hosting",
+            "rpki_status": "valid",
+            "trust_score": 85,
+            "asn_tbps": "1-5Tbps",
+            "asn_ipv4_count": 1328906,
+            "asn_allocated": "2015-02-16",
+            "reddit_blocked": false,
+            "ai_verdict": {
+              "label": "IDC",
+              "confidence": 99,
+              "reasoning": "Provider metadata already labels this as a datacenter IP"
+            },
+            "geo_sources": [
+              {
+                "src": "g1",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": null,
+                "lon": null
+              },
+              {
+                "src": "g2",
+                "country": "United States",
+                "country_code": "us",
+                "registered_country": "United States",
+                "registered_country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4775,
+                "lon": -122.2589,
+                "accuracy_km": 20
+              },
+              {
+                "src": "g3",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4748,
+                "lon": -122.273
+              },
+              {
+                "src": "g7",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "lat": 47.4775,
+                "lon": -122.2589
+              }
+            ],
+            "registered_country_code": "us",
+            "registered_country": "United States",
+            "intelligence": {
+              "threats": [],
+              "abuser_level": "low",
+              "abuser_score_raw": "0.0037 (Low)",
+              "rep_threat": null
+            },
+            "vpn_trace": null,
+            "related_domains": [
+              {
+                "domain": "172-239-175-28.ip.linodeusercontent.com",
+                "via": "reverse DNS"
+              },
+              {
+                "domain": "linodeusercontent.com",
+                "via": "reverse DNS (root)"
+              }
+            ],
+            "location_history": [
+              {
+                "src": "g1",
+                "country": "United States",
+                "country_code": "us",
+                "region": "Washington",
+                "city": "Tukwila",
+                "seen_at": 1786360763
+              }
+            ],
+            "asn_history": [
+              {
+                "asn": 63949,
+                "asn_org": "Akamai Technologies, Inc.",
+                "seen_at": 1786360763
+              }
+            ],
+            "company_history": [
+              {
+                "company_name": "Linode",
+                "company_type": "hosting",
+                "seen_at": 1786360763
+              }
+            ],
+            "dc_neighbors": [
+              {
+                "ip": "104.105.140.252",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Akamai Technologies, Inc.",
+                "seen_at": 1787245929
+              },
+              {
+                "ip": "2400:8901:e003:b2f3:f34e:ed77:21e5:cf5f",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787242300
+              },
+              {
+                "ip": "2400:8905::2000:ccff:fe32:7cce",
+                "country_code": "jp",
+                "city": "Osaka",
+                "company": "LINODE LLC - network administrator",
+                "seen_at": 1787239798
+              },
+              {
+                "ip": "172.104.117.152",
+                "country_code": "jp",
+                "city": "Tokyo",
+                "company": "Linode",
+                "seen_at": 1787238800
+              },
+              {
+                "ip": "172.236.155.10",
+                "country_code": "sg",
+                "city": "Singapore",
+                "company": "Linode",
+                "seen_at": 1787229135
+              },
+              {
+                "ip": "172.232.187.173",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228674
+              },
+              {
+                "ip": "172.235.55.37",
+                "country_code": "us",
+                "city": "Los Angeles",
+                "company": "Linode",
+                "seen_at": 1787228511
+              },
+              {
+                "ip": "172.234.228.161",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787228463
+              },
+              {
+                "ip": "172.237.172.225",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228380
+              },
+              {
+                "ip": "172.234.132.128",
+                "country_code": "us",
+                "city": "Ashburn",
+                "company": "Linode",
+                "seen_at": 1787228314
+              },
+              {
+                "ip": "2600:3c00::2000:6bff:fecd:6dcf",
+                "country_code": "us",
+                "city": "Richardson",
+                "company": "Linode",
+                "seen_at": 1787227784
+              },
+              {
+                "ip": "172.238.34.181",
+                "country_code": "us",
+                "city": "Tukwila",
+                "company": "Linode",
+                "seen_at": 1787224679
+              }
+            ],
+            "isp": "Akamai Connected Cloud"
+          },
+          "error": null
+        },
+        "gpt": {
+          "name": "gpt",
+          "url": "https://chatgpt.com/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.239.175.28",
+          "access": "chatgpt.com 可达 980ms · api.openai.com 可达 977ms",
+          "trace": {
+            "url": "https://chatgpt.com/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 980,
+            "data": "fl=731f118\nh=chatgpt.com\nip=172.239.175.28\nts=1787249845.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=010-tier1\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "chatgpt.com",
+              "url": "https://chatgpt.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 980,
+              "error": null
+            },
+            {
+              "name": "api.openai.com",
+              "url": "https://api.openai.com/",
+              "ok": true,
+              "status_code": 421,
+              "elapsed_ms": 977,
+              "error": null
+            }
+          ],
+          "error": null
+        },
+        "claude": {
+          "name": "claude",
+          "url": "https://claude.ai/cdn-cgi/trace",
+          "status": "success",
+          "exit_ip": "172.239.175.28",
+          "access": "claude.ai 可达 974ms · anthropic.com 可达 1022ms",
+          "trace": {
+            "url": "https://claude.ai/cdn-cgi/trace",
+            "ok": true,
+            "status_code": 200,
+            "elapsed_ms": 974,
+            "data": "fl=28f825\nh=claude.ai\nip=172.239.175.28\nts=1787249845.000\nvisit_scheme=https\nuag=Mozilla/5.0 best-ip/0.1 (Windows NT 10.0; Win64; x64)\ncolo=SEA\nsliver=none\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n",
+            "error": null,
+            "error_type": null
+          },
+          "connectivity": [
+            {
+              "name": "claude.ai",
+              "url": "https://claude.ai/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 974,
+              "error": null
+            },
+            {
+              "name": "anthropic.com",
+              "url": "https://www.anthropic.com/cdn-cgi/trace",
+              "ok": true,
+              "status_code": 200,
+              "elapsed_ms": 1022,
+              "error": null
+            }
+          ],
+          "error": null
+        }
+      }
+    }
+  ],
+  "error": null
+}

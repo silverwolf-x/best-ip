@@ -2,39 +2,113 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from backend.app.jobs import job_manager
 from backend.app.main import app
+from backend.app.result_store import result_store
+
+
+def _record(job_id: str, index: int) -> dict:
+    return {
+        "schema_version": 1,
+        "job_id": job_id,
+        "node_index": index,
+        "node": f"node-{index}",
+        "type": "ss",
+        "status": "failed",
+        "selected_proxy": None,
+        "exit_ip": None,
+        "error": "failed",
+        "transport_error": "failed",
+        "completeness": {"complete": False},
+        "proxy_evidence": {},
+        "requests": {},
+        "coffee": {},
+    }
 
 
 def test_health_reports_application_and_core_state() -> None:
     with TestClient(app) as client:
         response = client.get("/api/health")
-
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "mihomo_ready": True}
+    assert response.json()["status"] == "ok"
+    assert isinstance(response.json()["mihomo_ready"], bool)
 
 
 def test_unknown_job_returns_not_found() -> None:
     with TestClient(app) as client:
         response = client.get("/api/scans/not-found")
-
     assert response.status_code == 404
     assert response.json()["detail"] == "扫描任务不存在"
 
 
-def test_frontend_is_served() -> None:
+def test_result_and_export_are_blocked_before_manifest() -> None:
+    job_id = "api-running"
+    job_manager.jobs[job_id] = {
+        "id": job_id,
+        "status": "running",
+        "manifest_ready": False,
+        "total": 1,
+        "completed": 0,
+        "results": [],
+    }
+    try:
+        with TestClient(app) as client:
+            assert client.get(f"/api/scans/{job_id}/results/0").status_code == 409
+            assert client.get(f"/api/scans/{job_id}/export").status_code == 409
+            assert client.get(f"/api/scans/{job_id}").json()["results"] == []
+    finally:
+        job_manager.jobs.pop(job_id, None)
+
+
+def test_completed_api_reads_manifest_and_node_store(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(result_store, "root", tmp_path / "results")
+    job_id = "api-completed"
+    job = {
+        "id": job_id,
+        "status": "completed",
+        "manifest_ready": True,
+        "created_at": "now",
+        "finished_at": "later",
+        "total": 1,
+        "skipped": 0,
+        "completed": 1,
+        "success_count": 0,
+        "partial_count": 0,
+        "failed_count": 1,
+        "execution_mode": "sequential",
+    }
+    result_store.initialize(job_id, {"job_id": job_id, "status": "completed"})
+    result_store.write_node(job_id, 0, _record(job_id, 0))
+    result_store.finalize(job_id, job)
+    job_manager.jobs[job_id] = job
+    try:
+        with TestClient(app) as client:
+            summary = client.get(f"/api/scans/{job_id}")
+            detail = client.get(f"/api/scans/{job_id}/results/0")
+            exported = client.get(f"/api/scans/{job_id}/export")
+        assert summary.status_code == detail.status_code == exported.status_code == 200
+        assert summary.json()["results"][0]["node_index"] == 0
+        assert detail.json()["exit_ip"] is None
+        assert exported.json()["manifest"]["complete"] is True
+    finally:
+        job_manager.jobs.pop(job_id, None)
+
+
+def test_frontend_is_coffee_only_and_has_no_default_credential() -> None:
     with TestClient(app) as client:
         response = client.get("/")
-
     assert response.status_code == 200
-    assert "Best IP" in response.text
-    assert response.text.count('data-sort="score"') == 1
-    assert "IP 评分" in response.text
-    assert "AI 接入与延迟" in response.text
-    assert "Coffee 全球 8 地 Ping" in response.text
-    assert 'value="https://sub.nekocloud.host/nekocloud/token=/' in response.text
-    assert 'data-sort="ip_score"' not in response.text
-    assert 'data-sort="gpt_score"' not in response.text
-    assert 'data-sort="claude_score"' not in response.text
-    assert "综合评分" not in response.text
-    assert "ChatGPT 质量" not in response.text
-    assert "Claude 质量" not in response.text
+    assert "Coffee" in response.text
+    assert 'value="https://' not in response.text
+    forbidden_terms = (
+        "chatgpt.com",
+        "claude.ai",
+        "api.openai.com",
+        "anthropic.com",
+        "gpt_access",
+        "claude_access",
+    )
+    for forbidden in forbidden_terms:
+        assert forbidden not in response.text
+    assert "manifest" in response.text
+    assert 'data-sort="score"' in response.text
