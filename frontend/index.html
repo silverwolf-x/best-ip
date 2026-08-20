@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="通过 Mihomo 逐节点汇总 IP、GPT 与 Claude 深度检测结果与全球延迟">
+  <meta name="api-base" content="">
+  <title>Best IP · 节点全景检测与同类合并</title>
+  <link rel="stylesheet" href="/styles.css?v=20260820-3">
+  <script src="/app.js?v=20260820-3" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a class="brand" href="/" aria-label="Best IP 首页">
+        <span class="brand-mark" aria-hidden="true">B</span>
+        <span class="brand-title">Best IP</span>
+      </a>
+      <span class="brand-desc">Coffee 同类深度合并 · 全景节点检测</span>
+    </div>
+
+    <!-- 紧凑输入表单直接置于顶部工具栏 -->
+    <form id="scanForm" class="topbar-scan-form">
+      <div class="input-wrap">
+        <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴 Mihomo YAML 订阅链接 (如 https://...)" required>
+        <button id="revealButton" class="reveal-btn" type="button" aria-label="切换显示">👁️</button>
+      </div>
+      <button id="startButton" class="btn btn-primary" type="submit">开始检测</button>
+      <button id="cancelButton" class="btn btn-cancel" type="button" hidden>停止</button>
+    </form>
+
+    <div class="topbar-right">
+      <div id="scanStatusBadge" class="scan-status-badge" hidden>
+        <span class="pulse-dot"></span>
+        <span id="scanStatusText">准备中</span>
+        <strong id="scanProgressCount">0/0</strong>
+      </div>
+      <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
+      <button id="themeButton" class="icon-btn" type="button" aria-label="切换主题" title="切换主题">◐</button>
+    </div>
+  </header>
+
+  <main class="app-layout">
+    <!-- 顶部紧凑控制栏：统计 + 快捷标签 + 搜索 + 导出 -->
+    <section class="toolbar-panel">
+      <div class="stats-ribbon">
+        <div class="stat-pill"><span class="stat-lbl">总节点</span><strong id="totalStat">0</strong></div>
+        <div class="stat-pill"><span class="stat-lbl">已检测</span><strong id="completedStat">0</strong></div>
+        <div class="stat-pill success"><span class="stat-lbl">完整就绪</span><strong id="successStat">0</strong></div>
+        <div class="stat-pill warn"><span class="stat-lbl">部分/异常</span><strong id="issueStat">0</strong></div>
+      </div>
+
+      <div class="filter-controls">
+        <div class="quick-tags" id="quickTags" role="group" aria-label="快捷筛选">
+          <button type="button" class="tag-btn active" data-tag="all">全部</button>
+          <button type="button" class="tag-btn" data-tag="dual_ai">综合极佳且双 AI 可用 (≥80)</button>
+          <button type="button" class="tag-btn" data-tag="residential">🏠 纯净住宅</button>
+          <button type="button" class="tag-btn" data-tag="native">✨ 原生 IP</button>
+          <button type="button" class="tag-btn" data-tag="clean">🛡️ 纯净无风险</button>
+          <button type="button" class="tag-btn" data-tag="gpt_ok">支持 GPT</button>
+          <button type="button" class="tag-btn" data-tag="claude_ok">支持 Claude</button>
+          <button type="button" class="tag-btn" data-tag="issues">受限 / 异常</button>
+        </div>
+
+        <div class="search-box">
+          <input id="resultSearch" type="search" placeholder="搜索节点、IP、ASN、国家、ISP、风险标记 (如 US, 住宅, 979, 极度纯净)...">
+          <select id="statusFilter" class="status-select">
+            <option value="all">全部状态</option>
+            <option value="success">完整 (Success)</option>
+            <option value="partial">部分 (Partial)</option>
+            <option value="failed">失败 (Failed)</option>
+          </select>
+        </div>
+
+        <div class="action-btns">
+          <button id="exportCsvBtn" class="btn btn-secondary" type="button" title="导出 CSV">导出 CSV</button>
+          <button id="exportJsonBtn" class="btn btn-secondary" type="button" title="导出 JSON">导出 JSON</button>
+        </div>
+      </div>
+      <p id="errorMessage" class="error-banner" role="alert" hidden></p>
+    </section>
+
+    <!-- 核心表格置于首屏最上方，高密度展现所有关键指标 -->
+    <section class="table-container">
+      <table class="main-table">
+        <thead>
+          <tr>
+            <th scope="col" style="width: 190px;"><button class="sort-btn" data-sort="node">节点名称</button></th>
+            <th scope="col" style="width: 75px;"><button class="sort-btn" data-sort="status">状态</button></th>
+            <th scope="col" style="width: 165px;"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
+            <th scope="col" style="width: 200px;"><button class="sort-btn" data-sort="location">位置 & 运营商</button></th>
+            <th scope="col" style="width: 170px;"><button class="sort-btn" data-sort="is_residential">网络属性与原生性</button></th>
+            <th scope="col" style="width: 170px;"><button class="sort-btn" data-sort="security_status">安全与纯净度 (合并)</button></th>
+            <th scope="col" style="width: 90px;"><button class="sort-btn" data-sort="score">综合评分</button></th>
+            <th scope="col" style="width: 150px;">AI 服务可用性</th>
+            <th scope="col" style="min-width: 240px;">全球 8 枢纽实时延迟</th>
+            <th scope="col" style="width: 75px;"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
+          </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+      <div id="emptyResults" class="empty-state">
+        <p class="empty-title">暂无检测结果</p>
+        <p class="empty-desc">在顶部输入 Mihomo YAML 订阅地址并点击「开始检测」即可立即逐节点扫描。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- 单一合并源全景详情弹窗 -->
+  <dialog id="detailDialog" class="detail-dialog">
+    <div class="dialog-header">
+      <div class="dialog-title-group">
+        <h2 id="detailTitle">节点全量合并分析</h2>
+        <span id="detailSubtitle" class="dialog-subtitle"></span>
+      </div>
+      <div class="dialog-actions">
+        <button id="copyJsonBtn" class="btn btn-secondary" type="button">复制 JSON</button>
+        <button id="closeDialog" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+    </div>
+
+    <div id="detailContent" class="detail-scroll-pane"></div>
+  </dialog>
+</body>
+</html>

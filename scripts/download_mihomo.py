@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import platform
+import shutil
+import stat
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
+from typing import Any
+
+REPOSITORY = "MetaCubeX/mihomo"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def platform_asset() -> tuple[str, str, str]:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if machine in {"amd64", "x86_64"}:
+        architecture = "amd64"
+    elif machine in {"arm64", "aarch64"}:
+        architecture = "arm64"
+    else:
+        raise RuntimeError(f"暂不支持的 CPU 架构：{machine}")
+    if system == "windows":
+        return f"mihomo-windows-{architecture}-v", ".zip", "mihomo.exe"
+    if system == "linux":
+        return f"mihomo-linux-{architecture}-v", ".gz", "mihomo"
+    if system == "darwin":
+        return f"mihomo-darwin-{architecture}-v", ".gz", "mihomo"
+    raise RuntimeError(f"暂不支持的系统：{system}")
+
+
+def github_json(url: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "best-ip-installer",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)
+
+
+def select_asset(release: dict[str, Any]) -> dict[str, Any]:
+    prefix, suffix, _ = platform_asset()
+    candidates = [
+        asset
+        for asset in release.get("assets", [])
+        if asset.get("name", "").startswith(prefix) and asset.get("name", "").endswith(suffix)
+    ]
+    if len(candidates) != 1:
+        names = ", ".join(asset.get("name", "") for asset in candidates) or "无"
+        raise RuntimeError(f"无法唯一确定标准 Mihomo 资产，候选：{names}")
+    return candidates[0]
+
+
+def download(url: str, destination: Path) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "best-ip-installer"})
+    with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as output:
+        shutil.copyfileobj(response, output)
+
+
+def verify_digest(path: Path, digest: str | None) -> str:
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest:
+        expected = digest.removeprefix("sha256:").lower()
+        if actual != expected:
+            raise RuntimeError(f"SHA-256 校验失败：期望 {expected}，实际 {actual}")
+    return actual
+
+
+def extract(archive: Path, destination: Path) -> None:
+    _, suffix, executable_name = platform_asset()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if suffix == ".zip":
+        with zipfile.ZipFile(archive) as bundle:
+            members = [name for name in bundle.namelist() if name.lower().endswith(".exe")]
+            if len(members) != 1:
+                raise RuntimeError("Mihomo ZIP 中未找到唯一可执行文件")
+            with bundle.open(members[0]) as source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+    else:
+        with gzip.open(archive, "rb") as source, destination.open("wb") as output:
+            shutil.copyfileobj(source, output)
+    if executable_name != "mihomo.exe":
+        destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="下载并校验最新 Mihomo 核心")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=ROOT_DIR / "runtime" / "mihomo",
+        help="核心输出目录",
+    )
+    args = parser.parse_args()
+
+    release = github_json(f"https://api.github.com/repos/{REPOSITORY}/releases/latest")
+    asset = select_asset(release)
+    _, _, executable_name = platform_asset()
+    destination = args.output_dir.resolve() / executable_name
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    file_descriptor, temporary_name = tempfile.mkstemp(suffix=Path(asset["name"]).suffix)
+    os.close(file_descriptor)
+    archive = Path(temporary_name)
+    try:
+        print(f"下载 {asset['name']} ({release['tag_name']})")
+        download(asset["browser_download_url"], archive)
+        digest = verify_digest(archive, asset.get("digest"))
+        extract(archive, destination)
+    finally:
+        archive.unlink(missing_ok=True)
+
+    (args.output_dir / "version.txt").write_text(
+        f"{release['tag_name']}\nsha256:{digest}\n{asset['name']}\n", encoding="utf-8"
+    )
+    print(f"已安装：{destination}")
+    print(f"SHA-256：{digest}")
+
+
+if __name__ == "__main__":
+    main()
