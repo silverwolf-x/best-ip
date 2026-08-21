@@ -1,6 +1,6 @@
 # Best IP
 
-通过独立工作区 Mihomo 实例有界并发检测订阅节点，只经各自的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端为每个真实节点写入原子 JSON，校验所有节点并生成 `manifest.json`；前端读取时机属于单独的展示层契约。
+通过独立工作区 Mihomo 实例有界并发检测订阅节点，只经各自的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端为每个真实节点写入原子 JSON；前端在轮询中立即展示已完成节点的安全摘要，全部节点校验后再生成 `manifest.json`，详情与导出仍以最终 manifest 为门禁。
 
 ## 核心行为
 
@@ -30,7 +30,7 @@ runtime/results/<job_id>/
   manifest.json
 ```
 
-节点文件和进度文件使用同目录临时文件、`flush`、`fsync`、`os.replace` 原子发布。`manifest.json` 只有在节点索引完整、状态/出口 IP 约束、文件大小和 SHA-256 校验都通过后才生成。任务 API 在 manifest 出现前只返回进度；单节点详情和导出在此之前返回 HTTP 409。
+节点文件和进度文件使用同目录临时文件、`flush`、`fsync`、`os.replace` 原子发布。`manifest.json` 只有在节点索引完整、状态/出口 IP 约束、文件大小和 SHA-256 校验都通过后才生成。任务 API 在 manifest 出现前返回进度与已完成节点的安全摘要；单节点详情和导出在此之前返回 HTTP 409。
 
 `runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志，任务结束后清理；运行目录不提交 Git。Windows 用户态程序能保证的是应用层 Coffee 请求边界，不能声称隔离宿主物理网卡或其他进程的网络。
 
@@ -61,15 +61,13 @@ git diff --check
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-正式订阅闭环（订阅 token 只通过环境变量注入，不写入 Git）：
+正式订阅闭环（订阅 token 放在 Git 忽略的工作区 `.env`，不写入源码或命令行）：
 
 ```powershell
-$env:BEST_IP_TEST_SUBSCRIPTION_URL = "<正式订阅 URL>"
-uv run python scripts/verify_real_scan.py
-Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
+uv run --env-file .env python scripts/verify_real_scan.py
 ```
 
-脚本会先取得一次订阅快照，并把其 SHA-256 与客户端生成的任务 ID 绑定到创建请求；后端实际下载内容若不同会直接失败。随后脚本逐节点核对订阅顺序、metadata 数、trace/lookup 出口一致性、selector 和代理证据、manifest 本地文件 hash、完整导出、临时工作目录清理及订阅 URL/节点凭据不泄露；异常或超时会取消并确认后台任务与 Mihomo 清理终态。`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 是从订阅预取到终态 API 核验的总预算；超时后的取消清理另有最多 35 秒安全宽限期，不会被伪装为验收通过。
+脚本会先取得一次订阅快照，并把其 SHA-256 与客户端生成的任务 ID 绑定到创建请求；后端实际下载内容若不同会直接失败。扫描过程中还会核对 `results` 摘要数量始终等于 `completed`。终态时逐节点核对订阅顺序、metadata 数、trace/lookup 出口一致性、selector 和代理证据、manifest 本地文件 hash、完整导出、临时工作目录清理及订阅 URL/节点凭据不泄露；只有 `failed_count=0` 才通过正式可用性验收，不能再用“都有终态记录”掩盖真实节点失败。异常或超时会取消并确认后台任务与 Mihomo 清理终态。`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 是从订阅预取到终态 API 核验的总预算；超时后的取消清理另有最多 35 秒安全宽限期，不会被伪装为验收通过。
 
 `BEST_IP_API_BASE` 只能指向与脚本共享当前 `runtime/results` 和 `runtime/jobs` 的本机后端；正式闭环会强制读取本地节点文件重算 hash，因此不支持无共享文件系统的远程或容器后端。
 
@@ -92,7 +90,7 @@ Content-Type: application/json
 GET /api/scans/{id}
 ```
 
-扫描中返回状态、计数和阶段信息以及空 `results`；状态为 `completed` 且 `manifest_ready=true` 后，才返回暂存 manifest 的轻量摘要。
+扫描中返回状态、计数、阶段信息以及所有已原子暂存节点的轻量摘要；状态为 `completed` 且 `manifest_ready=true` 后，额外返回经完整校验的最终 manifest。
 
 ### 查询单节点完整结果
 
@@ -132,7 +130,7 @@ DELETE /api/scans/{id}
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
 | `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
-| `BEST_IP_MAX_PARALLEL_NODES` | `2` | 单个扫描任务同时启动的独立 Mihomo 节点检测数 |
+| `BEST_IP_MAX_PARALLEL_NODES` | `4` | 单个扫描任务同时启动的独立 Mihomo 节点检测数；可按内存与上游承载能力下调 |
 | `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 采集总时间预算；page、trace、lookup 和 related 共用该上限 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
@@ -143,4 +141,4 @@ DELETE /api/scans/{id}
 - 不启动浏览器，不采集浏览器专属的 DNS 泄漏、WebRTC 或设备指纹结果。
 - Coffee 接口、字段、限流和异步 pending 语义属于外部服务，改版时必须先更新页面证据和 URL allowlist。
 - 节点并发受 `BEST_IP_MAX_PARALLEL_NODES` 限制；每个并发节点都有独立 Mihomo，但每个实例仍会加载该订阅的完整代理定义，因此节点很多时内存和进程开销会随并发数增加。
-- 当前改动只覆盖后端采集与暂存；扫描中的节点级前端展示仍需单独设计 API 读取边界和事实状态。
+- 扫描中只返回已完成节点的安全摘要；单节点完整详情与导出必须等待最终 manifest，避免把进行中状态误认为最终事实。

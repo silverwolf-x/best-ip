@@ -12,7 +12,12 @@ from backend.app.jobs import (
     _safe_job_error,
     _summarize_mihomo_error,
 )
-from backend.app.mihomo import MihomoError
+from backend.app.mihomo import (
+    MIHOMO_NOT_READY_MESSAGE,
+    MihomoError,
+    MihomoNotReadyError,
+)
+from backend.app.result_store import result_store
 
 
 class FakeMihomo:
@@ -101,6 +106,12 @@ def test_summarize_mihomo_error_covers_observed_failures() -> None:
     assert _summarize_mihomo_error("connection reset by peer") == "节点服务器重置连接"
 
 
+def test_job_error_preserves_safe_missing_core_action() -> None:
+    error = _safe_job_error(MihomoNotReadyError(MIHOMO_NOT_READY_MESSAGE))
+
+    assert error == MIHOMO_NOT_READY_MESSAGE
+
+
 def test_job_error_does_not_persist_unexpected_exception_text() -> None:
     error = _safe_job_error(
         RuntimeError("https://subscription.example/?token=secret-value")
@@ -126,7 +137,7 @@ async def test_job_rejects_subscription_snapshot_mismatch(tmp_path, monkeypatch)
 
     monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
     monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
-    manager = ScanJobManager(Settings(mihomo_path=Path("mihomo.exe")))
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
 
     created = manager.create(
         "https://subscription.example/?token=secret-value",
@@ -141,8 +152,46 @@ async def test_job_rejects_subscription_snapshot_mismatch(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_job_fails_as_infrastructure_error_when_core_is_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    content = b"proxies:\n  - {name: node-a, type: ss}"
+
+    async def fake_download(
+        _url: str,
+        *,
+        max_bytes: int,
+        timeout_seconds: float,
+    ) -> bytes:
+        assert max_bytes > 0
+        assert timeout_seconds > 0
+        return content
+
+    monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
+    monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(result_store, "root", tmp_path / "results")
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    manager = ScanJobManager(Settings(mihomo_path=core_path))
+
+    created = manager.create("https://subscription.example/subscription")
+    core_path.unlink()
+    await manager.tasks[created["id"]]
+    job = manager.get(created["id"])
+
+    assert job["status"] == "failed"
+    assert job["error"] == MIHOMO_NOT_READY_MESSAGE
+    assert job["completed"] == 0
+    assert job["manifest_ready"] is False
+    assert job["cleanup_confirmed"] is True
+    nodes_dir = tmp_path / "results" / created["id"] / "nodes"
+    assert list(nodes_dir.glob("*.json")) == []
+
+
+@pytest.mark.asyncio
 async def test_cancel_marks_never_started_job_cancelled() -> None:
-    manager = ScanJobManager(Settings(mihomo_path=Path("mihomo.exe")))
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
     created = manager.create("https://subscription.example/subscription")
 
     job = await manager.cancel(created["id"])
@@ -154,7 +203,7 @@ async def test_cancel_marks_never_started_job_cancelled() -> None:
 
 @pytest.mark.asyncio
 async def test_shutdown_marks_never_started_job_cancelled() -> None:
-    manager = ScanJobManager(Settings(mihomo_path=Path("mihomo.exe")))
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
     created = manager.create("https://subscription.example/subscription")
 
     await manager.shutdown()

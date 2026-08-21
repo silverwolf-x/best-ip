@@ -6,6 +6,7 @@ from scripts.verify_real_scan import (
     _cancel_scan,
     _contains_forbidden_value,
     _credential_values,
+    _require_no_failed_nodes,
     _subscription_url_values,
     _validate_local_api_base,
 )
@@ -64,6 +65,41 @@ def test_subscription_url_values_extracts_query_and_opaque_path_tokens() -> None
     assert _subscription_url_values(
         "https://example.com/api/subscription/abcdefghijklmnop?token=secret-value"
     ) == {"abcdefghijklmnop", "secret-value"}
+    assert _subscription_url_values(
+        "https://example.com/x/a1Bc2DeF?t=auto"
+    ) == {"a1Bc2DeF"}
+
+
+def test_subscription_url_values_ignores_non_secret_mode_values() -> None:
+    assert not _subscription_url_values(
+        "https://example.com/api/subscription?format=clash&t=auto"
+    )
+
+def test_subscription_url_values_keeps_short_explicit_tokens() -> None:
+    assert _subscription_url_values(
+        "https://example.com/api/subscription?access_token=abc"
+    ) == {"abc"}
+
+
+@pytest.mark.parametrize("token", ["abcdef", "123456", "abc-def"])
+def test_subscription_url_values_keeps_short_query_token_shapes(token: str) -> None:
+    assert _subscription_url_values(
+        f"https://example.com/api/subscription?t={token}"
+    ) == {token}
+
+
+@pytest.mark.parametrize("token", ["abcdef", "123456", "abc-def"])
+def test_subscription_url_values_keeps_short_path_token_shapes(token: str) -> None:
+    assert _subscription_url_values(
+        f"https://example.com/api/subscription/{token}?t=auto"
+    ) == {token}
+
+
+def test_formal_scan_requires_every_node_to_be_usable() -> None:
+    _require_no_failed_nodes({"failed_count": 0})
+
+    with pytest.raises(RuntimeError, match="4 个节点未获得有效结果"):
+        _require_no_failed_nodes({"failed_count": 4})
 
 
 def test_api_base_requires_local_http_origin() -> None:

@@ -15,9 +15,16 @@ import httpx
 import yaml
 
 COFFEE_HOST = "ip.net.coffee"
+MIHOMO_NOT_READY_MESSAGE = (
+    "Mihomo 核心未就绪，请运行 uv run python scripts/download_mihomo.py"
+)
 
 
 class MihomoError(RuntimeError):
+    pass
+
+
+class MihomoNotReadyError(MihomoError):
     pass
 
 
@@ -119,9 +126,7 @@ class MihomoProcess:
 
     async def start(self) -> None:
         if not self.core_path.is_file():
-            raise MihomoError(
-                f"未找到 Mihomo 核心：{self.core_path}。请运行 uv run scripts/download_mihomo.py"
-            )
+            raise MihomoNotReadyError(MIHOMO_NOT_READY_MESSAGE)
 
         self.work_dir.mkdir(parents=True, exist_ok=False)
         config_path = self.work_dir / "config.yaml"

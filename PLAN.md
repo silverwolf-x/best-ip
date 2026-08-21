@@ -4,7 +4,7 @@
 
 ## 1. 最终目标
 
-用户提交 Mihomo YAML 订阅后，后端只使用工作区内启动的 Mihomo 访问 Coffee IP 页面及该页面真实依赖的 `ip.net.coffee` 同源结构化接口。后端先为每个真实节点采集并原子暂存一份完整记录，扫描完成后生成只读 manifest；前端随后只读取这些暂存结果。
+用户提交 Mihomo YAML 订阅后，后端只使用工作区内启动的 Mihomo 访问 Coffee IP 页面及该页面真实依赖的 `ip.net.coffee` 同源结构化接口。后端为每个真实节点采集并原子暂存一份完整记录；前端轮询时立即读取已完成节点的安全摘要，扫描完成后再生成只读 manifest，详情与导出仍等待最终 manifest。
 
 ### 必须满足
 
@@ -51,7 +51,7 @@
    - 原子写入该节点 JSON；
    - 再切换下一节点。
 4. 20 个节点均产生记录后，原子生成 completed manifest。
-5. 前端在 completed manifest 出现前只展示进度；完成后再读取暂存结果。
+5. 前端轮询时展示已原子暂存的节点摘要；completed manifest 出现后开放节点详情与导出。
 
 单 selector 上禁止重叠节点请求，因为 selector 在请求期间切换会造成出口串线。
 
@@ -62,8 +62,8 @@
 ```text
 runtime/results/<job_id>/
   nodes/
-    000-<stable-id>.json
-    001-<stable-id>.json
+    0000.json
+    0001.json
     ...
   progress.json
   manifest.json
@@ -97,7 +97,7 @@ runtime/results/<job_id>/
 
 - 每个并发节点使用独立 Mihomo 进程、配置目录、mixed-port、controller-port、selector、连接池和日志游标。
 - 每个实例的 selector 只暴露当前检测节点，但保留完整代理定义以支持节点间拨号依赖。
-- 默认并发为 2，可通过 `BEST_IP_MAX_PARALLEL_NODES` 调整；单个 worker 内仍严格执行 `select + collect`，不重叠切换。
+- 默认并发为 4（正式订阅 A/B 中相对 2 workers 降低约 46% 墙钟时间），可通过 `BEST_IP_MAX_PARALLEL_NODES` 按资源下调；单个 worker 内仍严格执行 `select + collect`，不重叠切换。
 - 单节点内的页面/trace，以及出口 IP 依赖的 lookup、global ping、portscan、pingcheck 已按依赖关系并行调度；related 仍按页面语义顺序轮询。
 - 正式订阅已完成 20 节点并发实测；后续订阅内容会由供应商动态变化，验收结果必须绑定具体任务 ID 和当次节点总数。
 
@@ -133,12 +133,10 @@ runtime/results/<job_id>/
 
 ### 真实全量扫描
 
-使用正式订阅测试连接完成网站端到端验收；连接通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入，禁止把 token 写入本仓库。执行：
+使用正式订阅测试连接完成网站端到端验收；订阅 URL 只放在 Git 忽略的工作区 `.env` 的 `BEST_IP_TEST_SUBSCRIPTION_URL`，禁止把 token 写入本仓库或命令行。执行：
 
 ```powershell
-$env:BEST_IP_TEST_SUBSCRIPTION_URL = "<正式订阅 URL>"
-uv run python scripts/verify_real_scan.py
-Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
+uv run --env-file .env python scripts/verify_real_scan.py
 ```
 
 验收要求：
@@ -156,7 +154,7 @@ Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
 2. `uv run ruff check .`
 3. `node --check frontend/app.js`
 4. `git diff --check`
-5. 启动本地网站，通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入正式订阅并运行 `uv run python scripts/verify_real_scan.py`。
+5. 启动本地网站，从工作区 `.env` 读取正式订阅并运行 `uv run --env-file .env python scripts/verify_real_scan.py`。
 6. 脚本核对 manifest、节点文件数、出口 IP 格式、selector 身份、失败真实性、敏感信息和导出完整性。
 
 ## 5. 执行清单
@@ -169,7 +167,7 @@ Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
 - [x] 删除前端 GPT/Claude 展示与筛选
 - [x] 更新测试与 README
 - [x] 完成正式订阅全量网站扫描并导出新 JSON（历史任务 `9984538c804a4a14995b90618292412b`：20/20，完整 8，部分 0，失败 12；探索诊断任务 `a31a580343aa4c9a8769240f4f3e3fe7`：11/11，均以脱敏传输错误终态落盘；最终收敛任务 `25327ad825d54268a88f2d2e4aba1c6e`：9/9，完整 0，部分 0，失败 9，manifest/export/hash/凭据与清理闭环通过；订阅内容由供应商动态变化）
-- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 2 workers；正式订阅闭环已通过）
+- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 4 workers；2/4 workers 正式订阅 A/B 已验证）
 - [x] 完成显式 IP、原生配置 A/B 和失败根因探索，不引入无事实收益的 fallback
 - [x] 将 Mihomo DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 和网络不可达日志映射为固定脱敏错误
 - [x] 将正式验收绑定到订阅 SHA-256/确定任务 ID，强制核对节点顺序、metadata、manifest/export、本地 hash、凭据和 Mihomo 清理终态

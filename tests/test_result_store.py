@@ -64,6 +64,27 @@ def test_result_store_writes_nodes_atomically_and_finalizes_manifest(tmp_path) -
     assert store.read_node(job_id, 0)["exit_ip"] == "203.0.113.10"
 
 
+def test_result_store_reads_available_summaries_before_manifest(tmp_path) -> None:
+    store = ResultStore(tmp_path / "results")
+    job_id = "job-live"
+    store.initialize(job_id, {"job_id": job_id, "status": "running"})
+    store.write_node(job_id, 1, make_record(job_id, 1))
+
+    summaries = store.read_available_summaries(job_id, expected_count=1)
+
+    assert [summary["node_index"] for summary in summaries] == [1]
+    with pytest.raises(ResultStoreError, match="manifest"):
+        store.read_summaries(job_id)
+
+    store.write_node(
+        job_id,
+        0,
+        make_record(job_id, 0, status="success", exit_ip="203.0.113.10"),
+    )
+    summaries = store.read_available_summaries(job_id, expected_count=2)
+    assert [summary["node_index"] for summary in summaries] == [0, 1]
+
+
 def test_result_store_rejects_duplicate_or_incomplete_nodes(tmp_path) -> None:
     store = ResultStore(tmp_path / "results")
     job_id = "job-2"

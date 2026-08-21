@@ -6,7 +6,12 @@ from typing import Any
 
 import pytest
 
-from backend.app.mihomo import MihomoProcess, MihomoStopError
+from backend.app.mihomo import (
+    MIHOMO_NOT_READY_MESSAGE,
+    MihomoNotReadyError,
+    MihomoProcess,
+    MihomoStopError,
+)
 
 
 class FakeProcess:
@@ -29,6 +34,21 @@ class FakeLogHandle:
 
     def close(self) -> None:
         self.closed = True
+
+
+async def test_start_rejects_missing_core_before_creating_workspace(tmp_path) -> None:
+    work_dir = tmp_path / "workspace"
+    mihomo = MihomoProcess(
+        tmp_path / "missing-mihomo.exe",
+        work_dir,
+        [{"name": "node-a"}],
+    )
+
+    with pytest.raises(MihomoNotReadyError, match="核心未就绪") as caught:
+        await mihomo.start()
+
+    assert str(caught.value) == MIHOMO_NOT_READY_MESSAGE
+    assert work_dir.exists() is False
 
 
 async def test_start_cancellation_stops_spawned_process(tmp_path, monkeypatch) -> None:

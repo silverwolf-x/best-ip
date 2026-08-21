@@ -304,6 +304,32 @@ class ResultStore:
         self._validate_node(job_id, index, record)
         return record
 
+    def read_available_summaries(
+        self,
+        job_id: str,
+        *,
+        expected_count: int,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(expected_count, int) or expected_count < 0:
+            raise ResultStoreError("已完成节点数无效")
+        node_dir = self._job_dir(job_id) / "nodes"
+        files = sorted(node_dir.glob("*.json"))
+        if len(files) != expected_count:
+            raise ResultStoreError(
+                f"节点暂存数量不一致：期望 {expected_count}，实际 {len(files)}"
+            )
+
+        summaries = []
+        for path in files:
+            try:
+                index = int(path.stem)
+            except ValueError as exc:
+                raise ResultStoreError(f"节点暂存文件名无效：{path.name}") from exc
+            if path.name != self._node_filename(index):
+                raise ResultStoreError(f"节点暂存文件名无效：{path.name}")
+            summaries.append(self._summary(self.read_node(job_id, index)))
+        return summaries
+
     def read_summaries(self, job_id: str) -> list[dict[str, Any]]:
         manifest = self.read_manifest(job_id)
         records = manifest.get("records")

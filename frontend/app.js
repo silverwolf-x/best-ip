@@ -189,14 +189,14 @@ async function pollJob(jobId, generation) {
     if (generation !== state.pollGeneration) return;
     state.job = job;
     renderProgress(job);
+    state.results = Array.isArray(job.results)
+      ? job.results.map((item, index) => ({ ...item, _index: item.node_index ?? index }))
+      : [];
+    renderRows();
     if (job.status === "completed" && job.manifest_ready) {
-      state.results = Array.isArray(job.results) ? job.results.map((item, index) => ({ ...item, _index: item.node_index ?? index })) : [];
-      renderRows();
       setScanning(false);
       return;
     }
-    state.results = [];
-    renderRows();
     if (["failed", "cancelled"].includes(job.status)) {
       setScanning(false);
       return;

@@ -6,8 +6,8 @@
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee IP 页面结构化结果">
   <meta name="api-base" content="">
   <title>Best IP · Coffee 节点检测</title>
-  <link rel="stylesheet" href="/styles.css?v=20260821-7">
-  <script src="/app.js?v=20260821-7" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=20260822-1">
+  <script src="/app.js?v=20260822-1" defer></script>
 </head>
 <body>
   <div class="container">
@@ -22,7 +22,7 @@
 
     <header class="page-header">
       <div class="ip-section-header"><h1>Coffee IP 评分 · 订阅节点检测</h1></div>
-      <p class="desc">所有节点按顺序经工作区 Mihomo 切换，仅采集 Coffee IP 页面及其明确的同源结构化接口；结果先由后端暂存并核验，再交给前端展示。</p>
+      <p class="desc">所有节点按顺序经工作区 Mihomo 切换，仅采集 Coffee IP 页面及其明确的同源结构化接口；每个节点完成后立即展示已原子暂存的摘要，全部结束后再生成最终 manifest。</p>
     </header>
 
     <form id="scanForm" class="search-bar">
@@ -74,7 +74,7 @@
         </tr></thead>
         <tbody id="resultBody"></tbody>
       </table>
-      <div id="emptyResults" class="empty-state"><p class="empty-title">暂无已核验结果</p><p class="empty-desc">扫描完成并生成 manifest 后，前端才会读取后端暂存的节点结果。</p></div>
+      <div id="emptyResults" class="empty-state"><p class="empty-title">等待首个节点结果</p><p class="empty-desc">每个节点完成并原子暂存后会立即显示；全部节点结束后生成最终 manifest，并开放详情与导出。</p></div>
     </section>
 
     <footer class="footer">Best IP · Coffee IP 页面结构化节点检测</footer>

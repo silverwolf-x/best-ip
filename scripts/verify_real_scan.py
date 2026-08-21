@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: E402
-
 import asyncio
 import hashlib
 import ipaddress
@@ -95,18 +94,80 @@ def _contains_forbidden_value(value: Any, forbidden_values: set[str]) -> bool:
     )
 
 
+_STATIC_SUBSCRIPTION_PATH_SEGMENTS = {
+    "api",
+    "client",
+    "clients",
+    "clash",
+    "config",
+    "configs",
+    "download",
+    "feed",
+    "feeds",
+    "link",
+    "links",
+    "mihomo",
+    "profile",
+    "profiles",
+    "subscribe",
+    "subscription",
+    "subscriptions",
+    "yaml",
+    "yml",
+}
+
+
+_STATIC_SUBSCRIPTION_QUERY_VALUES = {
+    "auto",
+    "base64",
+    "clash",
+    "false",
+    "mihomo",
+    "plain",
+    "true",
+    "yaml",
+    "yml",
+}
+
+
+def _looks_like_subscription_query_token(value: str) -> bool:
+    return (
+        len(value) >= 6
+        and not any(character.isspace() for character in value)
+        and value.casefold() not in _STATIC_SUBSCRIPTION_QUERY_VALUES
+    )
+
+
+def _looks_like_subscription_path_token(value: str) -> bool:
+    return (
+        len(value) >= 6
+        and not any(character.isspace() for character in value)
+        and value.casefold() not in _STATIC_SUBSCRIPTION_PATH_SEGMENTS
+    )
+
+
 def _subscription_url_values(url: str) -> set[str]:
     parsed = urlsplit(url)
-    values = {
-        value.strip()
-        for query_values in parse_qs(parsed.query, keep_blank_values=False).values()
-        for value in query_values
-        if value.strip()
-    }
+    values: set[str] = set()
+    for key, query_values in parse_qs(
+        parsed.query,
+        keep_blank_values=False,
+    ).items():
+        normalized_key = key.strip().lower().replace("_", "-")
+        sensitive_key = any(
+            marker in normalized_key
+            for marker in ("auth", "key", "pass", "secret", "token", "uuid")
+        )
+        for query_value in query_values:
+            value = query_value.strip()
+            if value and (
+                sensitive_key or _looks_like_subscription_query_token(value)
+            ):
+                values.add(value)
     values.update(
         segment
         for segment in (unquote(item).strip() for item in parsed.path.split("/"))
-        if len(segment) >= 16
+        if _looks_like_subscription_path_token(segment)
     )
     return values
 
@@ -129,6 +190,16 @@ def _validate_local_api_base(api_base: str) -> str:
     ):
         raise RuntimeError("BEST_IP_API_BASE 必须是带端口的本机 HTTP 地址")
     return api_base.rstrip("/")
+
+
+def _require_no_failed_nodes(job: dict[str, Any]) -> None:
+    failed_count = job.get("failed_count")
+    if not isinstance(failed_count, int) or failed_count < 0:
+        raise RuntimeError("正式订阅没有合法失败节点计数")
+    if failed_count:
+        raise RuntimeError(
+            f"正式订阅可用性验收失败：{failed_count} 个节点未获得有效结果"
+        )
 
 
 async def _cancel_scan(
@@ -275,6 +346,27 @@ async def verify() -> None:
                 )
                 if job.get("id") != job_id:
                     raise RuntimeError("扫描状态响应与请求任务 ID 不一致")
+                completed = job.get("completed")
+                results = job.get("results")
+                if not isinstance(completed, int) or completed < 0:
+                    raise RuntimeError("扫描状态没有合法 completed")
+                if not isinstance(results, list) or len(results) != completed:
+                    raise RuntimeError("进行中节点摘要数量与 completed 不一致")
+                result_indices = sorted(
+                    result.get("node_index")
+                    for result in results
+                    if isinstance(result, dict)
+                    and isinstance(result.get("node_index"), int)
+                )
+                if (
+                    len(result_indices) != completed
+                    or len(set(result_indices)) != completed
+                    or any(
+                        index < 0 or index >= int(job.get("total") or 0)
+                        for index in result_indices
+                    )
+                ):
+                    raise RuntimeError("进行中节点摘要身份或索引无效")
                 marker = (
                     job.get("status"),
                     job.get("completed"),
@@ -525,7 +617,12 @@ async def verify() -> None:
                 raise RuntimeError(f"暂存文件泄露订阅凭据：{path.name}")
         if asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError("正式扫描验收超过总时间预算")
-        print(f"正式订阅闭环通过：{total} 个节点均有终态记录，manifest/export 校验通过")
+        print(
+            f"正式订阅结构闭环通过：{total} 个节点均有终态记录，"
+            "manifest/export 校验通过"
+        )
+        _require_no_failed_nodes(job)
+        print(f"正式订阅可用性验收通过：{total} 个节点均获得有效结果")
 
 
 def main() -> None:

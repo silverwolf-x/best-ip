@@ -15,6 +15,7 @@ from .jobs import (
     JobNotReadyError,
     job_manager,
 )
+from .mihomo import MihomoNotReadyError
 from .schemas import HealthResponse, ScanCreated, ScanRequest
 
 
@@ -54,6 +55,8 @@ async def create_scan(request: ScanRequest) -> ScanCreated:
         )
     except JobAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="扫描请求 ID 已存在") from exc
+    except MihomoNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ScanCreated(**created)
 
 

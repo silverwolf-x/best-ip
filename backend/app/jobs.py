@@ -10,7 +10,13 @@ from typing import Any
 from uuid import uuid4
 
 from .config import JOBS_DIR, RESULTS_DIR, Settings, settings
-from .mihomo import MihomoError, MihomoProcess, MihomoStopError
+from .mihomo import (
+    MIHOMO_NOT_READY_MESSAGE,
+    MihomoError,
+    MihomoNotReadyError,
+    MihomoProcess,
+    MihomoStopError,
+)
 from .result_store import ResultStoreError, result_store
 from .scanner import CoffeeCollector
 from .subscription import (
@@ -52,6 +58,8 @@ class ScanJobManager:
         job_id = request_id or uuid4().hex
         if job_id in self.jobs:
             raise JobAlreadyExistsError(job_id)
+        if not self.settings.mihomo_path.is_file():
+            raise MihomoNotReadyError(MIHOMO_NOT_READY_MESSAGE)
         self.jobs[job_id] = {
             "id": job_id,
             "status": "queued",
@@ -94,7 +102,18 @@ class ScanJobManager:
                 snapshot["error"] = str(exc)
                 snapshot["results"] = []
         else:
-            snapshot["results"] = []
+            completed = job.get("completed", 0)
+            if isinstance(completed, int) and completed > 0:
+                try:
+                    snapshot["results"] = result_store.read_available_summaries(
+                        job_id,
+                        expected_count=completed,
+                    )
+                except ResultStoreError as exc:
+                    snapshot["error"] = str(exc)
+                    snapshot["results"] = []
+            else:
+                snapshot["results"] = []
         return snapshot
 
     def get_result(self, job_id: str, index: int) -> dict[str, Any]:
@@ -325,6 +344,8 @@ class ScanJobManager:
                 )
                 _attach_mihomo_error(result, mihomo, log_offset)
             except asyncio.CancelledError:
+                raise
+            except MihomoNotReadyError:
                 raise
             except Exception as exc:
                 mihomo_error = _read_mihomo_error(mihomo, log_offset)
@@ -562,6 +583,8 @@ def _now() -> str:
 def _safe_job_error(exc: Exception) -> str:
     if isinstance(exc, (SubscriptionError, ResultStoreError)):
         return _short_error(exc)
+    if isinstance(exc, MihomoNotReadyError):
+        return str(exc)
     if isinstance(exc, MihomoError):
         return _summarize_mihomo_error(str(exc))
     return f"扫描任务失败（{exc.__class__.__name__}）"

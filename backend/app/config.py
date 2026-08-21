@@ -23,7 +23,7 @@ class Settings:
     subscription_max_bytes: int = int(os.getenv("BEST_IP_SUBSCRIPTION_MAX_BYTES", 5 * 1024 * 1024))
     max_nodes: int = int(os.getenv("BEST_IP_MAX_NODES", "500"))
     max_parallel_jobs: int = int(os.getenv("BEST_IP_MAX_PARALLEL_JOBS", "2"))
-    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "2"))
+    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "4"))
     page_timeout_ms: int = int(os.getenv("BEST_IP_PAGE_TIMEOUT_MS", "45000"))
     subscription_timeout_seconds: float = float(
         os.getenv("BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS", "30")
