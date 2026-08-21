@@ -11,14 +11,13 @@ const state = {
   detailGeneration: 0,
   columnFilters: {
     node: "",
+    score: "",
     status: "",
     exit_ip: "",
-    location: "",
     isp: "",
     native: "",
     tech: "",
     security: "",
-    score: "",
     ping: "",
   },
 };
@@ -287,18 +286,22 @@ function renderRows() {
         return false;
       }
 
-      // 列筛选 2: 状态
+      // 列筛选 2: 评分
+      if (cf.score) {
+        const s = result.score;
+        if (s == null) return false;
+        if (cf.score === "high" && s < 75) return false;
+        if (cf.score === "mid" && (s < 45 || s >= 75)) return false;
+        if (cf.score === "low" && s >= 45) return false;
+      }
+
+      // 列筛选 3: 状态
       if (cf.status && result.status !== cf.status) {
         return false;
       }
 
-      // 列筛选 3: 出口 IP
+      // 列筛选 4: 出口 IP
       if (cf.exit_ip && !String(result.exit_ip || "").toLowerCase().includes(cf.exit_ip.toLowerCase())) {
-        return false;
-      }
-
-      // 列筛选 4: 地理位置
-      if (cf.location && !String(result.location || "").toLocaleLowerCase("zh-CN").includes(cf.location.toLocaleLowerCase("zh-CN"))) {
         return false;
       }
 
@@ -332,16 +335,7 @@ function renderRows() {
         if (cf.security === "tor" && !result.is_tor) return false;
       }
 
-      // 列筛选 9: 评分
-      if (cf.score) {
-        const s = result.score;
-        if (s == null) return false;
-        if (cf.score === "high" && s < 75) return false;
-        if (cf.score === "mid" && (s < 45 || s >= 75)) return false;
-        if (cf.score === "low" && s >= 45) return false;
-      }
-
-      // 列筛选 10: Coffee 全球 Ping
+      // 列筛选 9: Coffee 全球 Ping
       if (cf.ping) {
         const pingFilter = cf.ping.toLowerCase();
         const pings = result.global_ping || [];
@@ -378,7 +372,18 @@ function createResultRow(result) {
     cell.replaceChildren(button);
   });
 
-  // 2. 状态
+  // 2. 评分 (移至第2列)
+  appendTextCell(row, "", (cell) => {
+    if (result.score == null) {
+      cell.innerHTML = '<span class="score-pill score-none">—</span>';
+    } else {
+      const score = Number(result.score);
+      const scoreCls = score >= 75 ? "score-great" : score >= 45 ? "score-good" : "score-bad";
+      cell.innerHTML = `<span class="score-pill ${scoreCls}">${score}</span>`;
+    }
+  });
+
+  // 3. 状态
   appendTextCell(row, "", (cell) => {
     const badge = document.createElement("span");
     badge.className = `status-badge ${result.status || "failed"}`;
@@ -389,7 +394,7 @@ function createResultRow(result) {
     cell.replaceChildren(badge);
   });
 
-  // 3. 出口 IP
+  // 4. 出口 IP
   appendTextCell(row, "", (cell) => {
     if (result.exit_ip) {
       const ipWrap = document.createElement("div");
@@ -415,17 +420,6 @@ function createResultRow(result) {
       cell.replaceChildren(ipWrap);
     } else {
       cell.innerHTML = '<span class="failure-reason">' + escapeHtml(result.error || "连接失败") + '</span>';
-    }
-  });
-
-  // 4. 地理位置
-  appendTextCell(row, "", (cell) => {
-    if (result.location) {
-      cell.className = "cell-truncate";
-      cell.textContent = result.location;
-      cell.title = result.location;
-    } else {
-      cell.textContent = "—";
     }
   });
 
@@ -563,23 +557,12 @@ function createResultRow(result) {
     cell.replaceChildren(container);
   });
 
-  // 9. 评分
-  appendTextCell(row, "", (cell) => {
-    if (result.score == null) {
-      cell.innerHTML = '<span class="score-pill score-none">—</span>';
-    } else {
-      const score = Number(result.score);
-      const scoreCls = score >= 75 ? "score-great" : score >= 45 ? "score-good" : "score-bad";
-      cell.innerHTML = `<span class="score-pill ${scoreCls}">${score}</span>`;
-    }
-  });
-
-  // 10. Coffee 全球 Ping
+  // 9. Coffee 全球 Ping
   appendTextCell(row, "", (cell) => {
     cell.replaceChildren(createMiniPingBar(result.global_ping));
   });
 
-  // 11. 耗时
+  // 10. 耗时
   appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
 
   return row;
@@ -601,11 +584,12 @@ function createMiniPingBar(pings) {
     const ms = typeof ping.elapsed_ms === "number" ? ping.elapsed_ms : -1;
     if (ping.ok && ms >= 0) {
       const speedCls = ms < 80 ? "p-fast" : ms < 200 ? "p-mid" : "p-slow";
-      node.innerHTML = `<span class="p-code">${escapeHtml(code)}</span><span class="p-ms ${speedCls}">${ms}ms</span>`;
+      node.classList.add(speedCls);
+      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(code)}</span><span class="p-ms">${ms}ms</span>`;
       node.title = `${ping.name || code}: ${ms}ms`;
     } else {
       node.classList.add("node-timeout");
-      node.innerHTML = `<span class="p-code">${escapeHtml(code)}</span><span class="p-ms p-timeout p-gray">-1ms</span>`;
+      node.innerHTML = `<span class="p-dot p-dot-gray"></span><span class="p-code">${escapeHtml(code)}</span><span class="p-ms p-timeout p-gray">-1ms</span>`;
       node.title = `${ping.name || code}: ${ping.status || "未检测/超时 (-1ms)"}`;
     }
     bar.append(node);

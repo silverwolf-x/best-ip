@@ -6,8 +6,8 @@
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee IP 页面结构化结果">
   <meta name="api-base" content="">
   <title>Best IP · Coffee 节点检测</title>
-  <link rel="stylesheet" href="/styles.css?v=20260822-1">
-  <script src="/app.js?v=20260822-1" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=20260822-3">
+  <script src="/app.js?v=20260822-3" defer></script>
 </head>
 <body>
   <div class="container">
@@ -64,19 +64,26 @@
         <thead>
           <tr class="header-titles">
             <th scope="col"><button class="sort-btn" data-sort="node">节点名称</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="score">评分</button></th>
             <th scope="col"><button class="sort-btn" data-sort="status">状态</button></th>
             <th scope="col"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
-            <th scope="col"><button class="sort-btn" data-sort="location">地理位置</button></th>
             <th scope="col"><button class="sort-btn" data-sort="isp">服务商 / ISP</button></th>
             <th scope="col">ASN / 原生性</th>
             <th scope="col">技术指标 (Bogon / RPKI / rDNS)</th>
             <th scope="col"><button class="sort-btn" data-sort="security_status">安全 / 威胁指标</button></th>
-            <th scope="col"><button class="sort-btn" data-sort="score">评分</button></th>
             <th scope="col">Coffee 全球 Ping</th>
             <th scope="col"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
           </tr>
           <tr class="header-filters">
             <th><input class="th-filter" data-col="node" type="search" placeholder="筛选节点..."></th>
+            <th>
+              <select class="th-filter" data-col="score">
+                <option value="">全部</option>
+                <option value="high">高分 (≥75)</option>
+                <option value="mid">中分 (45-74)</option>
+                <option value="low">低分 (&lt;45)</option>
+              </select>
+            </th>
             <th>
               <select class="th-filter" data-col="status">
                 <option value="">全部</option>
@@ -86,7 +93,6 @@
               </select>
             </th>
             <th><input class="th-filter" data-col="exit_ip" type="search" placeholder="筛选IP..."></th>
-            <th><input class="th-filter" data-col="location" type="search" placeholder="筛选国家/城市..."></th>
             <th><input class="th-filter" data-col="isp" type="search" placeholder="筛选ISP/企业..."></th>
             <th>
               <select class="th-filter" data-col="native">
@@ -113,14 +119,6 @@
                 <option value="vpn">VPN</option>
                 <option value="proxy">代理</option>
                 <option value="tor">Tor</option>
-              </select>
-            </th>
-            <th>
-              <select class="th-filter" data-col="score">
-                <option value="">全部</option>
-                <option value="high">高分 (≥75)</option>
-                <option value="mid">中分 (45-74)</option>
-                <option value="low">低分 (&lt;45)</option>
               </select>
             </th>
             <th><input class="th-filter" data-col="ping" type="search" placeholder="筛选地区/延迟..."></th>
