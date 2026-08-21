@@ -54,7 +54,7 @@ proxies: []
         (
             b"proxies:\n  - name: duplicate\n    type: ss\n"
             b"  - name: duplicate\n    type: vmess",
-            "重名",
+            "名称重复",
         ),
         (b"proxies:\n  - name: no-type", "缺少有效类型"),
         (b"proxies:\n  - {name: direct, type: direct}", "直连/拒绝"),
@@ -64,6 +64,15 @@ proxies: []
 def test_parse_subscription_rejects_invalid_documents(content: bytes, message: str) -> None:
     with pytest.raises(SubscriptionError, match=message):
         parse_subscription(content, max_nodes=10)
+
+
+def test_parse_subscription_errors_do_not_echo_node_name() -> None:
+    content = b"proxies:\n  - name: credential-secret-value"
+
+    with pytest.raises(SubscriptionError) as caught:
+        parse_subscription(content, max_nodes=10)
+
+    assert "credential-secret-value" not in str(caught.value)
 
 
 def test_parse_subscription_rejects_over_limit() -> None:

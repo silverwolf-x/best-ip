@@ -181,11 +181,11 @@ def parse_subscription(content: bytes, *, max_nodes: int) -> list[dict[str, Any]
         if not isinstance(name, str) or not name.strip():
             raise SubscriptionError(f"第 {index} 个节点缺少有效名称")
         if not isinstance(proxy_type, str) or not proxy_type.strip():
-            raise SubscriptionError(f"节点“{name}”缺少有效类型")
+            raise SubscriptionError(f"第 {index} 个节点缺少有效类型")
         if proxy_type.strip().lower() in {"direct", "reject"}:
-            raise SubscriptionError(f"节点“{name}”使用了不允许的直连/拒绝类型")
+            raise SubscriptionError(f"第 {index} 个节点使用了不允许的直连/拒绝类型")
         if name in names:
-            raise SubscriptionError(f"订阅含重名节点：“{name}”")
+            raise SubscriptionError(f"第 {index} 个节点名称重复")
         names.add(name)
         normalized.append(dict(proxy))
 

@@ -12,7 +12,11 @@
 - Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径。
 - 不访问 GPT、Claude、OpenAI、Anthropic 或其他站外数据源；不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链。
 - 节点扫描阶段不做 Coffee 的宿主 DNS、固定 IP 连接或 direct fallback；所有 Coffee HTTP 请求都交给当前 Mihomo mixed-port。
-- 失败节点的 `exit_ip` 始终为 JSON `null`，并保存阶段、请求和 Mihomo 错误；不得使用入口 IP、节点名或宿主 IP 伪造结果。
+- 失败节点的 `exit_ip` 始终为 JSON `null`；后端只从 Mihomo 日志映射固定、脱敏的 DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 或网络不可达原因，不保存原始节点日志。
+- 节点扫描不会原样启动订阅中的 `url-test`、`fallback` 和通用规则；这些配置可能主动探测其他节点，破坏当前 worker 的单节点归属。worker 只复用代理定义和 DNS 数据，并用固定 Coffee 规则隔离检测流量。
+- 节点文件和进度文件都使用显式字段集合；节点写入、manifest 读取和导出会重新校验记录结构、代理证据、状态/出口 IP 约束、文件大小和 SHA-256。
+- `runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志；后端只有在子进程退出且工作目录删除后才返回 `cleanup_confirmed=true`。
+- 显式 `/ip/{ip}` 页面最终仍调用与当前采集器相同的 `/api/ip/lookup/{ip}`，HTML 摘要字段反而更少；入口服务器 IP 不得冒充出口 IP，因此不增加显式 IP 或站外回显 fallback。
 
 ## 结果生命周期
 
@@ -65,7 +69,9 @@ uv run python scripts/verify_real_scan.py
 Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
 ```
 
-脚本会创建真实扫描、轮询至终态，逐节点校验出口 IP/selector 证据、manifest、完整导出和凭据不泄露。可用 `BEST_IP_API_BASE` 指定后端地址、`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 调整整体验收超时。
+脚本会先取得一次订阅快照，并把其 SHA-256 与客户端生成的任务 ID 绑定到创建请求；后端实际下载内容若不同会直接失败。随后脚本逐节点核对订阅顺序、metadata 数、trace/lookup 出口一致性、selector 和代理证据、manifest 本地文件 hash、完整导出、临时工作目录清理及订阅 URL/节点凭据不泄露；异常或超时会取消并确认后台任务与 Mihomo 清理终态。`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 是从订阅预取到终态 API 核验的总预算；超时后的取消清理另有最多 35 秒安全宽限期，不会被伪装为验收通过。
+
+`BEST_IP_API_BASE` 只能指向与脚本共享当前 `runtime/results` 和 `runtime/jobs` 的本机后端；正式闭环会强制读取本地节点文件重算 hash，因此不支持无共享文件系统的远程或容器后端。
 
 ## API
 
@@ -78,7 +84,7 @@ Content-Type: application/json
 {"subscription_url":"https://example.com/subscription"}
 ```
 
-响应 `202` 和任务 ID。订阅地址不会写入任务状态、manifest 或导出。
+响应 `202` 和任务 ID。订阅地址不会写入任务状态、manifest 或导出。正式验收脚本还会传入可选的 64 位 `subscription_sha256` 和 32 位 `request_id`，用于把实际扫描绑定到预取快照，并在创建响应丢失时仍可取消确定的任务；普通客户端无需提供。
 
 ### 查询进度/完成摘要
 
@@ -86,7 +92,7 @@ Content-Type: application/json
 GET /api/scans/{id}
 ```
 
-扫描中只返回状态、计数、当前节点和空 `results`；状态为 `completed` 且 `manifest_ready=true` 后，才返回暂存 manifest 的轻量摘要。
+扫描中返回状态、计数和阶段信息以及空 `results`；状态为 `completed` 且 `manifest_ready=true` 后，才返回暂存 manifest 的轻量摘要。
 
 ### 查询单节点完整结果
 
@@ -127,7 +133,7 @@ DELETE /api/scans/{id}
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
 | `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
 | `BEST_IP_MAX_PARALLEL_NODES` | `2` | 单个扫描任务同时启动的独立 Mihomo 节点检测数 |
-| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 检测超时 |
+| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 采集总时间预算；page、trace、lookup 和 related 共用该上限 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
 

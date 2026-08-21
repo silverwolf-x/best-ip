@@ -16,6 +16,7 @@ COFFEE_HOST = "ip.net.coffee"
 COFFEE_ORIGIN = f"https://{COFFEE_HOST}"
 COFFEE_PAGE_URL = f"{COFFEE_ORIGIN}/ip/"
 COFFEE_TRACE_URL = f"{COFFEE_ORIGIN}/cdn-cgi/trace"
+RELATED_POLL_BUDGET_SECONDS = 20
 
 GLOBAL_PING_NODES = [
     {"code": "cn", "name": "上海", "node": "n01"},
@@ -259,20 +260,47 @@ class CoffeeCollector:
 
         attempts: list[dict[str, Any]] = []
         result: dict[str, Any] = _missing_result(url, "关联域名轮询未开始")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + min(
+            self.timeout_seconds, RELATED_POLL_BUDGET_SECONDS
+        )
+        still_pending = True
         for attempt in range(1, 11):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
             if attempt > 1:
-                await asyncio.sleep(1.5)
-            result = await self._request(
-                client,
-                url,
-                payload="json",
-                timeout_seconds=self._deadline(8),
-            )
+                await asyncio.sleep(min(1.5, remaining))
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+            request_timeout = min(self._deadline(8), remaining)
+            try:
+                result = await asyncio.wait_for(
+                    self._request(
+                        client,
+                        url,
+                        payload="json",
+                        timeout_seconds=request_timeout,
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                break
             attempts.append(_without_data(result))
             data = result.get("data") if isinstance(result.get("data"), dict) else {}
-            still_pending = data.get("pending") or data.get("related_domains_pending")
+            still_pending = bool(
+                data.get("pending") or data.get("related_domains_pending")
+            )
             if not result.get("ok") or not still_pending:
                 break
+        if still_pending:
+            result = {
+                **result,
+                "ok": False,
+                "error": "关联域名轮询超过时间预算",
+                "error_type": "PollBudgetExceeded",
+            }
         return {**result, "poll_attempts": attempts, "poll_count": len(attempts)}
 
     async def _request(
@@ -369,7 +397,7 @@ class CoffeeCollector:
                 "status_code": None,
                 "elapsed_ms": round((perf_counter() - started) * 1000),
                 "data": None,
-                "error": " ".join(str(exc).split())[:500] or exc.__class__.__name__,
+                "error": exc.__class__.__name__,
                 "error_type": exc.__class__.__name__,
                 "location": None,
             }
@@ -681,7 +709,11 @@ def _completeness(
 
 
 def _request_recorded(result: dict[str, Any]) -> bool:
-    return bool(result.get("attempted") and result.get("status_code") is not None)
+    return bool(
+        result.get("attempted")
+        and result.get("status_code") is not None
+        and result.get("ok")
+    )
 
 
 def _location(geo: dict[str, Any]) -> str:
@@ -730,7 +762,11 @@ def _missing_result(url: str, message: str, *, skipped: bool = False) -> dict[st
 
 
 def _combined_error(*results: dict[str, Any]) -> str | None:
-    errors = [result.get("error") for result in results if result.get("error")]
+    errors = [
+        result.get("error")
+        for result in results
+        if result.get("error") and not result.get("skipped")
+    ]
     return "；".join(dict.fromkeys(errors)) or None
 
 

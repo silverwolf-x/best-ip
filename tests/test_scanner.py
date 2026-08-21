@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from backend.app.scanner import (
@@ -9,6 +10,7 @@ from backend.app.scanner import (
     GLOBAL_PING_NODES,
     CoffeeCollector,
     _global_ping_url,
+    _request_recorded,
     _trace_ip,
     _validate_coffee_url,
 )
@@ -112,6 +114,7 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
     )
 
     assert result["status"] == "success"
+    assert result["error"] is None
     assert result["exit_ip"] == "203.0.113.10"
     assert result["coffee"]["lookup"]["trust_score"] == 91
     assert result["proxy_evidence"]["direct_fallback"] is False
@@ -204,3 +207,60 @@ def test_collector_rejects_non_mihomo_proxy() -> None:
         CoffeeCollector("http://127.0.0.1:12345/path", timeout_ms=1000)
     with pytest.raises(ValueError):
         CoffeeCollector("http://10.0.0.1:12345", timeout_ms=1000)
+
+
+@pytest.mark.asyncio
+async def test_request_does_not_persist_raw_connection_error() -> None:
+    class FailingClient:
+        async def get(self, _url, *, timeout):
+            raise httpx.ConnectError("https://user:secret@node.example:443")
+
+    collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
+    result = await collector._request(
+        FailingClient(),
+        "https://ip.net.coffee/ip/",
+        payload="html",
+        timeout_seconds=1,
+    )
+
+    assert result["error"] == "ConnectError"
+    assert result["error_type"] == "ConnectError"
+    assert "secret" not in str(result)
+    assert "node.example" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_related_polling_stops_at_hard_time_budget(monkeypatch) -> None:
+    cancelled = False
+
+    async def fake_request(self, _client, url, *, payload, timeout_seconds):
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        raise AssertionError("request should have been cancelled at the related budget")
+
+    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=100)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await collector._related_result(
+        object(),
+        "203.0.113.10",
+        {"related_domains_pending": True},
+    )
+
+    assert loop.time() - started < 0.5
+    assert cancelled is True
+    assert result["ok"] is False
+    assert result["error_type"] == "PollBudgetExceeded"
+    assert result["poll_count"] == 0
+
+
+def test_request_recorded_requires_successful_response() -> None:
+    assert _request_recorded({"attempted": True, "status_code": 200, "ok": True})
+    assert not _request_recorded(
+        {"attempted": True, "status_code": 500, "ok": False}
+    )

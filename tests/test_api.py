@@ -19,6 +19,9 @@ def _record(job_id: str, index: int) -> dict:
         "exit_ip": None,
         "error": "failed",
         "transport_error": "failed",
+        "started_at": "now",
+        "finished_at": "later",
+        "elapsed_ms": 1,
         "completeness": {"complete": False},
         "proxy_evidence": {},
         "requests": {},
@@ -32,6 +35,35 @@ def test_health_reports_application_and_core_state() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert isinstance(response.json()["mihomo_ready"], bool)
+
+
+def test_scan_request_rejects_invalid_subscription_snapshot_hash() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/scans",
+            json={
+                "subscription_url": "https://example.com/subscription",
+                "subscription_sha256": "not-a-sha256",
+            },
+        )
+    assert response.status_code == 422
+
+
+def test_scan_request_id_conflict_returns_409() -> None:
+    request_id = "a" * 32
+    job_manager.jobs[request_id] = {"id": request_id, "status": "queued"}
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/scans",
+                json={
+                    "subscription_url": "https://example.com/subscription",
+                    "request_id": request_id,
+                },
+            )
+        assert response.status_code == 409
+    finally:
+        job_manager.jobs.pop(request_id, None)
 
 
 def test_unknown_job_returns_not_found() -> None:

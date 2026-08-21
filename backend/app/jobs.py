@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from .config import JOBS_DIR, RESULTS_DIR, Settings, settings
-from .mihomo import MihomoError, MihomoProcess
+from .mihomo import MihomoError, MihomoProcess, MihomoStopError
 from .result_store import ResultStoreError, result_store
 from .scanner import CoffeeCollector
 from .subscription import (
@@ -29,6 +30,10 @@ class JobNotReadyError(RuntimeError):
     pass
 
 
+class JobAlreadyExistsError(RuntimeError):
+    pass
+
+
 class ScanJobManager:
     def __init__(self, app_settings: Settings = settings) -> None:
         self.settings = app_settings
@@ -37,8 +42,16 @@ class ScanJobManager:
         self._semaphore = asyncio.Semaphore(app_settings.max_parallel_jobs)
         self.node_parallelism = app_settings.max_parallel_nodes
 
-    def create(self, subscription_url: str) -> dict[str, str]:
-        job_id = uuid4().hex
+    def create(
+        self,
+        subscription_url: str,
+        *,
+        subscription_sha256: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, str]:
+        job_id = request_id or uuid4().hex
+        if job_id in self.jobs:
+            raise JobAlreadyExistsError(job_id)
         self.jobs[job_id] = {
             "id": job_id,
             "status": "queued",
@@ -53,10 +66,17 @@ class ScanJobManager:
             "failed_count": 0,
             "current_node": None,
             "manifest_ready": False,
+            "cleanup_confirmed": True,
             "execution_mode": "parallel" if self.node_parallelism > 1 else "sequential",
             "error": None,
         }
-        self.tasks[job_id] = asyncio.create_task(self._run(job_id, subscription_url))
+        self.tasks[job_id] = asyncio.create_task(
+            self._run(
+                job_id,
+                subscription_url,
+                subscription_sha256=subscription_sha256,
+            )
+        )
         return {"id": job_id, "status": "queued"}
 
     def get(self, job_id: str) -> dict[str, Any]:
@@ -109,22 +129,44 @@ class ScanJobManager:
             raise JobNotFoundError(job_id)
         task = self.tasks.get(job_id)
         if task and not task.done():
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         if job.get("status") == "queued":
             job["status"] = "cancelled"
             job["message"] = "扫描已取消"
+            job["cleanup_confirmed"] = True
             job["finished_at"] = _now()
+            await self._safe_write_progress(job)
+        if (
+            job.get("status") in {"completed", "failed", "cancelled"}
+            and job.get("cleanup_confirmed") is not True
+        ):
+            raise JobNotReadyError("任务已终止，但 Mihomo 清理未确认")
         return self.get(job_id)
 
     async def shutdown(self) -> None:
         active = [task for task in self.tasks.values() if not task.done()]
         for task in active:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         if active:
             await asyncio.gather(*active, return_exceptions=True)
+        for job in self.jobs.values():
+            if job.get("status") == "queued":
+                job["status"] = "cancelled"
+                job["message"] = "扫描已取消"
+                job["cleanup_confirmed"] = True
+                job["finished_at"] = _now()
+                await self._safe_write_progress(job)
 
-    async def _run(self, job_id: str, subscription_url: str) -> None:
+    async def _run(
+        self,
+        job_id: str,
+        subscription_url: str,
+        *,
+        subscription_sha256: str | None = None,
+    ) -> None:
         job = self.jobs[job_id]
         work_dir = JOBS_DIR / job_id
         try:
@@ -136,6 +178,11 @@ class ScanJobManager:
                     max_bytes=self.settings.subscription_max_bytes,
                     timeout_seconds=self.settings.subscription_timeout_seconds,
                 )
+                if (
+                    subscription_sha256 is not None
+                    and hashlib.sha256(content).hexdigest() != subscription_sha256
+                ):
+                    raise SubscriptionError("订阅内容与请求快照不一致")
                 subscription_dns = extract_subscription_dns(content)
                 parsed_proxies = parse_subscription(content, max_nodes=self.settings.max_nodes)
                 proxies = [
@@ -150,6 +197,7 @@ class ScanJobManager:
                 job["status"] = "running"
                 job["message"] = f"正在并行检测 {len(proxies)} 个节点"
                 await self._write_progress(job)
+                job["cleanup_confirmed"] = False
                 node_semaphore = asyncio.Semaphore(min(self.node_parallelism, len(proxies)))
                 node_tasks = [
                     asyncio.create_task(
@@ -167,12 +215,23 @@ class ScanJobManager:
                 ]
                 try:
                     await asyncio.gather(*node_tasks)
-                except BaseException:
+                except BaseException as exc:
                     for task in node_tasks:
-                        if not task.done():
+                        if not task.done() and not task.cancelling():
                             task.cancel()
-                    await asyncio.gather(*node_tasks, return_exceptions=True)
+                    outcomes = await asyncio.gather(
+                        *node_tasks,
+                        return_exceptions=True,
+                    )
+                    if any(isinstance(outcome, MihomoStopError) for outcome in outcomes):
+                        job["cleanup_confirmed"] = False
+                        raise MihomoStopError("Mihomo 子进程清理未确认") from exc
+                    job["cleanup_confirmed"] = True
                     raise
+                job["cleanup_confirmed"] = True
+                if not _remove_work_dir(work_dir):
+                    job["cleanup_confirmed"] = False
+                    raise OSError("Mihomo 工作目录清理失败")
 
                 job["current_node"] = None
                 job["finished_at"] = _now()
@@ -181,22 +240,46 @@ class ScanJobManager:
                 job["manifest_ready"] = True
                 suffix = f"，已跳过 {job['skipped']} 个订阅信息项" if job["skipped"] else ""
                 job["message"] = f"扫描完成，共 {len(proxies)} 个节点{suffix}"
-                await self._write_progress(job)
+                await self._safe_write_progress(job)
         except asyncio.CancelledError:
-            job["status"] = "cancelled"
-            job["message"] = "扫描已取消"
+            work_dir_removed = _remove_work_dir(work_dir)
+            job["cleanup_confirmed"] = bool(
+                job.get("cleanup_confirmed") and work_dir_removed
+            )
+            job["status"] = (
+                "cancelled" if job["cleanup_confirmed"] else "failed"
+            )
+            job["message"] = (
+                "扫描已取消"
+                if job["cleanup_confirmed"]
+                else "扫描取消后的清理未确认"
+            )
+            job["error"] = (
+                None
+                if job["cleanup_confirmed"]
+                else "Mihomo 进程或工作目录清理未确认"
+            )
             job["current_node"] = None
             job["finished_at"] = _now()
             await self._safe_write_progress(job)
         except Exception as exc:
+            work_dir_removed = _remove_work_dir(work_dir)
+            job["cleanup_confirmed"] = bool(
+                job.get("cleanup_confirmed") and work_dir_removed
+            )
             job["status"] = "failed"
             job["message"] = "扫描任务失败"
             job["current_node"] = None
             job["finished_at"] = _now()
-            job["error"] = _short_error(exc)
+            job["error"] = (
+                _safe_job_error(exc)
+                if job["cleanup_confirmed"]
+                else "Mihomo 进程或工作目录清理未确认"
+            )
             await self._safe_write_progress(job)
         finally:
-            shutil.rmtree(work_dir, ignore_errors=True)
+            if work_dir.exists():
+                job["cleanup_confirmed"] = False
             job["finished_at"] = job.get("finished_at") or _now()
 
     async def _scan_node(
@@ -229,18 +312,22 @@ class ScanJobManager:
                     mihomo.proxy_url,
                     timeout_ms=self.settings.page_timeout_ms,
                 )
-                result = await collector.collect(
-                    job_id=job["id"],
-                    node_index=index,
-                    node_name=node_name,
-                    node_type=node_type,
-                    selected_proxy=selected,
-                    mihomo_instance=mihomo.instance_id,
+                result = await asyncio.wait_for(
+                    collector.collect(
+                        job_id=job["id"],
+                        node_index=index,
+                        node_name=node_name,
+                        node_type=node_type,
+                        selected_proxy=selected,
+                        mihomo_instance=mihomo.instance_id,
+                    ),
+                    timeout=self.settings.page_timeout_ms / 1000,
                 )
+                _attach_mihomo_error(result, mihomo, log_offset)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                mihomo_error = mihomo.read_log_since(log_offset)
+                mihomo_error = _read_mihomo_error(mihomo, log_offset)
                 result = _failed_node(
                     job["id"],
                     index,
@@ -254,7 +341,8 @@ class ScanJobManager:
                 try:
                     await mihomo.stop()
                 finally:
-                    shutil.rmtree(mihomo.work_dir, ignore_errors=True)
+                    if not _remove_work_dir(mihomo.work_dir):
+                        raise MihomoStopError("Mihomo 工作目录清理未确认")
 
             result_store.write_node(job["id"], index, result)
             _count_result(job, result)
@@ -285,6 +373,7 @@ def _progress(job: dict[str, Any]) -> dict[str, Any]:
         "failed_count": job.get("failed_count", 0),
         "current_node": job.get("current_node"),
         "manifest_ready": job.get("manifest_ready", False),
+        "cleanup_confirmed": job.get("cleanup_confirmed", True),
         "updated_at": _now(),
         "error": job.get("error"),
     }
@@ -300,6 +389,54 @@ def _count_result(job: dict[str, Any], result: dict[str, Any]) -> None:
         job["failed_count"] += 1
 
 
+_TRANSPORT_ERROR_TYPES = {
+    "CloseError",
+    "ConnectError",
+    "ConnectTimeout",
+    "LocalProtocolError",
+    "NetworkError",
+    "PoolTimeout",
+    "ProtocolError",
+    "ProxyError",
+    "ReadError",
+    "ReadTimeout",
+    "RemoteProtocolError",
+    "TimeoutException",
+    "WriteError",
+    "WriteTimeout",
+}
+
+
+def _read_mihomo_error(mihomo: MihomoProcess, offset: int) -> str:
+    try:
+        return mihomo.read_log_since(offset)
+    except (OSError, ValueError):
+        return ""
+
+
+def _attach_mihomo_error(
+    result: dict[str, Any], mihomo: MihomoProcess, offset: int
+) -> None:
+    requests = result.get("requests")
+    if not isinstance(requests, dict) or not any(
+        isinstance(request, dict)
+        and request.get("error_type") in _TRANSPORT_ERROR_TYPES
+        for request in requests.values()
+    ):
+        return
+
+    message = _read_mihomo_error(mihomo, offset)
+    transport_error = (
+        _summarize_mihomo_error(message) if message else "节点传输连接失败"
+    )
+    result["transport_error"] = transport_error
+    result["error"] = _merge_error(result.get("error"), transport_error)
+    pages = result.get("pages")
+    ip_page = pages.get("ip") if isinstance(pages, dict) else None
+    if isinstance(ip_page, dict):
+        ip_page["error"] = result["error"]
+
+
 def _failed_node(
     job_id: str,
     index: int,
@@ -310,10 +447,12 @@ def _failed_node(
     mihomo_error: str = "",
     mihomo: MihomoProcess | None = None,
 ) -> dict[str, Any]:
-    error = _merge_error(
-        _short_error(exc),
-        _summarize_mihomo_error(mihomo_error) if mihomo_error else None,
+    transport_error = (
+        _summarize_mihomo_error(mihomo_error)
+        if mihomo_error
+        else _safe_exception_error(exc)
     )
+    error = transport_error
     return {
         "schema_version": 1,
         "job_id": job_id,
@@ -347,7 +486,7 @@ def _failed_node(
             "optional": {},
             "missing": ["selector_or_collector"],
         },
-        "transport_error": error,
+        "transport_error": transport_error,
         "cidr": "",
         "rdns": "",
         "ai_verdict": "",
@@ -375,15 +514,30 @@ def _failed_node(
 
 
 def _summarize_mihomo_error(message: str) -> str:
-    if "dns resolve failed" in message:
+    normalized = message.lower()
+    if "dns resolve failed" in normalized or "no such host" in normalized:
         return "节点服务器域名无法解析"
-    if "REALITY authentication failed" in message:
+    if "reality authentication failed" in normalized:
         return "节点 REALITY 认证失败"
-    if "context deadline exceeded" in message:
+    if "context deadline exceeded" in normalized or "i/o timeout" in normalized:
         return "连接节点服务器超时"
-    if "connection refused" in message:
+    if "connection refused" in normalized:
         return "节点服务器拒绝连接"
+    if "tls handshake" in normalized:
+        return "节点 TLS 握手失败"
+    if "connection reset" in normalized:
+        return "节点服务器重置连接"
+    if "eof" in normalized or "broken pipe" in normalized:
+        return "节点服务器提前断开连接"
+    if "network is unreachable" in normalized:
+        return "节点服务器网络不可达"
     return "Mihomo 节点连接失败"
+
+
+def _safe_exception_error(exc: Exception) -> str:
+    if isinstance(exc, MihomoError):
+        return _summarize_mihomo_error(str(exc))
+    return f"节点采集失败（{exc.__class__.__name__}）"
 
 
 def _merge_error(*messages: str | None) -> str:
@@ -391,8 +545,26 @@ def _merge_error(*messages: str | None) -> str:
     return "；".join(dict.fromkeys(parts))[:2000]
 
 
+def _remove_work_dir(work_dir: Path) -> bool:
+    try:
+        shutil.rmtree(work_dir)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return not work_dir.exists()
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _safe_job_error(exc: Exception) -> str:
+    if isinstance(exc, (SubscriptionError, ResultStoreError)):
+        return _short_error(exc)
+    if isinstance(exc, MihomoError):
+        return _summarize_mihomo_error(str(exc))
+    return f"扫描任务失败（{exc.__class__.__name__}）"
 
 
 def _short_error(exc: Exception) -> str:

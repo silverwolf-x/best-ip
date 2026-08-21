@@ -21,6 +21,10 @@ class MihomoError(RuntimeError):
     pass
 
 
+class MihomoStopError(MihomoError):
+    pass
+
+
 _DEFAULT_DNS_CONFIG = {
     "enable": True,
     "ipv6": True,
@@ -166,8 +170,13 @@ class MihomoProcess:
 
         try:
             await self._wait_until_ready()
-        except Exception:
-            await self.stop()
+        except BaseException as exc:
+            try:
+                await self.stop()
+            except MihomoStopError:
+                raise
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             detail = self._read_log_tail(self.log_path)
             suffix = f"：{detail}" if detail else ""
             raise MihomoError(f"Mihomo 启动失败{suffix}") from None
@@ -233,23 +242,50 @@ class MihomoProcess:
 
     async def stop(self) -> None:
         process = self.process
-        try:
-            if process and process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=8)
-                except TimeoutError:
-                    if process.returncode is None:
-                        with suppress(ProcessLookupError):
-                            process.kill()
-                    with suppress(TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=8)
-        finally:
+        if not process or process.returncode is not None:
             self.process = None
             if self._log_handle:
                 self._log_handle.close()
                 self._log_handle = None
+            return
+
+        cleanup_task = asyncio.create_task(self._stop_process(process))
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(cleanup_task)
+                    break
+                except asyncio.CancelledError:
+                    if cleanup_task.cancelled():
+                        raise MihomoStopError("Mihomo 清理任务被取消") from None
+                    cancelled = True
+        except MihomoStopError:
+            raise
+        except Exception as exc:
+            raise MihomoStopError("Mihomo 进程停止失败") from exc
+        else:
+            self.process = None
+            if self._log_handle:
+                self._log_handle.close()
+                self._log_handle = None
+            if cancelled:
+                raise asyncio.CancelledError
+
+    @staticmethod
+    async def _stop_process(process: asyncio.subprocess.Process) -> None:
+        with suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=8)
+        except TimeoutError:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=8)
+            except TimeoutError as exc:
+                raise MihomoStopError("Mihomo 进程未能停止") from exc
 
     @staticmethod
     def _read_log_tail(path: Path) -> str:

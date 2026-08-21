@@ -99,7 +99,25 @@ runtime/results/<job_id>/
 - 每个实例的 selector 只暴露当前检测节点，但保留完整代理定义以支持节点间拨号依赖。
 - 默认并发为 2，可通过 `BEST_IP_MAX_PARALLEL_NODES` 调整；单个 worker 内仍严格执行 `select + collect`，不重叠切换。
 - 单节点内的页面/trace，以及出口 IP 依赖的 lookup、global ping、portscan、pingcheck 已按依赖关系并行调度；related 仍按页面语义顺序轮询。
-- 仍需真实订阅实测核对记录数、节点 identity、出口 IP、Coffee 字段和失败类型；任何串线证据都回退顺序模式。
+- 正式订阅已完成 20 节点并发实测；后续订阅内容会由供应商动态变化，验收结果必须绑定具体任务 ID 和当次节点总数。
+
+### 阶段 E：显式 IP 与失败根因探索
+
+探索结论：
+
+- `GET /ip/{ip}` 的路径参数只会跳过当前出口 trace，再调用同一个 `/api/ip/lookup/{ip}`；其 HTML 服务端摘要少于现有 lookup JSON，不能补充更多结构化字段。
+- 订阅中的服务器地址及其 DNS 解析结果是节点入口，不是代理出口，禁止用于 Coffee 查询结果中的 `exit_ip`。
+- 对失败代表节点分别经 Coffee trace、Cloudflare trace 和 ipify 查询出口 IP，三者均在节点握手阶段返回连接错误；无法先取得可信出口 IP，显式 IP fallback 不能修复这类失败。
+- 当前重建配置与保留原生订阅 DNS、proxy-groups、rules 的三节点 A/B 返回相同错误类别：REALITY 认证失败、节点连接超时和上游 EOF。原生配置没有增加可用数据，也不是这些失败的主因。
+- 不把完整原生 `url-test`、`fallback` 和数百条通用规则直接带入扫描 worker：这些组会主动探测其他节点，且原生规则可能引入非当前节点流量，破坏“一 worker 一节点”的归属证据。worker 继续使用订阅的代理定义和 DNS 数据，只保留 Coffee 检测所需的隔离配置。
+- 不增加站外出口回显或宿主直连 Coffee fallback；失败记录改为从 Mihomo 日志提取固定、脱敏的传输层原因，同时保持 `exit_ip=null`。
+
+收敛实现：
+
+- 单节点 Coffee 采集由 `BEST_IP_PAGE_TIMEOUT_MS` 约束总 wall-clock 预算；related 自身仍有 20 秒硬上限。
+- 正式验收先固定订阅快照，并用 SHA-256 与客户端任务 ID 绑定实际扫描；动态订阅发生变化时失败而不是用两个快照做凭据和节点数核验。
+- 结果仓采用显式字段集合；写入、manifest 读取和导出都会重新校验节点结构、代理证据、完成字段、文件大小与 SHA-256。导出顶层总数和计数只来自已校验 manifest。
+- 取消和完成响应只有在 Mihomo 子进程退出且临时工作目录删除后才设置 `cleanup_confirmed=true`；正式验收会检查该事实和 `runtime/jobs/<job_id>` 不存在。
 
 ## 4. 验收标准
 
@@ -128,9 +146,9 @@ Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
 - 原始配置数、metadata 数和当前真实节点数以本次订阅实际返回为准，并记录实测值。
 - 暂存记录：真实节点数 / 真实节点数，不允许缺失。
 - 每个成功或部分节点都有合法 Coffee trace 出口 IP、lookup 结构化结果和代理证据；失败节点的出口 IP 为 `null`。
-- 从网站 `GET /api/scans/{job_id}/export` 得到新的完整 JSON；记录文件大小和 SHA-256。
-- 导出文件、日志和暂存文件不包含订阅 URL、Token 或节点凭据。
-- 脚本会逐节点读取结果、核对 selector 身份、manifest 和导出数量，作为每次后端采集改动后的闭环验收入口。
+- 从网站 `GET /api/scans/{job_id}/export` 得到新的完整 JSON；导出 manifest 和逐节点结果必须与前面核验的快照完全一致，并通过本地 `ResultStore` 重算节点文件大小和 SHA-256。
+- API 返回、导出和持久化暂存文件不包含订阅 URL、其 query/path token 或节点凭据；原始 Mihomo 日志只在临时目录内使用，任务结束即删除，不写入结果。
+- 脚本会逐节点读取结果、核对 trace/lookup、selector/代理证据、manifest hash、导出数量和凭据边界，作为每次后端采集改动后的闭环验收入口。
 
 ### 验证命令
 
@@ -150,8 +168,12 @@ Remove-Item Env:BEST_IP_TEST_SUBSCRIPTION_URL
 - [x] 解耦 JobManager、结果读取 API 和扫描器活动状态
 - [x] 删除前端 GPT/Claude 展示与筛选
 - [x] 更新测试与 README
-- [x] 完成正式订阅全量网站扫描并导出新 JSON（实测任务 `9984538c804a4a14995b90618292412b`：20/20，完整 8，部分 0，失败 12；通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入）
-- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 2 workers；仍需真实订阅核验）
+- [x] 完成正式订阅全量网站扫描并导出新 JSON（历史任务 `9984538c804a4a14995b90618292412b`：20/20，完整 8，部分 0，失败 12；探索诊断任务 `a31a580343aa4c9a8769240f4f3e3fe7`：11/11，均以脱敏传输错误终态落盘；最终收敛任务 `25327ad825d54268a88f2d2e4aba1c6e`：9/9，完整 0，部分 0，失败 9，manifest/export/hash/凭据与清理闭环通过；订阅内容由供应商动态变化）
+- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 2 workers；正式订阅闭环已通过）
+- [x] 完成显式 IP、原生配置 A/B 和失败根因探索，不引入无事实收益的 fallback
+- [x] 将 Mihomo DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 和网络不可达日志映射为固定脱敏错误
+- [x] 将正式验收绑定到订阅 SHA-256/确定任务 ID，强制核对节点顺序、metadata、manifest/export、本地 hash、凭据和 Mihomo 清理终态
+- [x] 收紧 ResultStore 显式字段与完成事实校验，并使单节点 Coffee 采集遵守总 wall-clock 预算
 
 ## 6. 历史结果说明
 

@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from .config import RESULTS_DIR
@@ -51,6 +52,88 @@ _SUMMARY_KEYS = (
 )
 
 
+_PROGRESS_FIELDS = {
+    "job_id",
+    "status",
+    "phase",
+    "total",
+    "skipped",
+    "completed",
+    "success_count",
+    "partial_count",
+    "failed_count",
+    "current_node",
+    "manifest_ready",
+    "cleanup_confirmed",
+    "updated_at",
+    "error",
+}
+_NODE_FIELDS = {
+    "schema_version",
+    "job_id",
+    "node_index",
+    "node",
+    "type",
+    "selected_proxy",
+    "requested_proxy",
+    "coffee_page_url",
+    "status",
+    "error",
+    "phase",
+    "transport_error",
+    "started_at",
+    "finished_at",
+    "exit_ip",
+    "cidr",
+    "rdns",
+    "ai_verdict",
+    "location",
+    "score",
+    "is_residential",
+    "is_datacenter",
+    "is_native",
+    "traffic_profile",
+    "company_type",
+    "is_vpn",
+    "is_proxy",
+    "is_tor",
+    "is_crawler",
+    "is_abuser",
+    "security_status",
+    "asn",
+    "as_org",
+    "global_ping",
+    "port_scan",
+    "ping_check",
+    "related_domains",
+    "elapsed_ms",
+    "proxy_evidence",
+    "completeness",
+    "requests",
+    "coffee",
+    "pages",
+}
+_NODE_REQUIRED_FIELDS = {
+    "schema_version",
+    "job_id",
+    "node_index",
+    "node",
+    "type",
+    "selected_proxy",
+    "status",
+    "error",
+    "transport_error",
+    "started_at",
+    "finished_at",
+    "exit_ip",
+    "elapsed_ms",
+    "proxy_evidence",
+    "completeness",
+    "requests",
+    "coffee",
+}
+
+
 class ResultStoreError(RuntimeError):
     pass
 
@@ -69,27 +152,12 @@ class ResultStore:
 
     def write_progress(self, job_id: str, progress: dict[str, Any]) -> None:
         payload = {
-            key: value
-            for key, value in progress.items()
-            if key not in {"results", "subscription_url"}
+            key: value for key, value in progress.items() if key in _PROGRESS_FIELDS
         }
         self._atomic_write(self._job_dir(job_id) / "progress.json", payload)
 
     def write_node(self, job_id: str, index: int, record: dict[str, Any]) -> str:
-        if index < 0:
-            raise ResultStoreError("节点索引不能为负数")
-        if record.get("job_id") != job_id or record.get("node_index") != index:
-            raise ResultStoreError("节点记录与任务或索引不匹配")
-        status = record.get("status")
-        if status in {"success", "partial"}:
-            if record.get("selected_proxy") != record.get("node"):
-                raise ResultStoreError("节点记录的 selector 确认值不匹配")
-            self._validate_exit_ip(record.get("exit_ip"))
-        elif status == "failed":
-            if record.get("exit_ip") is not None:
-                raise ResultStoreError("失败节点不能保存伪造的出口 IP")
-        else:
-            raise ResultStoreError("节点记录状态无效")
+        self._validate_node(job_id, index, record)
         filename = self._node_filename(index)
         path = self._job_dir(job_id) / "nodes" / filename
         if path.exists():
@@ -185,6 +253,8 @@ class ResultStore:
             or manifest.get("job_id") != job_id
             or manifest.get("status") != "completed"
             or manifest.get("complete") is not True
+            or manifest.get("all_records_present") is not True
+            or manifest.get("completed") != total
             or not isinstance(total, int)
             or total < 1
             or not isinstance(records, list)
@@ -228,9 +298,11 @@ class ResultStore:
     def read_node(self, job_id: str, index: int) -> dict[str, Any]:
         if index < 0:
             raise ResultStoreError("节点索引不能为负数")
-        return self._read_json(
+        record = self._read_json(
             self._job_dir(job_id) / "nodes" / self._node_filename(index)
         )
+        self._validate_node(job_id, index, record)
+        return record
 
     def read_summaries(self, job_id: str) -> list[dict[str, Any]]:
         manifest = self.read_manifest(job_id)
@@ -242,18 +314,106 @@ class ResultStore:
     def export(self, job_id: str, job: dict[str, Any]) -> dict[str, Any]:
         manifest = self.read_manifest(job_id)
         total = manifest.get("total")
-        if not isinstance(total, int):
-            raise ResultStoreError("manifest total 无效")
+        counts = manifest.get("counts")
+        if not isinstance(total, int) or not isinstance(counts, dict):
+            raise ResultStoreError("manifest 完成事实无效")
         results = [self.read_node(job_id, index) for index in range(total)]
         return {
-            key: value
-            for key, value in {
-                **job,
-                "results": results,
-                "manifest": manifest,
-            }.items()
-            if key != "subscription_url"
+            "id": job_id,
+            "status": "completed",
+            "message": job.get("message"),
+            "created_at": manifest.get("created_at"),
+            "finished_at": manifest.get("finished_at"),
+            "total": total,
+            "skipped": manifest.get("skipped", 0),
+            "completed": total,
+            "success_count": counts.get("success"),
+            "partial_count": counts.get("partial"),
+            "failed_count": counts.get("failed"),
+            "current_node": None,
+            "manifest_ready": True,
+            "cleanup_confirmed": job.get("cleanup_confirmed") is True,
+            "execution_mode": manifest.get("execution_mode"),
+            "error": None,
+            "results": results,
+            "manifest": manifest,
         }
+
+    @staticmethod
+    def _validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
+        if index < 0:
+            raise ResultStoreError("节点索引不能为负数")
+        unknown_fields = set(record) - _NODE_FIELDS
+        missing_fields = _NODE_REQUIRED_FIELDS - set(record)
+        if unknown_fields or missing_fields:
+            raise ResultStoreError("节点记录字段集合无效")
+        if (
+            record.get("schema_version") != 1
+            or record.get("job_id") != job_id
+            or record.get("node_index") != index
+            or not isinstance(record.get("node"), str)
+            or not record.get("node")
+            or not isinstance(record.get("type"), str)
+            or not record.get("type")
+            or not isinstance(record.get("elapsed_ms"), int)
+            or record.get("elapsed_ms") < 0
+        ):
+            raise ResultStoreError("节点记录结构或身份无效")
+        for field in ("proxy_evidence", "completeness", "requests", "coffee"):
+            if not isinstance(record.get(field), dict):
+                raise ResultStoreError(f"节点记录的 {field} 无效")
+
+        status = record.get("status")
+        if status in {"success", "partial"}:
+            evidence = record["proxy_evidence"]
+            proxy_url = evidence.get("proxy_url")
+            try:
+                parsed_proxy = urlsplit(proxy_url)
+                proxy_port = parsed_proxy.port
+            except (TypeError, ValueError):
+                parsed_proxy = None
+                proxy_port = None
+            checks = record["completeness"].get("checks")
+            if (
+                record.get("selected_proxy") != record.get("node")
+                or evidence.get("selection_confirmed") is not True
+                or evidence.get("selected_proxy") != record.get("node")
+                or evidence.get("transport") != "workspace_mihomo_mixed_port"
+                or evidence.get("target_origin") != "https://ip.net.coffee"
+                or not isinstance(evidence.get("mihomo_instance"), str)
+                or not evidence.get("mihomo_instance")
+                or parsed_proxy is None
+                or parsed_proxy.scheme != "http"
+                or parsed_proxy.hostname != "127.0.0.1"
+                or proxy_port is None
+                or parsed_proxy.path not in {"", "/"}
+                or parsed_proxy.query
+                or parsed_proxy.fragment
+                or parsed_proxy.username
+                or parsed_proxy.password
+                or evidence.get("trust_env") is not False
+                or evidence.get("direct_fallback") is not False
+                or not isinstance(checks, dict)
+                or not all(
+                    checks.get(key) is True
+                    for key in (
+                        "page_received",
+                        "trace_received",
+                        "exit_ip_valid",
+                        "lookup_received",
+                        "lookup_matches_trace",
+                    )
+                )
+            ):
+                raise ResultStoreError("成功节点记录的采集或代理证据无效")
+            ResultStore._validate_exit_ip(record.get("exit_ip"))
+        elif status == "failed":
+            if record.get("exit_ip") is not None:
+                raise ResultStoreError("失败节点不能保存伪造的出口 IP")
+            if not str(record.get("error") or "").strip():
+                raise ResultStoreError("失败节点缺少错误原因")
+        else:
+            raise ResultStoreError("节点记录状态无效")
 
     @staticmethod
     def _summary(record: dict[str, Any]) -> dict[str, Any]:

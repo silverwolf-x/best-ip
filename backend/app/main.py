@@ -9,7 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import FRONTEND_DIR, settings
-from .jobs import JobNotFoundError, JobNotReadyError, job_manager
+from .jobs import (
+    JobAlreadyExistsError,
+    JobNotFoundError,
+    JobNotReadyError,
+    job_manager,
+)
 from .schemas import HealthResponse, ScanCreated, ScanRequest
 
 
@@ -41,7 +46,15 @@ async def health() -> HealthResponse:
 
 @app.post("/api/scans", response_model=ScanCreated, status_code=status.HTTP_202_ACCEPTED)
 async def create_scan(request: ScanRequest) -> ScanCreated:
-    return ScanCreated(**job_manager.create(request.subscription_url))
+    try:
+        created = job_manager.create(
+            request.subscription_url,
+            subscription_sha256=request.subscription_sha256,
+            request_id=request.request_id,
+        )
+    except JobAlreadyExistsError as exc:
+        raise HTTPException(status_code=409, detail="扫描请求 ID 已存在") from exc
+    return ScanCreated(**created)
 
 
 @app.get("/api/scans/{job_id}")
@@ -78,6 +91,8 @@ async def cancel_scan(job_id: str) -> dict[str, Any]:
         return await job_manager.cancel(job_id)
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail="扫描任务不存在") from exc
+    except JobNotReadyError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
