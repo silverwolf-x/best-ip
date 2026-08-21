@@ -61,17 +61,72 @@
 
     <section class="card table-container">
       <table class="main-table">
-        <thead><tr>
-          <th scope="col"><button class="sort-btn" data-sort="node">节点名称</button></th>
-          <th scope="col"><button class="sort-btn" data-sort="status">状态</button></th>
-          <th scope="col"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
-          <th scope="col"><button class="sort-btn" data-sort="location">位置 / 运营商</button></th>
-          <th scope="col">网络属性 / ASN</th>
-          <th scope="col"><button class="sort-btn" data-sort="security_status">安全状态</button></th>
-          <th scope="col"><button class="sort-btn" data-sort="score">评分</button></th>
-          <th scope="col">Coffee 全球 Ping</th>
-          <th scope="col"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
-        </tr></thead>
+        <thead>
+          <tr class="header-titles">
+            <th scope="col"><button class="sort-btn" data-sort="node">节点名称</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="status">状态</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="location">地理位置</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="isp">服务商 / ISP</button></th>
+            <th scope="col">ASN / 原生性</th>
+            <th scope="col">技术指标 (Bogon / RPKI / rDNS)</th>
+            <th scope="col"><button class="sort-btn" data-sort="security_status">安全 / 威胁指标</button></th>
+            <th scope="col"><button class="sort-btn" data-sort="score">评分</button></th>
+            <th scope="col">Coffee 全球 Ping</th>
+            <th scope="col"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
+          </tr>
+          <tr class="header-filters">
+            <th><input class="th-filter" data-col="node" type="search" placeholder="筛选节点..."></th>
+            <th>
+              <select class="th-filter" data-col="status">
+                <option value="">全部</option>
+                <option value="success">完整</option>
+                <option value="partial">部分</option>
+                <option value="failed">失败</option>
+              </select>
+            </th>
+            <th><input class="th-filter" data-col="exit_ip" type="search" placeholder="筛选IP..."></th>
+            <th><input class="th-filter" data-col="location" type="search" placeholder="筛选国家/城市..."></th>
+            <th><input class="th-filter" data-col="isp" type="search" placeholder="筛选ISP/企业..."></th>
+            <th>
+              <select class="th-filter" data-col="native">
+                <option value="">全部</option>
+                <option value="native">原生 IP</option>
+                <option value="broadcast">广播 IP</option>
+                <option value="residential">住宅宽带</option>
+                <option value="datacenter">机房/托管</option>
+              </select>
+            </th>
+            <th>
+              <select class="th-filter" data-col="tech">
+                <option value="">全部</option>
+                <option value="bogon">Bogon 广播</option>
+                <option value="public">公网可达</option>
+                <option value="rpki_valid">RPKI Valid</option>
+              </select>
+            </th>
+            <th>
+              <select class="th-filter" data-col="security">
+                <option value="">全部</option>
+                <option value="clean">纯净无威胁</option>
+                <option value="threat">有风险标记</option>
+                <option value="vpn">VPN</option>
+                <option value="proxy">代理</option>
+                <option value="tor">Tor</option>
+              </select>
+            </th>
+            <th>
+              <select class="th-filter" data-col="score">
+                <option value="">全部</option>
+                <option value="high">高分 (≥75)</option>
+                <option value="mid">中分 (45-74)</option>
+                <option value="low">低分 (&lt;45)</option>
+              </select>
+            </th>
+            <th><input class="th-filter" data-col="ping" type="search" placeholder="筛选地区/延迟..."></th>
+            <th></th>
+          </tr>
+        </thead>
         <tbody id="resultBody"></tbody>
       </table>
       <div id="emptyResults" class="empty-state"><p class="empty-title">等待首个节点结果</p><p class="empty-desc">每个节点完成并原子暂存后会立即显示；全部节点结束后生成最终 manifest，并开放详情与导出。</p></div>

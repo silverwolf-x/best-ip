@@ -117,6 +117,11 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
     assert result["error"] is None
     assert result["exit_ip"] == "203.0.113.10"
     assert result["coffee"]["lookup"]["trust_score"] == 91
+    assert result["bogon_status"] == "否（公网可达）"
+    assert result["rdns"] == "-"
+    assert result["rpki_status"] == "未知"
+    assert result["asn_kind_display"] == "未知"
+    assert result["security_status"] == "🛡️ 纯净 (未发现明显威胁)"
     assert result["proxy_evidence"]["direct_fallback"] is False
     assert all(url.startswith("https://ip.net.coffee/") for url in requested)
     forbidden_hosts = ("chatgpt", "claude", "openai", "anthropic")

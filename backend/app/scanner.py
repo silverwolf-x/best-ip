@@ -148,13 +148,13 @@ class CoffeeCollector:
                             task.cancel()
                     await asyncio.gather(*all_request_tasks, return_exceptions=True)
             else:
-                lookup = _missing_result("", "Coffee trace 未返回合法出口 IP")
+                lookup = _missing_result("", "Coffee trace 未返回出口 IP", skipped=True)
                 lookup_data = {}
-                reason = "未取得 Coffee trace 出口 IP，未请求依赖出口 IP 的接口"
-                global_ping = _missing_result("", reason)
-                port_scan = _missing_result("", reason)
-                ping_check = _missing_result("", reason)
-                related = _missing_result("", reason)
+                reason = "未取得出口 IP"
+                global_ping = _missing_result("", reason, skipped=True)
+                port_scan = _missing_result("", reason, skipped=True)
+                ping_check = _missing_result("", reason, skipped=True)
+                related = _missing_result("", reason, skipped=True)
 
         status = _node_status(
             page,
@@ -508,33 +508,162 @@ def _node_status(
     return "success"
 
 
+def _format_native(lookup_data: dict[str, Any]) -> dict[str, Any]:
+    # 对标 Coffee IP 原生性逻辑:
+    # 比较 countryCode 与 registered_country_code
+    cc_lo = str(lookup_data.get("countryCode") or "").strip().lower()
+    reg_lo = str(lookup_data.get("registered_country_code") or "").strip().lower()
+    reg_name = str(lookup_data.get("registered_country") or "").strip()
+    is_public_service = bool(lookup_data.get("is_public_service"))
+
+    if is_public_service:
+        return {"is_native": None, "native_status": "任播服务", "native_detail": ""}
+
+    if not cc_lo or not reg_lo:
+        return {"is_native": None, "native_status": "未知", "native_detail": ""}
+
+    if cc_lo == reg_lo:
+        return {"is_native": True, "native_status": "原生 IP", "native_detail": ""}
+
+    reg_up = reg_lo.upper()
+    tip_more = f" ({reg_name})" if reg_name else ""
+    return {
+        "is_native": False,
+        "native_status": f"广播 IP ({reg_up})",
+        "native_detail": f"IP注册在 {reg_up}{tip_more} 和IP归属地 {str(lookup_data.get('country') or '').upper()} 不一致",
+    }
+
+
+def _abuser_level_label(raw_level: Any, raw_score: Any) -> dict[str, str]:
+    # 对标 Coffee IP abuserLevelLabel:
+    # >= 0.25 极高风险, >= 0.10 高风险, >= 0.05 中风险, > 0.005 低风险, 0 纯净/极度纯净
+    n = None
+    if raw_score is not None:
+        try:
+            m = re.search(r"([0-9]*\.?[0-9]+)", str(raw_score))
+            if m:
+                n = float(m.group(1))
+        except (ValueError, TypeError):
+            n = None
+
+    raw_str = str(raw_level or "").lower()
+    if n is not None and isfinite(n):
+        if n > 0.25:
+            return {"label": "极高风险", "risk": "bad"}
+        if n >= 0.10:
+            return {"label": "高风险", "risk": "bad"}
+        if n >= 0.05:
+            return {"label": "中风险", "risk": "warn"}
+        if n > 0.005:
+            return {"label": "低风险", "risk": "warn"}
+        return {"label": "纯净", "risk": "ok"}
+
+    if "very_high" in raw_str:
+        return {"label": "极高风险", "risk": "bad"}
+    if "high" in raw_str:
+        return {"label": "高风险", "risk": "bad"}
+    if "med" in raw_str:
+        return {"label": "中风险", "risk": "warn"}
+    if "low" in raw_str:
+        return {"label": "低风险", "risk": "warn"}
+    if "safe" in raw_str:
+        return {"label": "纯净", "risk": "ok"}
+    return {"label": "纯净", "risk": "ok"}
+
+
+def _httpbl_level_label(raw_threat: Any) -> dict[str, str]:
+    # 对标 Coffee IP HTTP 蜜罐威胁等级
+    if raw_threat is None or raw_threat == "":
+        return {"label": "纯净", "risk": "ok"}
+    try:
+        val = int(raw_threat)
+        if val <= 0:
+            return {"label": "纯净", "risk": "ok"}
+        if val >= 5:
+            return {"label": "高风险", "risk": "bad"}
+        if val >= 2:
+            return {"label": "中风险", "risk": "warn"}
+        return {"label": "低风险", "risk": "warn"}
+    except (ValueError, TypeError):
+        return {"label": "纯净", "risk": "ok"}
+
+
+def _asn_kind_label(asn_kind: Any) -> str:
+    kind_map = {
+        "hosting": "机房/托管",
+        "mobile": "移动网络",
+        "residential": "住宅宽带",
+        "backbone": "骨干网",
+        "isp": "运营商",
+        "cdn": "CDN 内容分发",
+        "business": "商业专线",
+        "mixed": "混合",
+        "unknown": "未知",
+    }
+    k = str(asn_kind or "").lower()
+    return kind_map.get(k, k or "未知")
+
+
 def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     residential_value = ip_result.get("isResidential")
     datacenter_value = ip_result.get("is_datacenter")
     is_residential = residential_value if isinstance(residential_value, bool) else None
     is_datacenter = datacenter_value if isinstance(datacenter_value, bool) else None
 
-    native_value = ip_result.get("is_native")
-    is_native = native_value if isinstance(native_value, bool) else None
-    crawler_value = ip_result.get("is_crawler")
-    abuser_value = ip_result.get("is_abuser")
-    crawler_signal = crawler_value if isinstance(crawler_value, bool) else None
-    abuser_signal = abuser_value if isinstance(abuser_value, bool) else None
-    if crawler_signal or abuser_signal:
+    # 原生性解析
+    native_info = _format_native(ip_result)
+    is_native = native_info["is_native"]
+    native_status = native_info["native_status"]
+    native_detail = native_info["native_detail"]
+
+    # Bogon / 广播
+    is_bogon = bool(ip_result.get("is_bogon"))
+    bogon_reason = str(ip_result.get("bogon_reason") or "")
+
+    # RPKI 状态
+    rpki_raw = str(ip_result.get("rpki_status") or "").strip().lower()
+    if rpki_raw == "valid":
+        rpki_status = "✓ Valid"
+    elif rpki_raw == "invalid":
+        rpki_status = "✗ Invalid"
+    elif rpki_raw:
+        rpki_status = rpki_raw
+    else:
+        rpki_status = "未知"
+
+    # ASN 及自报类型
+    asn_kind_raw = str(ip_result.get("asn_kind") or "").strip()
+    asn_kind_display = _asn_kind_label(asn_kind_raw)
+
+    # 人机流量画像
+    is_crawler = ip_result.get("is_crawler") if isinstance(ip_result.get("is_crawler"), bool) else None
+    is_abuser = ip_result.get("is_abuser") if isinstance(ip_result.get("is_abuser"), bool) else None
+    is_public_service = bool(ip_result.get("is_public_service"))
+    if is_public_service:
+        traffic_profile = "服务器/任播 DNS"
+    elif is_crawler:
+        traffic_profile = "偏爬虫"
+    elif is_datacenter:
+        traffic_profile = "机器偏多"
+    elif is_residential or is_datacenter is False:
+        traffic_profile = "人类偏多"
+    elif is_crawler or is_abuser:
         traffic_profile = "人机混合 / 爬虫偏多"
-    elif crawler_signal is False and abuser_signal is False:
-        traffic_profile = "人类访问偏多"
     else:
         traffic_profile = "未知"
 
+    # 运营商类型 (company_type)
     company_type_value = str(ip_result.get("company_type") or "").strip()
     if company_type_value.lower() == "isp" or is_residential:
         company_type = "ISP（家庭宽带）"
-    elif is_datacenter:
-        company_type = "Hosting（机房托管）"
+    elif is_datacenter or company_type_value.lower() == "hosting":
+        company_type = "Hosting"
+    elif company_type_value:
+        company_type = company_type_value
     else:
-        company_type = company_type_value or "未知"
+        company_type = "未知"
 
+    # 风险深度检测 (VPN / Proxy / Tor / Crawler / Abuser)
     risk_keys = ("is_vpn", "is_proxy", "is_tor", "is_crawler", "is_abuser")
     risk_values = {
         key: ip_result.get(key) if isinstance(ip_result.get(key), bool) else None
@@ -542,16 +671,25 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     }
     risk_labels = {
         "is_vpn": "VPN",
-        "is_proxy": "代理",
+        "is_proxy": "代理 (Proxy)",
         "is_tor": "Tor",
-        "is_crawler": "爬虫",
-        "is_abuser": "滥用记录",
+        "is_crawler": "爬虫/机器人",
+        "is_abuser": "历史滥用",
     }
     risk_flags = [risk_labels[key] for key, value in risk_values.items() if value]
-    if risk_flags:
-        security_status = "⚠️ " + " · ".join(risk_flags)
+
+    # IP 情报 / 威胁指标
+    intel = ip_result.get("intelligence") if isinstance(ip_result.get("intelligence"), dict) else {}
+    threats = intel.get("threats") if isinstance(intel.get("threats"), list) else []
+    threat_labels = [str(t.get("label") or "") for t in threats if isinstance(t, dict) and t.get("label")]
+    abuse_info = _abuser_level_label(intel.get("abuser_level"), intel.get("abuser_score_raw"))
+    honeypot_info = _httpbl_level_label(intel.get("rep_threat") if intel.get("rep_threat") is not None else intel.get("httpbl_threat"))
+
+    if risk_flags or threat_labels:
+        all_flags = list(dict.fromkeys(risk_flags + threat_labels))
+        security_status = "⚠️ " + " · ".join(all_flags)
     elif all(value is not None for value in risk_values.values()):
-        security_status = "🛡️ 极度纯净 (无风险标记)"
+        security_status = "🛡️ 纯净 (未发现明显威胁)"
     elif ip_result:
         security_status = "检测数据不足"
     else:
@@ -560,19 +698,32 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     ai_verdict = (
         ip_result.get("ai_verdict") if isinstance(ip_result.get("ai_verdict"), dict) else {}
     )
+
     return {
         "cidr": ip_result.get("cidr") or "",
-        "rdns": ip_result.get("rdns") or "",
+        "rdns": ip_result.get("rdns") or "-",
         "ai_verdict": ai_verdict.get("label") or "",
         "location": _location(ip_result),
+        "isp": ip_result.get("isp") or ip_result.get("asOrganization") or "",
         "score": _numeric_score(ip_result.get("trust_score")),
         "is_residential": is_residential,
         "is_datacenter": is_datacenter,
         "is_native": is_native,
+        "native_status": native_status,
+        "native_detail": native_detail,
+        "is_bogon": is_bogon,
+        "bogon_status": "是" if is_bogon else "否（公网可达）",
+        "bogon_reason": bogon_reason,
+        "rpki_status": rpki_status,
+        "asn_kind": asn_kind_raw,
+        "asn_kind_display": asn_kind_display,
+        "abuse_level": abuse_info["label"],
+        "honeypot_status": honeypot_info["label"],
         "traffic_profile": traffic_profile,
         "company_type": company_type,
         **risk_values,
         "security_status": security_status,
+        "threat_tags": threat_labels,
         "asn": ip_result.get("asn"),
         "as_org": ip_result.get("asOrganization") or ip_result.get("isp") or "",
     }
@@ -599,17 +750,17 @@ def _global_ping_summary(response: dict[str, Any]) -> list[dict[str, Any]]:
     for target in GLOBAL_PING_NODES:
         latency = latencies.get(target["node"])
         ok = _is_finite_number(latency) and latency >= 0
-        elapsed_ms = round(latency) if ok else None
+        elapsed_ms = round(latency) if ok else -1
         if ok:
             status = f"{elapsed_ms} ms"
         elif target["node"] in timeouts:
-            status = "超时"
+            status = "超时 (-1ms)"
         elif target["node"] in pending:
-            status = "等待结果"
+            status = "等待 (-1ms)"
         elif response.get("attempted"):
-            status = "未返回"
+            status = "未返回 (-1ms)"
         else:
-            status = "未检测"
+            status = "未检测 (-1ms)"
         results.append(
             {
                 "code": target["code"],
@@ -719,7 +870,7 @@ def _request_recorded(result: dict[str, Any]) -> bool:
 def _location(geo: dict[str, Any]) -> str:
     return " ".join(
         str(geo.get(key, "")).strip()
-        for key in ("country", "region", "city", "isp")
+        for key in ("country", "region", "city")
         if str(geo.get(key, "")).strip()
     )
 

@@ -451,8 +451,30 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 9px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-strong);
+}
+
+.header-filters th {
+  padding: 4px 8px 8px;
+  background: var(--bg-soft);
+  font-weight: normal;
+}
+
+.th-filter {
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+  font-family: inherit;
+}
+.th-filter:focus {
+  border-color: var(--text);
 }
 
 .sort-btn {
@@ -589,6 +611,8 @@ h1 {
 .p-mid { color: var(--warn); }
 .p-slow { color: var(--danger); }
 .p-timeout { color: var(--text-muted); }
+.p-gray { color: #8b949e !important; font-weight: normal !important; }
+.node-timeout { opacity: 0.65; background: var(--bg-hover); }
 
 .empty-state { padding: 48px 20px; text-align: center; }
 .empty-title { font-size: 14px; font-weight: 700; margin: 0 0 6px; color: var(--text); }
@@ -740,10 +764,186 @@ pre {
   overflow: auto;
 }
 
-/* ── 响应式断点（对标 Net.Coffee 720px / 580px / 480px） ── */
+/* ── 弹窗内画像与网格卡片 (对标 Net.Coffee 卡片系统) ── */
+.modal-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.modal-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal-ip-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.modal-ip-title code {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: ui-monospace, monospace;
+}
+.modal-loc-text {
+  font-size: 13px;
+  color: var(--text-soft);
+  font-weight: 500;
+}
+.modal-tag-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.modal-score-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-align: center;
+}
+.modal-score-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.modal-score-num {
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.detail-grid-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.sub-card {
+  margin-bottom: 0;
+  padding: 12px 14px;
+}
+.sub-card h3 {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+}
+
+/* 键值行 (对标 Net.Coffee .kv) */
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  gap: 10px;
+}
+.kv:last-child {
+  border-bottom: 0;
+}
+.kv .k {
+  color: var(--text-muted);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.kv .v {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ⓘ 提示工具气泡 (对标 Net.Coffee tip-wrap) */
+.tip-wrap {
+  position: relative;
+  display: inline-flex;
+  cursor: help;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 2px;
+  user-select: none;
+}
+.tip-wrap:hover .tip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+.tip-text {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 260px;
+  background: var(--text);
+  color: var(--bg);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  z-index: 100;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transition: all 120ms ease;
+  white-space: normal;
+  text-align: left;
+}
+.tip-text::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -4px;
+  border-width: 4px;
+  border-style: solid;
+  border-color: var(--text) transparent transparent transparent;
+}
+
+/* 全球 Ping 网格 (对标 Net.Coffee gp-grid) */
+.gp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.gp-cell {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+}
+.gp-city {
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.gp-val {
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+}
+
+/* 响应式断点适配 */
 @media (max-width: 960px) {
-  .quality-grid { grid-template-columns: 1fr; }
-  .full-ping-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-grid-layout { grid-template-columns: 1fr; }
+  .gp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -754,16 +954,12 @@ pre {
   .stat-pill { flex: 1 1 calc(50% - 6px); }
   .filter-controls { flex-direction: column; align-items: stretch; }
   .search-box { max-width: 100%; }
+  .modal-hero { flex-direction: column; align-items: flex-start; }
+  .modal-score-box { width: 100%; }
 }
 
 @media (max-width: 580px) {
-  .nav-scroll span.full { display: none; }
-  .nav-scroll span.short { display: inline; }
-  .full-ping-grid { grid-template-columns: 1fr; }
-}
-
-@media (min-width: 581px) {
-  .nav-scroll span.short { display: none; }
+  .gp-grid { grid-template-columns: 1fr; }
 }
 
 [hidden] { display: none !important; }
