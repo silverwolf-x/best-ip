@@ -370,6 +370,34 @@ h1 {
   display: flex;
   gap: 10px;
 }
+
+.action-progress-panel {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  font-size: 11.5px;
+}
+.action-progress-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.action-progress-line strong { color: var(--text); font-variant-numeric: tabular-nums; }
+#actionProgressStatus { color: var(--info); font-weight: 600; }
+#actionCurrentStep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#actionProgressElapsed { color: var(--text-muted); }
+.progress-hint {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.stat-pill.is-unknown strong { color: var(--text-muted); }
+
 .stat-pill {
   flex: 1;
   padding: 8px 12px;

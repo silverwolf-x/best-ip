@@ -61,7 +61,7 @@ Pages 模式仍然是一个可独立使用的静态前端：不填写 PAT 时可
 1. PAT 只保存在当前页面 JavaScript 内存，清除任务/页面后不写入 localStorage、URL、仓库或 artifact。
 2. 浏览器使用 WebCrypto 的 AES-256-GCM 加密订阅 URL，再用仓库提交的 RSA-OAEP-3072 公钥包裹 AES key；Actions workflow input 只包含 request ID、key ID 和密文 envelope。
 3. Actions 用仓库 Secret `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，运行后端正式验收，并只上传 `status.json` 与 `result.json`。结果 artifact 保留 1 天，浏览器会校验 request/run identity、SHA-256、ZIP CRC、manifest、节点计数和敏感字段边界。
-4. 页面只接受与 request ID、`main` 分支、workflow_dispatch 事件和 run name 完全匹配的运行，不按“最新运行”猜测；结束后会清除 PAT。扫描中只展示 workflow 级状态，不伪造逐节点实时进度。
+4. 页面只接受与 request ID、`main` 分支、workflow_dispatch 事件和 run name 完全匹配的运行，不按“最新运行”猜测；扫描期间从精确 `run_attempt` 的 Jobs API 读取真实 job/step 状态、当前步骤、结论和耗时，独立进度面板会显示 `Job x/y` 与 `Step x/y`。GitHub Jobs API 不提供 verifier 内部节点计数，因此扫描期间节点统计显示 `—`/“等待终态 artifact”，不把 `0/0` 当作扫描进度；只有终态 artifact 通过完整校验后才显示真实节点数量。结束后会清除 PAT。
 
 仓库管理员需要配置：
 
@@ -80,9 +80,11 @@ node --check frontend/app.js
 node --check frontend/action-client.js
 node --check frontend/zip-reader.js
 node --check scripts/decrypt_subscription.mjs
-node --test tests/frontend_modules.test.mjs
+node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs
 git diff --check
 ```
+
+Pages 的 Actions 进度只代表 GitHub runner 的 job/step 生命周期，不代表扫描器内部节点完成数。节点级 `total/completed` 以经过 ZIP、CRC、SHA-256、run identity 和 manifest 校验的终态 artifact 为唯一依据；本地 FastAPI 模式仍显示后端返回的真实节点计数。
 
 健康检查：
 

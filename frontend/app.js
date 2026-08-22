@@ -1,5 +1,7 @@
 const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, "") || "";
 const githubActionsMode = Boolean(window.BestIpAction?.isPagesMode?.());
+const ACTION_QUEUE_DEADLINE_MS = 13 * 60 * 1000;
+const ACTION_RUN_DEADLINE_MS = 31 * 60 * 1000;
 
 const state = {
   job: null,
@@ -10,6 +12,17 @@ const state = {
   actionRequestId: null,
   actionRunId: null,
   actionDispatchedAt: 0,
+  actionProgress: null,
+  nodeProgress: {
+    source: "none",
+    phase: "idle",
+    total: null,
+    completed: null,
+    success_count: null,
+    partial_count: null,
+    failed_count: null,
+    usable: null,
+  },
   actionPollDelay: 2000,
   sortKey: "score",
   sortDirection: "desc",
@@ -45,8 +58,15 @@ const elements = {
   scanStatusBadge: document.querySelector("#scanStatusBadge"),
   scanStatusText: document.querySelector("#scanStatusText"),
   scanProgressCount: document.querySelector("#scanProgressCount"),
-  errorMessage: document.querySelector("#errorMessage"),
   totalStat: document.querySelector("#totalStat"),
+  errorMessage: document.querySelector("#errorMessage"),
+  actionProgressPanel: document.querySelector("#actionProgressPanel"),
+  actionJobProgress: document.querySelector("#actionJobProgress"),
+  actionStepProgress: document.querySelector("#actionStepProgress"),
+  actionProgressStatus: document.querySelector("#actionProgressStatus"),
+  actionCurrentStep: document.querySelector("#actionCurrentStep"),
+  actionProgressElapsed: document.querySelector("#actionProgressElapsed"),
+  nodeProgressHint: document.querySelector("#nodeProgressHint"),
   completedStat: document.querySelector("#completedStat"),
   successStat: document.querySelector("#successStat"),
   issueStat: document.querySelector("#issueStat"),
@@ -68,6 +88,110 @@ const elements = {
 };
 
 const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
+
+function waitingNodeProgress(phase = "waiting_artifact") {
+  return {
+    source: "artifact",
+    phase,
+    total: null,
+    completed: null,
+    success_count: null,
+    partial_count: null,
+    failed_count: null,
+    usable: null,
+  };
+}
+
+function formatCount(value) {
+  return Number.isInteger(value) ? String(value) : "—";
+}
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "—";
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}小时${minutes}分`;
+  if (minutes) return `${minutes}分${seconds}秒`;
+  return `${seconds}秒`;
+}
+
+function actionStatusLabel(progress) {
+  if (!progress) return "等待 Actions";
+  if (progress.jobs_state === "waiting") return "等待 Actions 创建扫描 job";
+  if (progress.jobs_state === "unavailable") return "Actions 步骤暂不可读，保留上次进度";
+  if (progress.run_status === "artifact_pending") return "等待扫描结果 artifact";
+  if (progress.run_status === "completed") return "Actions 已完成";
+  if (progress.run_status === "cancelled") return "Actions 已取消";
+  if (progress.run_status === "failed") return `Actions 失败${progress.conclusion ? `（${progress.conclusion}）` : ""}`;
+  const stepState = progress.current_step?.state || progress.current_step?.status;
+  if (stepState === "running" || stepState === "in_progress") return "步骤进行中";
+  if (stepState === "completed") return "步骤已完成，准备下一步";
+  return progress.raw_run_status || "等待 Actions";
+}
+
+function renderActionProgress(progress) {
+  if (!githubActionsMode || !elements.actionProgressPanel) return;
+  elements.actionProgressPanel.hidden = !progress;
+  if (!progress) {
+    elements.scanProgressCount.textContent = "—";
+    elements.actionJobProgress.textContent = "Job —/—";
+    elements.actionStepProgress.textContent = "Step —/—";
+    elements.actionProgressStatus.textContent = "等待 Actions";
+    elements.actionCurrentStep.textContent = "当前步骤：—";
+    elements.actionProgressElapsed.textContent = "已用时：—";
+    return;
+  }
+  const jobsTotal = Number.isInteger(progress.jobs_total) && progress.jobs_total > 0 ? progress.jobs_total : null;
+  const jobIndex = Number.isInteger(progress.current_job_index) ? progress.current_job_index : null;
+  const stepsTotal = Number.isInteger(progress.steps_total) && progress.steps_total > 0 ? progress.steps_total : null;
+  const stepIndex = Number.isInteger(progress.current_step_index) ? progress.current_step_index : null;
+  const jobDone = Number.isInteger(progress.jobs_completed) ? progress.jobs_completed : 0;
+  const stepDone = Number.isInteger(progress.steps_completed) ? progress.steps_completed : 0;
+  elements.actionJobProgress.textContent = `Job ${jobIndex ?? "—"}/${jobsTotal ?? "—"} · 已完成 ${jobDone}/${jobsTotal ?? "—"}`;
+  elements.actionStepProgress.textContent = `Step ${stepIndex ?? "—"}/${stepsTotal ?? "—"} · 已完成 ${stepDone}/${stepsTotal ?? "—"}`;
+  elements.actionProgressStatus.textContent = actionStatusLabel(progress);
+  const currentStep = progress.current_step;
+  elements.actionCurrentStep.textContent = currentStep
+    ? `当前步骤：${currentStep.name}（${currentStep.status}${currentStep.conclusion ? ` · ${currentStep.conclusion}` : ""}）`
+    : "当前步骤：等待 Actions 创建扫描 job";
+  elements.actionCurrentStep.title = currentStep?.name || "";
+  elements.actionProgressElapsed.textContent = `已用时：本步骤 ${formatDuration(currentStep?.elapsed_ms)} · 运行 ${formatDuration(progress.elapsed_ms)}${progress.run_attempt ? ` · Attempt ${progress.run_attempt}` : ""}`;
+  elements.scanStatusText.textContent = currentStep?.name
+    ? actionStatusLabel(progress) + ` · ${currentStep.name}`
+    : actionStatusLabel(progress);
+  elements.scanProgressCount.textContent = stepIndex && stepsTotal ? `步骤 ${stepIndex}/${stepsTotal}` : "步骤 —/—";
+}
+
+function renderNodeProgress(progress, job) {
+  const isPagesProgress = githubActionsMode && progress?.source === "artifact";
+  if (isPagesProgress && progress.phase !== "terminal") {
+    elements.totalStat.textContent = "—";
+    elements.completedStat.textContent = "—";
+    elements.successStat.textContent = "—";
+    elements.issueStat.textContent = "—";
+    elements.nodeProgressHint.hidden = false;
+    elements.nodeProgressHint.textContent = progress.phase === "unavailable"
+      ? "节点统计：暂无终态 artifact"
+      : "节点统计：等待终态 artifact（Actions 只提供步骤进度）";
+    return;
+  }
+  const source = isPagesProgress ? progress : job;
+  const total = isPagesProgress ? source?.total : Number(source?.total || 0);
+  const completed = isPagesProgress ? source?.completed : Number(source?.completed || 0);
+  const success = isPagesProgress ? source?.success_count : Number(source?.success_count || 0);
+  const partial = isPagesProgress ? source?.partial_count : Number(source?.partial_count || 0);
+  const failed = isPagesProgress ? source?.failed_count : Number(source?.failed_count || 0);
+  elements.totalStat.textContent = formatCount(total);
+  elements.completedStat.textContent = formatCount(completed);
+  elements.successStat.textContent = formatCount(success);
+  elements.issueStat.textContent = Number.isInteger(partial) && Number.isInteger(failed) ? String(partial + failed) : "—";
+  elements.nodeProgressHint.hidden = !(isPagesProgress && source?.usable === false);
+  if (isPagesProgress && source?.usable === false) {
+    elements.nodeProgressHint.textContent = "节点统计：artifact 已完成，但包含部分/失败节点";
+  }
+}
 
 function apiUrl(path) {
   return `${configuredApiBase}${path}`;
@@ -108,6 +232,17 @@ elements.form.addEventListener("submit", async (event) => {
   state.results = [];
   state.imported = false;
   state.importSource = "";
+  state.actionProgress = null;
+  state.nodeProgress = githubActionsMode ? waitingNodeProgress() : {
+    source: "none",
+    phase: "idle",
+    total: null,
+    completed: null,
+    success_count: null,
+    partial_count: null,
+    failed_count: null,
+    usable: null,
+  };
   state.activeDetailResult = null;
   state.detailGeneration += 1;
   if (elements.detailDialog.open) elements.detailDialog.close();
@@ -115,8 +250,12 @@ elements.form.addEventListener("submit", async (event) => {
   showError("");
   elements.scanStatusBadge.hidden = false;
   elements.scanStatusText.textContent = "创建任务";
-  elements.scanProgressCount.textContent = "0/0";
+  elements.scanProgressCount.textContent = githubActionsMode ? "步骤 —/—" : "0/0";
   renderRows();
+  if (githubActionsMode) {
+    renderActionProgress(null);
+    renderNodeProgress(state.nodeProgress, null);
+  }
 
   try {
     if (githubActionsMode) {
@@ -132,9 +271,14 @@ elements.form.addEventListener("submit", async (event) => {
       state.job = {
         id: state.actionRequestId,
         status: "dispatching",
-        total: 0,
-        completed: 0,
+        total: null,
+        completed: null,
+        success_count: null,
+        partial_count: null,
+        failed_count: null,
         results: [],
+        action_progress: null,
+        node_progress: waitingNodeProgress(),
         manifest_ready: false,
       };
       await pollAction(generation);
@@ -155,22 +299,41 @@ elements.form.addEventListener("submit", async (event) => {
 
 elements.cancelButton.addEventListener("click", async () => {
   if (!state.job?.id) return;
+  const generation = state.pollGeneration;
+  clearTimeout(state.pollTimer);
+  state.pollTimer = null;
   elements.cancelButton.disabled = true;
   try {
     if (githubActionsMode) {
       await window.BestIpAction.cancel(state.githubPat, state.actionRunId);
-      state.job = { ...state.job, status: "cancelled", error: "已请求取消 GitHub Actions 扫描" };
+      state.pollGeneration += 1;
+      state.actionProgress = state.actionProgress
+        ? { ...state.actionProgress, run_status: "cancelled", raw_run_status: "cancelled", conclusion: "cancelled" }
+        : state.actionProgress;
+      state.job = {
+        ...state.job,
+        status: "cancelled",
+        error: "已请求取消 GitHub Actions 扫描",
+        action_progress: state.actionProgress,
+      };
       renderProgress(state.job);
       setScanning(false);
       clearGithubPat();
     } else {
       const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
+      state.pollGeneration += 1;
       state.job = await readResponse(response);
       renderProgress(state.job);
       setScanning(false);
     }
   } catch (error) {
     elements.cancelButton.disabled = false;
+    if (generation === state.pollGeneration && !state.pollTimer && state.job?.id) {
+      state.pollTimer = setTimeout(
+        () => (githubActionsMode ? pollAction(generation) : pollJob(state.job.id, generation)),
+        githubActionsMode ? state.actionPollDelay : 1000,
+      );
+    }
     showInlineError(`停止失败：${error.message}`);
   }
 });
@@ -673,6 +836,17 @@ function applyImportedResults(parsed, source, filename) {
   const manifest = isRecord(parsed.manifest) ? parsed.manifest : null;
   state.imported = true;
   state.importSource = source;
+  state.actionProgress = null;
+  state.nodeProgress = {
+    source: "import",
+    phase: "terminal",
+    total: results.length,
+    completed: results.length,
+    success_count: counts.success,
+    partial_count: counts.partial,
+    failed_count: counts.failed,
+    usable: counts.partial === 0 && counts.failed === 0,
+  };
   state.results = results;
   state.job = {
     id: `imported-${Date.now()}`,
@@ -741,8 +915,21 @@ function cloneImportedForExport(result) {
   }));
 }
 
+function actionPollDeadlineExceeded(generation, status = state.job?.status) {
+  if (generation !== state.pollGeneration || !state.actionDispatchedAt) return false;
+  const elapsed = Date.now() - state.actionDispatchedAt;
+  const deadline = status === "running" ? ACTION_RUN_DEADLINE_MS : ACTION_QUEUE_DEADLINE_MS;
+  if (elapsed <= deadline) return false;
+  const message = status === "running"
+    ? "GitHub Actions 扫描超过 31 分钟，已停止等待，请检查运行记录后重试。"
+    : "GitHub Actions 排队超过 13 分钟，密文即将过期，请重新提交扫描。";
+  showFatalError(message);
+  return true;
+}
+
 async function pollAction(generation) {
   if (!state.actionRequestId || generation !== state.pollGeneration) return;
+  if (actionPollDeadlineExceeded(generation)) return;
   try {
     const remote = await window.BestIpAction.poll(
       state.githubPat,
@@ -752,15 +939,20 @@ async function pollAction(generation) {
     );
     if (generation !== state.pollGeneration) return;
     state.actionRunId = remote.runId || state.actionRunId;
+    state.actionProgress = remote.action_progress || state.actionProgress;
+    state.nodeProgress = remote.node_progress || state.nodeProgress || waitingNodeProgress();
     state.job = {
       id: state.actionRequestId,
       status: remote.status,
-      total: Number(remote.total || 0),
-      completed: Number(remote.completed || 0),
-      success_count: Number(remote.success_count || 0),
-      partial_count: Number(remote.partial_count || 0),
-      failed_count: Number(remote.failed_count || 0),
+      total: Number.isInteger(state.nodeProgress?.total) ? state.nodeProgress.total : null,
+      completed: Number.isInteger(state.nodeProgress?.completed) ? state.nodeProgress.completed : null,
+      success_count: Number.isInteger(state.nodeProgress?.success_count) ? state.nodeProgress.success_count : null,
+      partial_count: Number.isInteger(state.nodeProgress?.partial_count) ? state.nodeProgress.partial_count : null,
+      failed_count: Number.isInteger(state.nodeProgress?.failed_count) ? state.nodeProgress.failed_count : null,
+      action_progress: state.actionProgress,
+      node_progress: state.nodeProgress,
       manifest_ready: remote.manifest_ready === true,
+      usable: typeof remote.action_status?.usable === "boolean" ? remote.action_status.usable : state.nodeProgress?.usable,
       cleanup_confirmed: remote.cleanup_confirmed === true,
       results: [],
       error: remote.error || null,
@@ -771,6 +963,9 @@ async function pollAction(generation) {
       applyActionResults(remote);
       clearGithubPat();
       setScanning(false);
+      if (remote.action_status?.usable === false) {
+        showInlineError("扫描已完成，但结果包含部分或失败节点，不能视为完整可用。");
+      }
       return;
     }
     if (["failed", "cancelled"].includes(remote.status)) {
@@ -778,9 +973,7 @@ async function pollAction(generation) {
       setScanning(false);
       return;
     }
-    elements.scanStatusText.textContent = remote.status === "dispatching"
-      ? "等待 GitHub Actions 建立运行"
-      : remote.status === "queued" ? "GitHub Actions 排队中" : "GitHub Actions 扫描中";
+    if (actionPollDeadlineExceeded(generation, remote.status)) return;
     state.actionPollDelay = Math.min(
       window.BestIpAction.MAX_POLL_DELAY_MS || 10_000,
       Math.round(state.actionPollDelay * 1.5),
@@ -788,11 +981,17 @@ async function pollAction(generation) {
     state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
   } catch (error) {
     if (generation !== state.pollGeneration) return;
+    if (error.actionProgress) state.actionProgress = error.actionProgress;
+    if (error.nodeProgress) state.nodeProgress = error.nodeProgress;
+    if (state.job && (error.actionProgress || error.nodeProgress)) {
+      state.job = { ...state.job, action_progress: state.actionProgress, node_progress: state.nodeProgress };
+      renderProgress(state.job);
+    }
+    if (actionPollDeadlineExceeded(generation)) return;
     showInlineError(`读取 GitHub Actions 状态失败，重试中：${error.message}`);
     state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
   }
 }
-
 function applyActionResults(payload) {
   const actionResult = payload.action_result || payload;
   const records = Array.isArray(actionResult.results) ? actionResult.results : [];
@@ -802,11 +1001,28 @@ function applyActionResults(payload) {
   }));
   state.imported = true;
   state.importSource = "github-actions";
+  state.actionProgress = payload.action_progress || state.actionProgress;
+  state.nodeProgress = payload.node_progress || {
+    source: "artifact",
+    phase: "terminal",
+    total: Number.isInteger(actionResult.total) ? actionResult.total : null,
+    completed: Number.isInteger(actionResult.completed) ? actionResult.completed : null,
+    success_count: Number.isInteger(actionResult.success_count) ? actionResult.success_count : null,
+    partial_count: Number.isInteger(actionResult.partial_count) ? actionResult.partial_count : null,
+    failed_count: Number.isInteger(actionResult.failed_count) ? actionResult.failed_count : null,
+    usable: typeof payload.action_status?.usable === "boolean" ? payload.action_status.usable : null,
+  };
+  const usable = typeof payload.action_status?.usable === "boolean"
+    ? payload.action_status.usable
+    : typeof actionResult.usable === "boolean" ? actionResult.usable : undefined;
   state.job = {
     ...actionResult,
     id: state.actionRequestId,
     status: "completed",
     manifest_ready: true,
+    usable,
+    action_progress: state.actionProgress,
+    node_progress: state.nodeProgress,
     cleanup_confirmed: actionResult.cleanup_confirmed === true,
     results: state.results,
     action_run_id: state.actionRunId,
@@ -845,17 +1061,19 @@ async function pollJob(jobId, generation) {
 }
 
 function renderProgress(job) {
-  const total = Number(job.total || 0);
-  const completed = Number(job.completed || 0);
-  elements.scanProgressCount.textContent = `${completed}/${total}`;
-  elements.scanStatusText.textContent = job.status === "running" && job.current_node
-    ? `检测中 · ${job.current_node}`
-    : jobTitle(job.status);
-  elements.totalStat.textContent = String(total);
-  elements.completedStat.textContent = String(completed);
-  elements.successStat.textContent = String(job.success_count || 0);
-  elements.issueStat.textContent = String((job.partial_count || 0) + (job.failed_count || 0));
-  showError(job.error || "");
+  const actionJob = githubActionsMode && (job?.action_progress || state.actionProgress || state.importSource === "github-actions");
+  if (actionJob) {
+    renderActionProgress(job?.action_progress || state.actionProgress);
+    renderNodeProgress(job?.node_progress || state.nodeProgress, job);
+  } else {
+    if (elements.actionProgressPanel) elements.actionProgressPanel.hidden = true;
+    renderNodeProgress(null, job);
+    elements.scanProgressCount.textContent = `${Number(job?.completed || 0)}/${Number(job?.total || 0)}`;
+    elements.scanStatusText.textContent = job?.status === "running" && job.current_node
+      ? `检测中 · ${job.current_node}`
+      : jobTitle(job?.status);
+  }
+  showError(job?.error || "");
 }
 
 function renderRows() {
@@ -1495,7 +1713,7 @@ function clearGithubPat() {
 }
 
 function setScanning(scanning) {
-  const ready = !scanning && state.job?.status === "completed" && state.job?.manifest_ready === true;
+  const ready = !scanning && state.job?.status === "completed" && state.job?.manifest_ready === true && state.job?.usable !== false;
   elements.startButton.disabled = scanning;
   elements.startButton.textContent = scanning ? "检测中..." : "开始检测";
   elements.cancelButton.hidden = !scanning;
@@ -1505,12 +1723,21 @@ function setScanning(scanning) {
 }
 
 function showError(message) {
+  if (!elements.errorMessage) {
+    console.error("Best IP 错误提示区域不可用");
+    return;
+  }
   elements.errorMessage.hidden = !message;
   elements.errorMessage.textContent = message;
 }
 
 function showInlineError(message) { showError(message); }
-function showFatalError(message) { setScanning(false); elements.scanStatusBadge.hidden = true; showError(message); }
+function showFatalError(message) {
+  clearGithubPat();
+  setScanning(false);
+  elements.scanStatusBadge.hidden = true;
+  showError(message);
+}
 function jobTitle(status) { return ({ dispatching: "等待 Actions", queued: "Actions 排队中", preparing: "准备中", running: "扫描中", completed: "已完成", failed: "失败", cancelled: "已停止" }[status] || status || "准备中"); }
 
 async function readResponse(response) {

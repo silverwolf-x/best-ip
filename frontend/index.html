@@ -6,11 +6,12 @@
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee IP 页面结构化结果">
   <meta name="api-base" content="">
   <title>Best IP · Coffee 节点检测</title>
-  <link rel="stylesheet" href="./styles.css?v=20260822-6">
+  <link rel="stylesheet" href="./styles.css?v=20260822-8">
   <script src="./site-config.js?v=20260822-1" defer></script>
-  <script src="./action-client.js?v=20260822-1" defer></script>
+  <script src="./action-client.js?v=20260822-4" defer></script>
+
   <script src="./zip-reader.js?v=20260822-1" defer></script>
-  <script src="./app.js?v=20260822-6" defer></script>
+  <script src="./app.js?v=20260822-9" defer></script>
 </head>
 <body>
   <div class="container">
@@ -42,6 +43,7 @@
       <button id="cancelButton" class="btn btn-cancel" type="button" hidden>停止</button>
     </form>
     <p id="modeHint" class="import-hint" hidden>Pages 模式：PAT 仅用于本次 GitHub Actions 调度和取回结果，订阅地址会在浏览器内加密后发送。</p>
+    <p id="errorMessage" class="error-box" role="alert" hidden></p>
 
     <section class="toolbar-panel card" id="resultsToolbar">
       <div class="stats-ribbon">
@@ -50,6 +52,16 @@
         <div class="stat-pill success"><span class="stat-lbl">完整</span><strong id="successStat">0</strong></div>
         <div class="stat-pill warn"><span class="stat-lbl">部分/失败</span><strong id="issueStat">0</strong></div>
       </div>
+      <section id="actionProgressPanel" class="action-progress-panel" hidden aria-live="polite">
+        <div class="action-progress-line">
+          <strong id="actionJobProgress">Job —/—</strong>
+          <strong id="actionStepProgress">Step —/—</strong>
+          <span id="actionProgressStatus">等待 Actions</span>
+        </div>
+        <div id="actionCurrentStep">当前步骤：—</div>
+        <div id="actionProgressElapsed">已用时：—</div>
+      </section>
+      <p id="nodeProgressHint" class="progress-hint" hidden>节点统计：等待终态 artifact</p>
       <div class="filter-controls">
         <div class="search-box">
           <input id="resultSearch" type="search" placeholder="搜索节点、IP、ASN、国家、ISP、错误原因...">

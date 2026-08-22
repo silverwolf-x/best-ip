@@ -3,6 +3,7 @@
   const GITHUB_API = "https://api.github.com";
   const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
   const MAX_POLL_DELAY_MS = 10_000;
+  const MAX_JOB_PAGES = 10;
 
   function isPagesMode() {
     if (config.mode === "local") return false;
@@ -142,6 +143,7 @@
     validatePat(pat);
     const response = await fetch(`${GITHUB_API}${path}`, {
       ...options,
+      cache: "no-store",
       headers: {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": config.apiVersion || "2022-11-28",
@@ -166,6 +168,7 @@
     const response = await fetch(
       `${GITHUB_API}${repositoryPath()}/actions/artifacts/${Number(artifactId)}/zip`,
       {
+        cache: "no-store",
         headers: {
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": config.apiVersion || "2022-11-28",
@@ -179,12 +182,188 @@
     return bytes;
   }
 
+  function positiveInteger(value) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  }
+
+  function parseTime(value) {
+    const timestamp = Date.parse(value || "");
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  function elapsedMs(startedAt, completedAt, now = Date.now()) {
+    const started = parseTime(startedAt);
+    if (started === null) return null;
+    const completed = completedAt ? parseTime(completedAt) : now;
+    if (completed === null || completed < started) return null;
+    return completed - started;
+  }
+
+  function stepState(status) {
+    if (["queued", "waiting", "requested", "pending"].includes(status)) return "queued";
+    if (status === "in_progress") return "running";
+    if (status === "completed") return "completed";
+    return "unknown";
+  }
+
+  function normalizeStep(step, now = Date.now()) {
+    const status = typeof step?.status === "string" ? step.status : "unknown";
+    return {
+      number: positiveInteger(step?.number),
+      name: String(step?.name || "未命名步骤"),
+      status,
+      state: stepState(status),
+      conclusion: step?.conclusion ?? null,
+      started_at: step?.started_at || null,
+      completed_at: step?.completed_at || null,
+      elapsed_ms: elapsedMs(step?.started_at, step?.completed_at, now),
+    };
+  }
+
+  function normalizeJob(job, now = Date.now()) {
+    const steps = Array.isArray(job?.steps) ? job.steps.map((step) => normalizeStep(step, now)) : [];
+    const activeIndex = steps.findIndex((step) => step.state === "running" || step.state === "queued");
+    const displayIndex = activeIndex >= 0 ? activeIndex : steps.length ? steps.length - 1 : -1;
+    const status = typeof job?.status === "string" ? job.status : "unknown";
+    return {
+      id: positiveInteger(job?.id),
+      name: String(job?.name || "未命名 job"),
+      status,
+      state: stepState(status),
+      conclusion: job?.conclusion ?? null,
+      run_attempt: positiveInteger(job?.run_attempt),
+      created_at: job?.created_at || null,
+      started_at: job?.started_at || null,
+      completed_at: job?.completed_at || null,
+      elapsed_ms: elapsedMs(job?.started_at, job?.completed_at, now),
+      steps,
+      steps_total: steps.length,
+      steps_completed: steps.filter((step) => step.status === "completed").length,
+      current_step_index: displayIndex >= 0 ? displayIndex + 1 : null,
+      current_step: displayIndex >= 0 ? steps[displayIndex] : null,
+    };
+  }
+
+  async function listRunJobs(pat, run) {
+    const runId = positiveInteger(run?.id);
+    const runAttempt = positiveInteger(run?.run_attempt);
+    if (!runId || !runAttempt) throw new Error("GitHub Actions 运行版本无效");
+
+    const jobs = [];
+    const seen = new Set();
+    let totalCount = null;
+    let warning = null;
+    for (let page = 1; page <= MAX_JOB_PAGES; page += 1) {
+      const payload = await githubJson(
+        pat,
+        `${repositoryPath()}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
+        { cache: "no-store" },
+      );
+      const pageJobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+      if (Number.isSafeInteger(Number(payload?.total_count)) && Number(payload.total_count) >= 0) {
+        totalCount = Number(payload.total_count);
+      }
+      for (const job of pageJobs) {
+        const jobAttempt = job?.run_attempt == null ? runAttempt : Number(job.run_attempt);
+        const jobId = positiveInteger(job?.id);
+        if (jobAttempt !== runAttempt || !jobId || seen.has(jobId)) continue;
+        seen.add(jobId);
+        jobs.push(job);
+      }
+      if (!pageJobs.length || pageJobs.length < 100 || (totalCount !== null && jobs.length >= totalCount)) break;
+      if (page === MAX_JOB_PAGES) warning = "Actions job 分页达到安全上限，进度可能不完整";
+    }
+    return { available: true, jobs, totalCount, warning };
+  }
+
+  function normalizedRunStatus(run) {
+    const status = String(run?.status || "unknown");
+    if (status === "completed") {
+      if (run?.conclusion === "success") return "completed";
+      if (run?.conclusion === "cancelled") return "cancelled";
+      return "failed";
+    }
+    if (["queued", "waiting", "pending", "requested"].includes(status)) return "queued";
+    if (status === "in_progress") return "running";
+    return status;
+  }
+
+  function buildActionProgress(run, jobsResult, now = Date.now()) {
+    const normalizedJobs = (jobsResult?.jobs || []).map((job) => normalizeJob(job, now));
+    const jobsAvailable = jobsResult?.available !== false;
+    const jobsState = !jobsAvailable
+      ? "unavailable"
+      : normalizedJobs.length
+        ? "available"
+        : run?.status === "completed" ? "empty" : "waiting";
+    const activeJobIndex = normalizedJobs.findIndex((job) => job.state === "running" || job.state === "queued");
+    const displayJobIndex = activeJobIndex >= 0 ? activeJobIndex : normalizedJobs.length ? normalizedJobs.length - 1 : -1;
+    const currentJob = displayJobIndex >= 0 ? normalizedJobs[displayJobIndex] : null;
+    const jobsTotal = Number.isSafeInteger(Number(jobsResult?.totalCount))
+      ? Number(jobsResult.totalCount)
+      : normalizedJobs.length;
+    return {
+      source: "github-actions",
+      request_id: null,
+      run_id: positiveInteger(run?.id),
+      run_attempt: positiveInteger(run?.run_attempt),
+      run_status: normalizedRunStatus(run),
+      raw_run_status: run?.status || "unknown",
+      conclusion: run?.conclusion ?? null,
+      jobs_state: jobsState,
+      jobs_total: jobsTotal,
+      jobs_completed: normalizedJobs.filter((job) => job.status === "completed").length,
+      current_job_index: displayJobIndex >= 0 ? displayJobIndex + 1 : null,
+      current_job: currentJob,
+      current_step_index: currentJob?.current_step_index || null,
+      steps_total: currentJob?.steps_total || null,
+      steps_completed: currentJob?.steps_completed || 0,
+      current_step: currentJob?.current_step || null,
+      jobs: normalizedJobs,
+      run_started_at: run?.started_at || run?.created_at || null,
+      run_completed_at: run?.completed_at || null,
+      elapsed_ms: elapsedMs(run?.started_at || run?.created_at, run?.completed_at, now),
+      updated_at: new Date(now).toISOString(),
+      warning: jobsResult?.warning || null,
+      run_url: run?.html_url || null,
+    };
+  }
+
+  function waitingNodeProgress(phase = "waiting_artifact") {
+    return {
+      source: "artifact",
+      phase,
+      total: null,
+      completed: null,
+      success_count: null,
+      partial_count: null,
+      failed_count: null,
+      usable: null,
+    };
+  }
+
+  function terminalNodeProgress(status, result) {
+    const counts = result?.manifest?.counts || {};
+    return {
+      source: "artifact",
+      phase: "terminal",
+      total: Number.isInteger(result?.total) ? result.total : null,
+      completed: Number.isInteger(result?.completed) ? result.completed : null,
+      success_count: Number.isInteger(result?.success_count) ? result.success_count : null,
+      partial_count: Number.isInteger(result?.partial_count) ? result.partial_count : Number.isInteger(counts.partial) ? counts.partial : null,
+      failed_count: Number.isInteger(result?.failed_count) ? result.failed_count : Number.isInteger(counts.failed) ? counts.failed : null,
+      usable: typeof status?.usable === "boolean" ? status.usable : null,
+    };
+  }
+
   async function dispatch(pat, subscriptionUrl) {
     const id = requestId();
     const dispatchedAt = Date.now();
     const envelope = await encryptSubscriptionUrl(subscriptionUrl, id);
     const payload = await githubJson(pat, `${workflowPath()}/dispatches`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ref: String(config.defaultBranch || "main"),
         inputs: {
@@ -224,7 +403,7 @@
 
   async function resolveRun(pat, requestIdValue, runId, dispatchedAt) {
     if (runId) {
-      const run = await githubJson(pat, `${workflowPath()}/runs/${runId}`);
+      const run = await githubJson(pat, `${repositoryPath()}/actions/runs/${runId}`);
       if (!isExactRun(run, requestIdValue, dispatchedAt)) {
         throw new Error("GitHub Actions 运行与本次请求无法精确关联");
       }
@@ -245,48 +424,130 @@
 
   async function poll(pat, requestIdValue, runId, dispatchedAt) {
     const run = await resolveRun(pat, requestIdValue, runId, dispatchedAt);
-    if (!run) return { status: "dispatching", requestId: requestIdValue, runId: null };
-    if (run.status !== "completed") {
+    if (!run) {
       return {
-        status: run.status === "queued" ? "queued" : "running",
+        status: "dispatching",
         requestId: requestIdValue,
-        runId: run.id,
-        run,
-        total: 0,
-        completed: 0,
+        runId: null,
+        action_progress: {
+          source: "github-actions",
+          request_id: requestIdValue,
+          run_id: null,
+          run_attempt: null,
+          run_status: "dispatching",
+          raw_run_status: "dispatching",
+          conclusion: null,
+          jobs_state: "waiting",
+          jobs_total: null,
+          jobs_completed: 0,
+          current_job_index: null,
+          current_job: null,
+          current_step_index: null,
+          steps_total: null,
+          steps_completed: 0,
+          current_step: null,
+          jobs: [],
+          elapsed_ms: null,
+          updated_at: new Date().toISOString(),
+          warning: null,
+          run_url: null,
+        },
+        node_progress: waitingNodeProgress(),
+        total: null,
+        completed: null,
         results: [],
         manifest_ready: false,
       };
     }
-    if (run.conclusion !== "success") {
+
+    let jobsResult;
+    try {
+      jobsResult = await listRunJobs(pat, run);
+    } catch (error) {
+      jobsResult = { available: false, jobs: [], totalCount: null, warning: error.message };
+    }
+    const actionProgress = buildActionProgress(run, jobsResult);
+    actionProgress.request_id = requestIdValue;
+
+    if (run.status !== "completed") {
       return {
-        status: "failed",
+        status: normalizedRunStatus(run),
         requestId: requestIdValue,
         runId: run.id,
         run,
-        total: 0,
-        completed: 0,
+        action_progress: actionProgress,
+        node_progress: waitingNodeProgress(),
+        total: null,
+        completed: null,
+        results: [],
+        manifest_ready: false,
+        error: actionProgress.warning || null,
+      };
+    }
+    if (run.conclusion !== "success") {
+      return {
+        status: normalizedRunStatus(run),
+        requestId: requestIdValue,
+        runId: run.id,
+        run,
+        action_progress: actionProgress,
+        node_progress: waitingNodeProgress("unavailable"),
+        total: null,
+        completed: null,
         results: [],
         manifest_ready: false,
         error: `GitHub Actions 运行结束：${run.conclusion || "unknown"}`,
       };
     }
-    const artifacts = await githubJson(pat, `${repositoryPath()}/actions/runs/${run.id}/artifacts?per_page=100`);
+
+    let artifacts;
+    try {
+      artifacts = await githubJson(pat, `${repositoryPath()}/actions/runs/${run.id}/artifacts?per_page=100`);
+    } catch (error) {
+      error.actionProgress = actionProgress;
+      error.nodeProgress = waitingNodeProgress();
+      throw error;
+    }
     const prefix = `${String(config.artifactPrefix || "best-ip-result")}-${requestIdValue}-${run.id}-${run.run_attempt}`;
     const matches = (artifacts?.artifacts || []).filter((artifact) => artifact.name === prefix && !artifact.expired);
-    if (matches.length !== 1) throw new Error("未找到唯一的扫描结果 artifact");
-    const archive = await githubArtifactZip(pat, matches[0].id);
-    const payload = await window.BestIpZip.readArtifact(archive, {
-      requestId: requestIdValue,
-      runId: run.id,
-      runAttempt: run.run_attempt,
-    });
+    if (matches.length !== 1) {
+      return {
+        status: "artifact_pending",
+        requestId: requestIdValue,
+        runId: run.id,
+        run,
+        action_progress: { ...actionProgress, run_status: "artifact_pending" },
+        node_progress: waitingNodeProgress(),
+        total: null,
+        completed: null,
+        results: [],
+        manifest_ready: false,
+        error: "Actions 已完成，正在等待扫描结果 artifact 发布",
+      };
+    }
+
+    let archive;
+    let payload;
+    try {
+      archive = await githubArtifactZip(pat, matches[0].id);
+      payload = await window.BestIpZip.readArtifact(archive, {
+        requestId: requestIdValue,
+        runId: run.id,
+        runAttempt: run.run_attempt,
+      });
+    } catch (error) {
+      error.actionProgress = actionProgress;
+      error.nodeProgress = waitingNodeProgress();
+      throw error;
+    }
     return {
       ...payload.result,
       status: payload.status.status === "completed" ? "completed" : "failed",
       requestId: requestIdValue,
       runId: run.id,
       run,
+      action_progress: actionProgress,
+      node_progress: terminalNodeProgress(payload.status, payload.result),
       action_status: payload.status,
       action_result: payload.result,
       manifest_ready: payload.status.status === "completed" && payload.result.manifest_ready !== false,

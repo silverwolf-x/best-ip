@@ -271,8 +271,295 @@ test("Pages dispatch encrypts the URL and sends only correlation inputs", async 
   assert.equal(body.inputs.key_id, keyId);
   assert.equal(body.inputs.encrypted_subscription_url.includes(subscriptionUrl), false);
   assert.equal(dispatchRequest.options.headers.Authorization, `Bearer ${pat}`);
+  assert.equal(dispatchRequest.options.headers["Content-Type"], "application/json");
   assert.equal(dispatchRequest.options.body.includes(pat), false);
   assert.equal(privateKey.asymmetricKeyType, "rsa");
+});
+
+test("Pages polling uses the documented single-run endpoint", async () => {
+  const requestId = "req-run-test";
+  const requests = [];
+  const run = {
+    id: 42,
+    display_title: `Best IP scan ${requestId}`,
+    name: `Best IP scan ${requestId}`,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    created_at: new Date(Date.now() - 1000).toISOString(),
+    status: "queued",
+    conclusion: null,
+    run_attempt: 1,
+  };
+  const fakeFetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).endsWith("/actions/runs/42")) {
+      return { ok: true, status: 200, json: async () => run };
+    }
+    if (String(url).includes("/actions/runs/42/attempts/1/jobs?")) {
+      return { ok: true, status: 200, json: async () => ({ total_count: 0, jobs: [] }) };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const window = loadScript(
+    "frontend/action-client.js",
+    {
+      BEST_IP_CONFIG: {
+        mode: "github-pages",
+        owner: "owner",
+        repository: "repo",
+        workflowFile: "scan.yml",
+        defaultBranch: "main",
+        publicKeyPath: "./scan-public.pem",
+        keyId: "a".repeat(64),
+      },
+      location: { hostname: "owner.github.io" },
+    },
+    {
+      fetch: fakeFetch,
+      document: { baseURI: "https://owner.github.io/best-ip/" },
+    },
+  );
+  const remote = await window.BestIpAction.poll(
+    `github_pat_${"b".repeat(40)}`,
+    requestId,
+    42,
+    Date.now() - 5000,
+  );
+  assert.equal(remote.status, "queued");
+  assert.equal(remote.runId, 42);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, "https://api.github.com/repos/owner/repo/actions/runs/42");
+  assert.match(requests[1].url, /\/actions\/runs\/42\/attempts\/1\/jobs\?per_page=100&page=1$/u);
+  assert.equal(requests[1].options.cache, "no-store");
+  assert.equal(requests.some(({ url }) => url.includes("/actions/workflows/scan.yml/runs/42")), false);
+});
+
+test("Pages polling reads exact attempt job pages and preserves running step state", async () => {
+  const requestId = "req-jobs-pages";
+  const now = Date.now();
+  const requests = [];
+  const run = {
+    id: 99,
+    display_title: `Best IP scan ${requestId}`,
+    name: `Best IP scan ${requestId}`,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    created_at: new Date(now - 1000).toISOString(),
+    started_at: new Date(now - 800).toISOString(),
+    status: "in_progress",
+    conclusion: null,
+    run_attempt: 2,
+  };
+  const firstPage = Array.from({ length: 100 }, (_, index) => {
+    const running = index === 99;
+    return {
+      id: index + 1,
+      name: running ? "scan" : `setup-${index + 1}`,
+      status: running ? "in_progress" : "completed",
+      conclusion: running ? null : "success",
+      run_attempt: 2,
+      started_at: new Date(now - 700).toISOString(),
+      steps: running
+        ? [
+          { number: 1, name: "Prepare", status: "completed", conclusion: "success", started_at: new Date(now - 700).toISOString(), completed_at: new Date(now - 600).toISOString() },
+          { number: 2, name: "Run <strict> verifier", status: "in_progress", conclusion: null, started_at: new Date(now - 500).toISOString(), completed_at: null },
+          { number: 3, name: "Upload", status: "queued", conclusion: null, started_at: null, completed_at: null },
+        ]
+        : [{ number: 1, name: "Complete", status: "completed", conclusion: "success", started_at: new Date(now - 700).toISOString(), completed_at: new Date(now - 600).toISOString() }],
+    };
+  });
+  const secondPage = [{
+    id: 101,
+    name: "post-scan",
+    status: "completed",
+    conclusion: "success",
+    run_attempt: 2,
+    steps: [{ number: 1, name: "Post", status: "completed", conclusion: "success" }],
+  }];
+  const fakeFetch = async (url, options = {}) => {
+    const text = String(url);
+    requests.push({ url: text, options });
+    if (text.endsWith("/actions/runs/99")) return { ok: true, status: 200, json: async () => run };
+    if (text.includes("/actions/runs/99/attempts/2/jobs?per_page=100&page=1")) {
+      return { ok: true, status: 200, json: async () => ({ total_count: 101, jobs: firstPage }) };
+    }
+    if (text.includes("/actions/runs/99/attempts/2/jobs?per_page=100&page=2")) {
+      return { ok: true, status: 200, json: async () => ({ total_count: 101, jobs: secondPage }) };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const window = loadScript(
+    "frontend/action-client.js",
+    {
+      BEST_IP_CONFIG: {
+        mode: "github-pages",
+        owner: "owner",
+        repository: "repo",
+        workflowFile: "scan.yml",
+        defaultBranch: "main",
+        keyId: "a".repeat(64),
+      },
+      location: { hostname: "owner.github.io" },
+    },
+    { fetch: fakeFetch },
+  );
+
+  const remote = await window.BestIpAction.poll(
+    `github_pat_${"f".repeat(40)}`,
+    requestId,
+    99,
+    now - 5000,
+  );
+
+  assert.equal(remote.status, "running");
+  assert.equal(remote.total, null);
+  assert.equal(remote.completed, null);
+  assert.equal(remote.node_progress.total, null);
+  assert.equal(remote.action_progress.jobs_total, 101);
+  assert.equal(remote.action_progress.jobs_completed, 100);
+  assert.equal(remote.action_progress.current_job_index, 100);
+  assert.equal(remote.action_progress.current_step_index, 2);
+  assert.equal(remote.action_progress.steps_total, 3);
+  assert.equal(remote.action_progress.steps_completed, 1);
+  assert.equal(remote.action_progress.current_step.status, "in_progress");
+  assert.equal(remote.action_progress.current_step.conclusion, null);
+  assert.equal(requests.filter(({ url }) => url.includes("/attempts/2/jobs?")).length, 2);
+  assert.equal(requests.every(({ options }) => options.cache === "no-store"), true);
+});
+
+test("Pages preserves empty queued jobs and maps failed or cancelled runs", async () => {
+  for (const [id, conclusion, expectedStatus] of [[60, "failure", "failed"], [61, "cancelled", "cancelled"]]) {
+    const requestId = `req-${id}`;
+    const run = {
+      id,
+      display_title: `Best IP scan ${requestId}`,
+      name: `Best IP scan ${requestId}`,
+      event: "workflow_dispatch",
+      head_branch: "main",
+      created_at: new Date(Date.now() - 1000).toISOString(),
+      completed_at: new Date().toISOString(),
+      status: "completed",
+      conclusion,
+      run_attempt: 1,
+    };
+    const fakeFetch = async (url) => {
+      const text = String(url);
+      if (text.endsWith(`/actions/runs/${id}`)) return { ok: true, status: 200, json: async () => run };
+      if (text.includes(`/actions/runs/${id}/attempts/1/jobs?`)) {
+        return { ok: true, status: 200, json: async () => ({ total_count: 0, jobs: [] }) };
+      }
+      throw new Error(`unexpected URL ${url}`);
+    };
+    const window = loadScript(
+      "frontend/action-client.js",
+      {
+        BEST_IP_CONFIG: { mode: "github-pages", owner: "owner", repository: "repo", workflowFile: "scan.yml", defaultBranch: "main", keyId: "a".repeat(64) },
+        location: { hostname: "owner.github.io" },
+      },
+      { fetch: fakeFetch },
+    );
+    const remote = await window.BestIpAction.poll(`github_pat_${"g".repeat(40)}`, requestId, id, Date.now() - 5000);
+    assert.equal(remote.status, expectedStatus);
+    assert.equal(remote.action_progress.jobs_state, "empty");
+    assert.equal(remote.action_progress.conclusion, conclusion);
+    assert.equal(remote.node_progress.phase, "unavailable");
+    assert.equal(remote.node_progress.total, null);
+  }
+});
+
+test("Pages waits for a result artifact after successful Actions completion", async () => {
+  const requestId = "req-artifact-pending";
+  const run = {
+    id: 70,
+    display_title: `Best IP scan ${requestId}`,
+    name: `Best IP scan ${requestId}`,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    created_at: new Date(Date.now() - 1000).toISOString(),
+    status: "completed",
+    conclusion: "success",
+    run_attempt: 1,
+  };
+  const fakeFetch = async (url) => {
+    const text = String(url);
+    if (text.endsWith("/actions/runs/70")) return { ok: true, status: 200, json: async () => run };
+    if (text.includes("/actions/runs/70/attempts/1/jobs?")) return { ok: true, status: 200, json: async () => ({ total_count: 0, jobs: [] }) };
+    if (text.endsWith("/actions/runs/70/artifacts?per_page=100")) return { ok: true, status: 200, json: async () => ({ artifacts: [] }) };
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const window = loadScript(
+    "frontend/action-client.js",
+    {
+      BEST_IP_CONFIG: { mode: "github-pages", owner: "owner", repository: "repo", workflowFile: "scan.yml", defaultBranch: "main", keyId: "a".repeat(64) },
+      location: { hostname: "owner.github.io" },
+    },
+    { fetch: fakeFetch },
+  );
+  const remote = await window.BestIpAction.poll(`github_pat_${"h".repeat(40)}`, requestId, 70, Date.now() - 5000);
+  assert.equal(remote.status, "artifact_pending");
+  assert.equal(remote.runId, 70);
+  assert.equal(remote.action_progress.run_status, "artifact_pending");
+  assert.equal(remote.node_progress.total, null);
+  assert.match(remote.error, /artifact/);
+});
+
+test("Pages exposes verified terminal artifact node progress", async () => {
+  const requestId = "req-terminal-progress";
+  const run = {
+    id: 71,
+    display_title: `Best IP scan ${requestId}`,
+    name: `Best IP scan ${requestId}`,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    created_at: new Date(Date.now() - 1000).toISOString(),
+    status: "completed",
+    conclusion: "success",
+    run_attempt: 1,
+  };
+  const fakeFetch = async (url) => {
+    const text = String(url);
+    if (text.endsWith("/actions/runs/71")) return { ok: true, status: 200, json: async () => run };
+    if (text.includes("/actions/runs/71/attempts/1/jobs?")) {
+      return { ok: true, status: 200, json: async () => ({ total_count: 1, jobs: [{ id: 801, name: "scan", status: "completed", conclusion: "success", run_attempt: 1, steps: [] }] }) };
+    }
+    if (text.endsWith("/actions/runs/71/artifacts?per_page=100")) {
+      return { ok: true, status: 200, json: async () => ({ artifacts: [{ id: 901, name: `best-ip-result-${requestId}-71-1`, expired: false }] }) };
+    }
+    if (text.endsWith("/actions/artifacts/901/zip")) return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const window = loadScript(
+    "frontend/action-client.js",
+    {
+      BEST_IP_CONFIG: { mode: "github-pages", owner: "owner", repository: "repo", workflowFile: "scan.yml", defaultBranch: "main", keyId: "a".repeat(64) },
+      BestIpZip: {
+        readArtifact: async () => ({
+          status: { status: "completed", usable: true },
+          result: {
+            total: 3,
+            completed: 3,
+            success_count: 2,
+            partial_count: 1,
+            failed_count: 0,
+            manifest_ready: true,
+            results: [],
+            manifest: { counts: { success: 2, partial: 1, failed: 0 } },
+          },
+        }),
+      },
+      location: { hostname: "owner.github.io" },
+    },
+    { fetch: fakeFetch },
+  );
+  const remote = await window.BestIpAction.poll(`github_pat_${"i".repeat(40)}`, requestId, 71, Date.now() - 5000);
+  assert.equal(remote.status, "completed");
+  assert.equal(remote.manifest_ready, true);
+  assert.equal(remote.node_progress.phase, "terminal");
+  assert.equal(remote.node_progress.total, 3);
+  assert.equal(remote.node_progress.completed, 3);
+  assert.equal(remote.node_progress.success_count, 2);
+  assert.equal(remote.node_progress.partial_count, 1);
+  assert.equal(remote.node_progress.usable, true);
 });
 
 test("decrypt script enforces canonical AAD and never prints plaintext on failure", () => {
