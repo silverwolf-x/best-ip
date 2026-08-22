@@ -92,11 +92,12 @@ uv run --env-file .env python scripts/benchmark_scan.py --label optimized-8 --wa
 
 ## 6. 发布前清单
 
-- [ ] 用 `gh` 配置 `SCAN_PRIVATE_KEY_PEM`、`SCAN_KEY_ID`，只提交公钥；配置 Pages source 为 GitHub Actions。
-- [ ] 推送 `main` 后检查 `https://<owner>.github.io/best-ip/` 的相对资源、JSON/CSV 无 PAT 导入路径。
+- [x] 用 `gh` 配置 `SCAN_PRIVATE_KEY_PEM`、`SCAN_KEY_ID`，只提交公钥；配置 Pages source 为 GitHub Actions。
+- [x] 推送 `main` 后检查 `https://silverwolf-x.github.io/best-ip/` 的相对资源；首页、CSS、JS、公钥资源均 HTTPS 200，静态导入代码已由本地 Node 测试覆盖。
+- [x] 使用密文 workflow input 完成一次真实 Actions scan rerun：run `32552269467` attempt `2` 成功，artifact 精确匹配并验收为 22/22 success、manifest/digest/敏感字段校验通过；该步骤使用 GitHub CLI 会话，不等价于浏览器内 Fine-grained PAT 输入。
 - [ ] 使用短期仓库级 PAT 做真实 Pages-origin dispatch、精确 run polling、artifact 下载、ZIP 校验、表格/详情/导出，并在完成后撤销 PAT。
 - [ ] 在真实浏览器验证 GitHub API artifact 的重定向下载是否允许 Pages origin CORS；若失败，必须报告为平台限制，不增加未批准的外部 broker。
-- [ ] 发布前删除仓库外临时私钥和 `.env`，检查 `git status` 保留用户未跟踪的 `C.md` 不被修改。
+- [x] 已删除仓库外临时私钥和 E2E helper；用户已有的 `.env` 与未跟踪 `C.md` 未擅自删除或修改。
 
 ## 7. 已知限制
 
