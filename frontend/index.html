@@ -6,8 +6,8 @@
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee IP 页面结构化结果">
   <meta name="api-base" content="">
   <title>Best IP · Coffee 节点检测</title>
-  <link rel="stylesheet" href="/styles.css?v=20260822-3">
-  <script src="/app.js?v=20260822-3" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=20260822-5">
+  <script src="/app.js?v=20260822-5" defer></script>
 </head>
 <body>
   <div class="container">
@@ -35,7 +35,7 @@
     </form>
     <p id="errorMessage" class="error-box" role="alert" hidden></p>
 
-    <section class="toolbar-panel card">
+    <section class="toolbar-panel card" id="resultsToolbar">
       <div class="stats-ribbon">
         <div class="stat-pill"><span class="stat-lbl">总节点</span><strong id="totalStat">0</strong></div>
         <div class="stat-pill"><span class="stat-lbl">已检测</span><strong id="completedStat">0</strong></div>
@@ -55,8 +55,11 @@
         <div class="action-btns">
           <button id="exportCsvBtn" class="btn btn-secondary" type="button" disabled>导出 CSV</button>
           <button id="exportJsonBtn" class="btn btn-secondary" type="button" disabled>导出 JSON</button>
+          <button id="importResultsBtn" class="btn btn-secondary" type="button">导入结果</button>
+          <input id="importFileInput" class="import-file-input" type="file" accept=".json,.csv,application/json,text/csv" aria-label="选择 JSON 或 CSV 结果文件">
         </div>
       </div>
+      <p class="import-hint">可点击“导入结果”选择文件，也可将之前导出的 .json / .csv 拖拽到此处</p>
     </section>
 
     <section class="card table-container">
@@ -64,13 +67,13 @@
         <thead>
           <tr class="header-titles">
             <th scope="col"><button class="sort-btn" data-sort="node">节点名称</button></th>
-            <th scope="col"><button class="sort-btn" data-sort="score">评分</button></th>
+            <th scope="col"><button class="sort-btn active" data-sort="score">评分</button></th>
             <th scope="col"><button class="sort-btn" data-sort="status">状态</button></th>
             <th scope="col"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
             <th scope="col"><button class="sort-btn" data-sort="isp">服务商 / ISP</button></th>
-            <th scope="col">ASN / 原生性</th>
-            <th scope="col">技术指标 (Bogon / RPKI / rDNS)</th>
+            <th scope="col">ASN / 原生性 / 属性</th>
             <th scope="col"><button class="sort-btn" data-sort="security_status">安全 / 威胁指标</button></th>
+            <th scope="col">GPT · Codex 延迟检测</th>
             <th scope="col">Coffee 全球 Ping</th>
             <th scope="col"><button class="sort-btn" data-sort="elapsed_ms">耗时</button></th>
           </tr>
@@ -93,7 +96,7 @@
               </select>
             </th>
             <th><input class="th-filter" data-col="exit_ip" type="search" placeholder="筛选IP..."></th>
-            <th><input class="th-filter" data-col="isp" type="search" placeholder="筛选ISP/企业..."></th>
+            <th><input class="th-filter" data-col="isp" type="search" placeholder="筛选ISP/服务商..."></th>
             <th>
               <select class="th-filter" data-col="native">
                 <option value="">全部</option>
@@ -101,14 +104,6 @@
                 <option value="broadcast">广播 IP</option>
                 <option value="residential">住宅宽带</option>
                 <option value="datacenter">机房/托管</option>
-              </select>
-            </th>
-            <th>
-              <select class="th-filter" data-col="tech">
-                <option value="">全部</option>
-                <option value="bogon">Bogon 广播</option>
-                <option value="public">公网可达</option>
-                <option value="rpki_valid">RPKI Valid</option>
               </select>
             </th>
             <th>
@@ -121,6 +116,7 @@
                 <option value="tor">Tor</option>
               </select>
             </th>
+            <th><input class="th-filter" data-col="gpt" type="search" placeholder="筛选端点/延迟..."></th>
             <th><input class="th-filter" data-col="ping" type="search" placeholder="筛选地区/延迟..."></th>
             <th></th>
           </tr>

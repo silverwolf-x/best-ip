@@ -413,8 +413,19 @@ h1 {
   outline: none;
 }
 
-.action-btns { display: flex; gap: 6px; }
+.action-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .action-btns .btn { height: 28px; padding: 0 10px; font-size: 11.5px; }
+.import-file-input { display: none; }
+.import-hint {
+  margin: -2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.toolbar-panel.import-drag-active {
+  border-color: var(--info);
+  background: var(--info-soft);
+  box-shadow: 0 0 0 2px var(--info-soft), var(--shadow);
+}
 
 .error-box {
   margin: 0 0 16px;
@@ -430,7 +441,8 @@ h1 {
 /* ── 表格容器与主表格 ── */
 .table-container {
   padding: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   position: relative;
 }
 
@@ -454,10 +466,11 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   height: 36px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--border-strong);
+  vertical-align: middle;
 }
 
 /* 第二行表头（筛选）：锁定在第一行下方 top: 36px */
@@ -471,54 +484,7 @@ h1 {
   height: 36px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--border-strong);
-}
-
-/* ── 前两列（节点名称、评分）全场景横向冻结与不穿透 ── */
-/* 第 1 列：固定在 left: 0，宽度 180px */
-.main-table th:nth-child(1),
-.main-table td:nth-child(1) {
-  position: sticky;
-  left: 0;
-  width: 180px;
-  min-width: 180px;
-  max-width: 180px;
-  box-sizing: border-box;
-}
-
-/* 第 2 列：固定在 left: 180px，宽度 80px，附带边界阴影与右边框 */
-.main-table th:nth-child(2),
-.main-table td:nth-child(2) {
-  position: sticky;
-  left: 180px;
-  width: 80px;
-  min-width: 80px;
-  max-width: 80px;
-  text-align: center;
-  box-sizing: border-box;
-  border-right: 1px solid var(--border-strong);
-  box-shadow: 3px 0 6px -2px rgba(0, 0, 0, 0.15);
-}
-
-/* 表头交汇处（第 1、2 列表头）：最高层级 z-index: 20，纯实色背景 */
-.header-titles th:nth-child(1),
-.header-titles th:nth-child(2),
-.header-filters th:nth-child(1),
-.header-filters th:nth-child(2) {
-  z-index: 20;
-  background: var(--bg-soft) !important;
-}
-
-/* 数据行单元格（第 1、2 列数据）：层级 z-index: 5，纯实色背景 */
-.main-table tbody td:nth-child(1),
-.main-table tbody td:nth-child(2) {
-  z-index: 5;
-  background: var(--bg-card) !important;
-}
-
-/* 数据行悬浮时第 1、2 列同步高亮，保持实色 */
-.main-table tbody tr:hover td:nth-child(1),
-.main-table tbody tr:hover td:nth-child(2) {
-  background: var(--bg-hover) !important;
+  vertical-align: middle;
 }
 
 .th-filter {
@@ -532,6 +498,7 @@ h1 {
   font-size: 11px;
   outline: none;
   font-family: inherit;
+  box-sizing: border-box;
 }
 .th-filter:focus {
   border-color: var(--text);
@@ -567,7 +534,7 @@ h1 {
 }
 .main-table tbody tr:last-child td { border-bottom: 0; }
 
-/* 单元格与芯片（严格单行不换行） */
+/* 单元格与芯片（节点名称自适应宽度） */
 .node-name-btn {
   background: none;
   border: 0;
@@ -575,12 +542,10 @@ h1 {
   font-weight: 700;
   color: var(--text);
   text-align: left;
-  max-width: 170px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
-  display: block;
+  display: inline-block;
+  cursor: pointer;
 }
 .node-name-btn:hover {
   text-decoration: underline;
@@ -615,7 +580,7 @@ h1 {
 }
 .mini-copy:hover { color: var(--text); background: var(--bg-hover); border-color: var(--text-soft); }
 
-.cell-truncate { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; display: inline-block; vertical-align: middle; }
+.cell-truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; display: inline-block; vertical-align: middle; }
 .failure-reason { color: var(--danger); font-weight: 600; font-size: 11.5px; white-space: nowrap; }
 
 .tag-chips { display: inline-flex; gap: 5px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
@@ -623,8 +588,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.1px;
@@ -637,6 +602,25 @@ h1 {
 .chip-bad { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
 .chip-info { background: var(--info-soft); color: var(--info); border: 1px solid var(--info-soft); }
 .chip-asn { background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--border-strong); font-family: ui-monospace, monospace; }
+.chip-isp {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 2px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: all 120ms ease;
+  display: inline-block;
+  vertical-align: middle;
+}
+.chip-isp:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
 
 /* 药丸与徽章评分（第2列核心视觉呈现） */
 .score-pill {
@@ -646,7 +630,7 @@ h1 {
   min-width: 36px;
   height: 24px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 800;
   text-align: center;
@@ -659,74 +643,87 @@ h1 {
 .score-low, .score-bad { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
 .score-none { background: var(--bg-soft); color: var(--text-muted); border: 1px solid var(--border); }
 
-/* 表格内微型全球延迟条 (Coffee 全球 Ping 严格单行高审美呈现) */
-.mini-ping-bar {
+/* 表格内微型延迟条 (Coffee 全球 Ping & GPT · Codex 严格单行高审美微型条) */
+.mini-ping-bar, .mini-gpt-bar {
   display: inline-flex;
   gap: 5px;
   align-items: center;
   flex-wrap: nowrap;
   white-space: nowrap;
 }
-.mini-ping-node {
+.mini-ping-node, .mini-gpt-node {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
-  border-radius: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
   font-size: 10.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.2;
   transition: transform 100ms ease;
+  white-space: nowrap;
 }
-.mini-ping-node:hover {
+.mini-ping-node:hover, .mini-gpt-node:hover {
   transform: translateY(-1px);
 }
-.mini-ping-node .p-dot {
+.mini-ping-node .p-dot, .mini-gpt-node .p-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
 }
-.mini-ping-node .p-code {
+.mini-ping-node .p-code, .mini-gpt-node .p-code {
   font-weight: 700;
   opacity: 0.85;
 }
-.mini-ping-node .p-ms {
+.mini-ping-node .p-ms, .mini-gpt-node .p-ms {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 /* 延迟各区间色系 */
-.mini-ping-node.p-fast {
+.mini-ping-node.p-fast, .mini-gpt-node.p-fast {
   background: var(--good-soft);
   border: 1px solid var(--good-border);
   color: var(--good);
 }
-.mini-ping-node.p-fast .p-dot { background: var(--good); }
+.mini-ping-node.p-fast .p-dot, .mini-gpt-node.p-fast .p-dot { background: var(--good); }
 
-.mini-ping-node.p-mid {
+.mini-ping-node.p-mid, .mini-gpt-node.p-mid {
   background: var(--warn-soft);
   border: 1px solid var(--warn-border);
   color: var(--warn);
 }
-.mini-ping-node.p-mid .p-dot { background: var(--warn); }
+.mini-ping-node.p-mid .p-dot, .mini-gpt-node.p-mid .p-dot { background: var(--warn); }
 
-.mini-ping-node.p-slow {
+.mini-ping-node.p-slow, .mini-gpt-node.p-slow {
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-border);
+  color: var(--warn);
+}
+.mini-ping-node.p-slow .p-dot, .mini-gpt-node.p-slow .p-dot { background: var(--warn); }
+
+.mini-ping-node.node-timeout, .mini-gpt-node.node-timeout {
   background: var(--danger-soft);
   border: 1px solid var(--danger-border);
   color: var(--danger);
 }
-.mini-ping-node.p-slow .p-dot { background: var(--danger); }
-
-.mini-ping-node.node-timeout {
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  opacity: 0.8;
+.mini-ping-node.node-timeout .p-dot, .mini-gpt-node.node-timeout .p-dot {
+  background: var(--danger);
 }
-.mini-ping-node.node-timeout .p-dot {
+
+.mini-ping-node.node-restricted, .mini-gpt-node.node-restricted {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.mini-ping-node.node-restricted .p-dot, .mini-gpt-node.node-restricted .p-dot {
   background: var(--text-muted);
-  opacity: 0.5;
+}
+
+.p-gray {
+  color: var(--text-muted) !important;
+  font-weight: normal !important;
 }
 .p-gray {
   color: var(--text-muted) !important;

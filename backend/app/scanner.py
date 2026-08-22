@@ -16,6 +16,28 @@ COFFEE_HOST = "ip.net.coffee"
 COFFEE_ORIGIN = f"https://{COFFEE_HOST}"
 COFFEE_PAGE_URL = f"{COFFEE_ORIGIN}/ip/"
 COFFEE_TRACE_URL = f"{COFFEE_ORIGIN}/cdn-cgi/trace"
+GPT_PROBE_TARGETS = [
+    {"name": "chatgpt.com", "url": "https://chatgpt.com/cdn-cgi/trace"},
+    {"name": "api.openai.com", "url": "https://api.openai.com/"},
+]
+GPT_RESTRICTED_COUNTRIES = {"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"}
+GPT_CHECK_TIMEOUT_SECONDS = 6.0
+# Compatibility aliases for callers that used the initial internal names.
+GPT_CHECK_TARGETS = GPT_PROBE_TARGETS
+GPT_RESTRICTED_COUNTRY_CODES = GPT_RESTRICTED_COUNTRIES
+_RESTRICTED_COUNTRY_NAMES = {
+    "BELARUS": "BY",
+    "CHINA": "CN",
+    "CUBA": "CU",
+    "HONG KONG": "HK",
+    "IRAN": "IR",
+    "NORTH KOREA": "KP",
+    "MACAO": "MO",
+    "MACAU": "MO",
+    "RUSSIA": "RU",
+    "SYRIA": "SY",
+    "VENEZUELA": "VE",
+}
 RELATED_POLL_BUDGET_SECONDS = 20
 
 GLOBAL_PING_NODES = [
@@ -88,11 +110,13 @@ class CoffeeCollector:
                 ),
             )
             exit_ip = _trace_ip(trace.get("data"))
+            gpt_requests: dict[str, dict[str, Any]] = {}
 
             lookup_url = (
                 f"{COFFEE_ORIGIN}/api/ip/lookup/{quote(exit_ip, safe='')}" if exit_ip else ""
             )
             if exit_ip:
+                gpt_task = asyncio.create_task(self._gpt_requests(client))
                 lookup_task = asyncio.create_task(
                     self._request(
                         client,
@@ -127,7 +151,7 @@ class CoffeeCollector:
                         )
                     ),
                 ]
-                all_request_tasks = [lookup_task, *optional_tasks]
+                all_request_tasks = [gpt_task, lookup_task, *optional_tasks]
                 try:
                     lookup = await lookup_task
                     lookup_data = (
@@ -142,6 +166,7 @@ class CoffeeCollector:
                         lookup_data = {}
                     related = await self._related_result(client, exit_ip, lookup_data)
                     global_ping, port_scan, ping_check = await asyncio.gather(*optional_tasks)
+                    gpt_requests = await gpt_task
                 finally:
                     for task in all_request_tasks:
                         if not task.done():
@@ -155,6 +180,7 @@ class CoffeeCollector:
                 port_scan = _missing_result("", reason, skipped=True)
                 ping_check = _missing_result("", reason, skipped=True)
                 related = _missing_result("", reason, skipped=True)
+                gpt_requests = await self._gpt_requests(client)
 
         status = _node_status(
             page,
@@ -185,7 +211,11 @@ class CoffeeCollector:
             "related": related,
         }
         completeness = _completeness(request_results, exit_ip, lookup_data)
-        summary = _profile_summary(lookup_data)
+        gpt_check = _gpt_check_summary(gpt_requests, lookup_data)
+        summary = {
+            **_profile_summary(lookup_data),
+            "gpt_check": gpt_check,
+        }
         finished_at = _now()
 
         return {
@@ -220,7 +250,10 @@ class CoffeeCollector:
                 "direct_fallback": False,
             },
             "completeness": completeness,
-            "requests": request_results,
+            "requests": {
+                **request_results,
+                "gpt_check": gpt_check,
+            },
             "coffee": {
                 "page": page.get("data"),
                 "trace": trace.get("data"),
@@ -229,6 +262,7 @@ class CoffeeCollector:
                 "port_scan": port_scan.get("data"),
                 "ping_check": ping_check.get("data"),
                 "related": related.get("data"),
+                "gpt_check": gpt_check,
             },
             "pages": {
                 "ip": {
@@ -242,7 +276,7 @@ class CoffeeCollector:
                     "lookup_request": _without_data(lookup),
                     "result": lookup_data or None,
                     "error": error,
-                }
+                },
             },
         }
 
@@ -402,6 +436,74 @@ class CoffeeCollector:
                 "location": None,
             }
 
+    async def _gpt_requests(
+        self,
+        client: httpx.AsyncClient,
+    ) -> dict[str, dict[str, Any]]:
+        responses = await asyncio.gather(
+            *(self._probe_gpt_endpoint(client, target) for target in GPT_PROBE_TARGETS)
+        )
+        return {
+            target["name"]: response
+            for target, response in zip(GPT_PROBE_TARGETS, responses, strict=True)
+        }
+
+    async def _probe_gpt_endpoint(
+        self,
+        client: httpx.AsyncClient,
+        target: dict[str, str],
+    ) -> dict[str, Any]:
+        """Probe one GPT endpoint through this node's Mihomo mixed port."""
+        name = target["name"]
+        url = target["url"]
+        _validate_gpt_url(url, name)
+        started = perf_counter()
+        try:
+            response = await client.get(
+                url,
+                timeout=httpx.Timeout(
+                    GPT_CHECK_TIMEOUT_SECONDS,
+                    connect=min(GPT_CHECK_TIMEOUT_SECONDS, 5),
+                ),
+            )
+            status_code = response.status_code
+            accepted = status_code in {200, 204, 301, 302}
+            headers = getattr(response, "headers", {})
+            return {
+                "name": name,
+                "url": url,
+                "attempted": True,
+                "via_mihomo": True,
+                "proxy_url": self.proxy_url,
+                "target_host": name,
+                "ok": accepted,
+                "status_code": status_code,
+                "elapsed_ms": round((perf_counter() - started) * 1000) if accepted else -1,
+                "data": None,
+                "error": None if accepted else f"HTTP {status_code}",
+                "error_type": None if accepted else "HTTPStatusError",
+                "location": headers.get("location"),
+            }
+        except Exception as exc:
+            return {
+                "name": name,
+                "url": url,
+                "attempted": True,
+                "via_mihomo": True,
+                "proxy_url": self.proxy_url,
+                "target_host": name,
+                "ok": False,
+                "status_code": None,
+                "elapsed_ms": -1,
+                "data": None,
+                "error": exc.__class__.__name__,
+                "error_type": exc.__class__.__name__,
+                "location": None,
+            }
+
+    # Kept as a compatibility alias for older internal callers.
+    _request_external = _probe_gpt_endpoint
+
 
 def _validate_coffee_url(url: str) -> None:
     parsed = urlsplit(url)
@@ -461,6 +563,39 @@ def _validate_coffee_url(url: str) -> None:
             raise ValueError("global ping 必须使用固定八个 Coffee 节点")
         return
     raise ValueError(f"拒绝未允许的 Coffee path：{url}")
+
+
+def _validate_gpt_url(url: str, target_name: str | None = None) -> None:
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"GPT 探测端口无效：{url}") from exc
+    expected = next(
+        (
+            target
+            for target in GPT_CHECK_TARGETS
+            if (
+                target["name"] == target_name
+                if target_name is not None
+                else target["url"] == url
+            )
+        ),
+        None,
+    )
+    if expected is None or url != expected["url"]:
+        raise ValueError(f"拒绝未允许的 GPT 探测 URL：{url}")
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != expected["name"]
+        or port is not None
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path != urlsplit(expected["url"]).path
+    ):
+        raise ValueError(f"拒绝未允许的 GPT 探测 URL：{url}")
 
 
 def _global_ping_url(exit_ip: str) -> str:
@@ -820,6 +955,98 @@ def _ping_check_summary(response: dict[str, Any]) -> dict[str, Any] | None:
         "total_nodes": total_nodes,
         "ok_ratio": ok_ratio,
     }
+
+
+_GPT_ACCEPTED_STATUS_CODES = {200, 204, 301, 302}
+
+
+def _gpt_overall_status(checks: list[dict[str, Any]]) -> str:
+    statuses = [str(check.get("status")) for check in checks]
+    if not statuses or all(status == "failed" for status in statuses):
+        return "failed"
+    if "restricted" in statuses:
+        return "restricted"
+    if "slow" in statuses:
+        return "slow"
+    if "good" in statuses:
+        return "good"
+    return "normal"
+
+
+def _gpt_check_summary(
+    responses: list[dict[str, Any]] | tuple[dict[str, Any], ...] | dict[str, Any] | None,
+    lookup_data: dict[str, Any] | str | None = None,
+) -> list[dict[str, Any]]:
+    """Convert GPT probe request records into the public availability summary."""
+    if not responses:
+        return []
+
+    by_name: dict[str, dict[str, Any]] = {}
+    if isinstance(responses, dict):
+        for name, response in responses.items():
+            if isinstance(response, dict):
+                by_name[str(name)] = response
+    else:
+        for response in responses:
+            if not isinstance(response, dict):
+                continue
+            name = response.get("name")
+            if isinstance(name, str) and name:
+                by_name[name] = response
+
+    country_code = (
+        str(lookup_data.get("countryCode") or "").strip().upper()
+        if isinstance(lookup_data, dict)
+        else str(lookup_data or "").strip().upper()
+    )
+    summaries: list[dict[str, Any]] = []
+    for target in GPT_PROBE_TARGETS:
+        response = by_name.get(target["name"], {})
+        status_code = response.get("status_code")
+        if not isinstance(status_code, int) or isinstance(status_code, bool):
+            status_code = None
+        elapsed = response.get("elapsed_ms")
+        elapsed_ms = (
+            round(elapsed)
+            if _is_finite_number(elapsed) and elapsed >= 0
+            else -1
+        )
+        connected = status_code in _GPT_ACCEPTED_STATUS_CODES and elapsed_ms >= 0
+        if country_code in GPT_RESTRICTED_COUNTRIES and connected:
+            status = "restricted"
+            text = "不可访问"
+            ok = False
+        elif not connected:
+            status = "failed"
+            text = "不可访问"
+            ok = False
+            elapsed_ms = -1
+        elif elapsed_ms < 250:
+            status = "normal"
+            text = "正常"
+            ok = True
+        elif elapsed_ms < 500:
+            status = "good"
+            text = "良好"
+            ok = True
+        else:
+            status = "slow"
+            text = "较慢"
+            ok = True
+
+        summaries.append(
+            {
+                "name": target["name"],
+                "url": target["url"],
+                "status": status,
+                "text": text,
+                "elapsed_ms": elapsed_ms,
+                "ok": ok,
+                "status_code": status_code,
+                "error": response.get("error") if not ok else None,
+            }
+        )
+    return summaries
 
 
 def _related_domains(

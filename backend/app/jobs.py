@@ -601,8 +601,8 @@ def _failed_node(
             "trust_env": False,
             "direct_fallback": False,
         },
-        "requests": {},
-        "coffee": {},
+        "requests": {"gpt_check": []},
+        "coffee": {"gpt_check": []},
         "completeness": {
             "complete": False,
             "required": {"page": False, "trace": False, "lookup": False},
@@ -643,6 +643,7 @@ def _failed_node(
         "global_ping": [],
         "port_scan": None,
         "ping_check": None,
+        "gpt_check": [],
         "related_domains": [],
         "elapsed_ms": 0,
     }

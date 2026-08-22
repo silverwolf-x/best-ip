@@ -8,8 +8,11 @@ import pytest
 from backend.app.scanner import (
     COFFEE_HOST,
     GLOBAL_PING_NODES,
+    GPT_PROBE_TARGETS,
+    GPT_RESTRICTED_COUNTRIES,
     CoffeeCollector,
     _global_ping_url,
+    _gpt_check_summary,
     _request_recorded,
     _trace_ip,
     _validate_coffee_url,
@@ -40,11 +43,82 @@ def test_coffee_allowlist_rejects_unapproved_paths_and_queries() -> None:
         with pytest.raises(ValueError):
             _validate_coffee_url(url)
 
-
 def test_global_ping_uses_exact_fixed_node_set() -> None:
     url = _global_ping_url("2001:db8::10")
     assert "host=2001%3Adb8%3A%3A10" in url
     assert url.count("node=") == len(GLOBAL_PING_NODES)
+
+
+def test_gpt_check_summary_classifies_latency_and_http_failures() -> None:
+    responses = [
+        {
+            "name": GPT_PROBE_TARGETS[0]["name"],
+            "status_code": 200,
+            "elapsed_ms": 100,
+            "ok": True,
+        },
+        {
+            "name": GPT_PROBE_TARGETS[1]["name"],
+            "status_code": 503,
+            "elapsed_ms": 999,
+            "ok": False,
+            "error": "HTTP 503",
+        },
+    ]
+
+    checks = _gpt_check_summary(responses, {"countryCode": "US"})
+
+    assert checks[0]["status"] == "normal"
+    assert checks[0]["text"] == "正常"
+    assert checks[0]["ok"] is True
+    assert checks[1]["status"] == "failed"
+    assert checks[1]["text"] == "不可访问"
+    assert checks[1]["elapsed_ms"] == -1
+    assert checks[1]["ok"] is False
+
+
+def test_gpt_check_summary_marks_restricted_country_after_connection() -> None:
+    responses = {
+        target["name"]: {
+            "status_code": 301,
+            "elapsed_ms": 20,
+            "ok": True,
+        }
+        for target in GPT_PROBE_TARGETS
+    }
+
+    checks = _gpt_check_summary(responses, {"countryCode": "CN"})
+
+    assert GPT_RESTRICTED_COUNTRIES == {"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"}
+    assert all(check["status"] == "restricted" for check in checks)
+    assert all(check["text"] == "不可访问" for check in checks)
+    assert all(check["ok"] is False for check in checks)
+
+
+@pytest.mark.asyncio
+async def test_probe_gpt_endpoint_uses_proxy_timeout_and_accepts_redirect() -> None:
+    class Response:
+        status_code = 302
+        headers = {"location": "https://example.invalid/"}
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, httpx.Timeout]] = []
+
+        async def get(self, url: str, *, timeout: httpx.Timeout) -> Response:
+            self.calls.append((url, timeout))
+            return Response()
+
+    client = Client()
+    result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)._probe_gpt_endpoint(
+        client, GPT_PROBE_TARGETS[0]  # type: ignore[arg-type]
+    )
+
+    assert result["ok"] is True
+    assert result["status_code"] == 302
+    assert result["elapsed_ms"] >= 0
+    assert client.calls[0][0] == GPT_PROBE_TARGETS[0]["url"]
+    assert client.calls[0][1].connect == 5
 
 
 @pytest.mark.asyncio
@@ -102,7 +176,21 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
             raise AssertionError(f"unexpected URL: {url}")
         return base
 
+    async def fake_gpt(self, _client):
+        return {
+            target["name"]: {
+                "name": target["name"],
+                "url": target["url"],
+                "status_code": 200,
+                "elapsed_ms": 2,
+                "ok": True,
+                "error": None,
+            }
+            for target in GPT_PROBE_TARGETS
+        }
+
     monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
     result = await collector.collect(
         job_id="job",
@@ -116,6 +204,9 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
     assert result["status"] == "success"
     assert result["error"] is None
     assert result["exit_ip"] == "203.0.113.10"
+    assert result["gpt_check"][0]["status"] == "normal"
+    assert result["requests"]["gpt_check"] == result["gpt_check"]
+    assert result["coffee"]["gpt_check"] == result["gpt_check"]
     assert result["coffee"]["lookup"]["trust_score"] == 91
     assert result["bogon_status"] == "否（公网可达）"
     assert result["rdns"] == "-"
@@ -161,7 +252,21 @@ async def test_collect_overlaps_independent_coffee_requests(monkeypatch) -> None
         finally:
             active -= 1
 
+    async def fake_gpt(self, _client):
+        return {
+            target["name"]: {
+                "name": target["name"],
+                "url": target["url"],
+                "status_code": 200,
+                "elapsed_ms": 2,
+                "ok": True,
+                "error": None,
+            }
+            for target in GPT_PROBE_TARGETS
+        }
+
     monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
     result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
         job_id="job",
         node_index=0,

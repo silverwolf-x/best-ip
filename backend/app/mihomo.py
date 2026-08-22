@@ -231,6 +231,8 @@ class MihomoProcess:
                 "proxy-groups": proxy_groups,
                 "rules": [
                     f"DOMAIN,{COFFEE_HOST},{self.group_name}",
+                    f"DOMAIN,chatgpt.com,{self.group_name}",
+                    f"DOMAIN,api.openai.com,{self.group_name}",
                     "MATCH,REJECT",
                 ],
             }

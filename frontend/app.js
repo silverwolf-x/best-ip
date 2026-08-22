@@ -3,8 +3,10 @@ const configuredApiBase = document.querySelector('meta[name="api-base"]')?.conte
 const state = {
   job: null,
   results: [],
-  sortKey: "node",
-  sortDirection: "asc",
+  imported: false,
+  importSource: "",
+  sortKey: "score",
+  sortDirection: "desc",
   pollTimer: null,
   pollGeneration: 0,
   activeDetailResult: null,
@@ -16,8 +18,8 @@ const state = {
     exit_ip: "",
     isp: "",
     native: "",
-    tech: "",
     security: "",
+    gpt: "",
     ping: "",
   },
 };
@@ -42,6 +44,9 @@ const elements = {
   statusFilter: document.querySelector("#statusFilter"),
   exportCsvBtn: document.querySelector("#exportCsvBtn"),
   exportJsonBtn: document.querySelector("#exportJsonBtn"),
+  importResultsBtn: document.querySelector("#importResultsBtn"),
+  importFileInput: document.querySelector("#importFileInput"),
+  resultsToolbar: document.querySelector("#resultsToolbar"),
   resultBody: document.querySelector("#resultBody"),
   emptyResults: document.querySelector("#emptyResults"),
   detailDialog: document.querySelector("#detailDialog"),
@@ -83,6 +88,8 @@ elements.form.addEventListener("submit", async (event) => {
   const generation = ++state.pollGeneration;
   state.job = null;
   state.results = [];
+  state.imported = false;
+  state.importSource = "";
   state.activeDetailResult = null;
   state.detailGeneration += 1;
   if (elements.detailDialog.open) elements.detailDialog.close();
@@ -121,6 +128,32 @@ elements.cancelButton.addEventListener("click", async () => {
   }
 });
 
+elements.importResultsBtn.addEventListener("click", () => elements.importFileInput.click());
+elements.importFileInput.addEventListener("change", async (event) => {
+  const [file] = event.target.files || [];
+  event.target.value = "";
+  if (file) await importResultsFile(file);
+});
+
+["dragenter", "dragover"].forEach((eventName) => {
+  elements.resultsToolbar?.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    elements.resultsToolbar.classList.add("import-drag-active");
+  });
+});
+["dragleave", "drop"].forEach((eventName) => {
+  elements.resultsToolbar?.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    elements.resultsToolbar.classList.remove("import-drag-active");
+  });
+});
+elements.resultsToolbar?.addEventListener("drop", async (event) => {
+  const [file] = event.dataTransfer?.files || [];
+  if (file) await importResultsFile(file);
+});
+
 elements.resultSearch.addEventListener("input", renderRows);
 elements.statusFilter.addEventListener("change", renderRows);
 
@@ -154,34 +187,54 @@ elements.copyJsonBtn.addEventListener("click", async () => {
 });
 
 elements.exportCsvBtn.addEventListener("click", () => {
-  if (state.job?.status !== "completed" || !state.job.manifest_ready || !state.results.length) return;
-  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "评分", "耗时(ms)"];
-  const rows = state.results.map((result) => [
-    csv(result.node),
-    csv(result.type),
-    csv(statusLabels[result.status] || result.status),
-    csv(result.exit_ip || ""),
-    csv(result.location || ""),
-    csv(result.isp || result.as_org || ""),
-    csv(result.asn ? `AS${result.asn}` : ""),
-    csv(result.asn_kind_display || ""),
-    csv(result.native_status || (result.is_native === true ? "原生" : result.is_native === false ? "广播" : "未知")),
-    csv(result.bogon_status || (result.is_bogon ? "是" : "否")),
-    csv(result.rpki_status || ""),
-    csv(result.rdns || ""),
-    csv(result.company_type || ""),
-    csv(result.traffic_profile || ""),
-    csv(result.security_status || ""),
-    csv(result.abuse_level || ""),
-    csv(result.honeypot_status || ""),
-    result.score ?? "",
-    result.elapsed_ms ?? "",
-  ]);
+  if (!canExportResults()) return;
+  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "GPT_ChatGPT", "GPT_Codex", "评分", "耗时(ms)"];
+  const rows = state.results.map((result) => {
+    const gptList = result.gpt_check || [];
+    const chatgptItem = gptList.find((g) => g.name === "chatgpt.com");
+    const codexItem = gptList.find((g) => g.name === "api.openai.com");
+    return [
+      csv(result.node),
+      csv(result.type),
+      csv(statusLabels[result.status] || result.status),
+      csv(result.exit_ip || ""),
+      csv(result.location || ""),
+      csv(result.isp || result.as_org || ""),
+      csv(result.asn ? `AS${result.asn}` : ""),
+      csv(result.asn_kind_display || ""),
+      csv(result.native_status || (result.is_native === true ? "原生" : result.is_native === false ? "广播" : "未知")),
+      csv(result.bogon_status || (result.is_bogon ? "是" : "否")),
+      csv(result.rpki_status || ""),
+      csv(result.rdns || ""),
+      csv(result.company_type || ""),
+      csv(result.traffic_profile || ""),
+      csv(result.security_status || ""),
+      csv(result.abuse_level || ""),
+      csv(result.honeypot_status || ""),
+      csv(chatgptItem ? `${chatgptItem.text || ""}${chatgptItem.elapsed_ms >= 0 ? ` ${chatgptItem.elapsed_ms}ms` : ""}` : ""),
+      csv(codexItem ? `${codexItem.text || ""}${codexItem.elapsed_ms >= 0 ? ` ${codexItem.elapsed_ms}ms` : ""}` : ""),
+      result.score ?? "",
+      result.elapsed_ms ?? "",
+    ];
+  });
   downloadBlob("﻿" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n"), `best-ip-results-${dateStamp()}.csv`, "text/csv;charset=utf-8;");
 });
 
 elements.exportJsonBtn.addEventListener("click", async () => {
-  if (state.job?.status !== "completed" || !state.job.manifest_ready) return;
+  if (!canExportResults()) return;
+  if (state.imported) {
+    try {
+      downloadBlob(
+        JSON.stringify(buildImportedJsonExport(), null, 2),
+        `best-ip-results-${dateStamp()}.json`,
+        "application/json;charset=utf-8;",
+      );
+    } catch (error) {
+      showInlineError(`导出 JSON 失败：${error.message}`);
+    }
+    return;
+  }
+
   elements.exportJsonBtn.disabled = true;
   try {
     const response = await fetch(apiUrl(`/api/scans/${state.job.id}/export`), { cache: "no-store" });
@@ -210,6 +263,435 @@ function downloadBlob(content, filename, contentType) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+async function importResultsFile(file) {
+  const filename = String(file?.name || "").trim();
+  const extension = filename.toLocaleLowerCase("en-US").split(".").pop();
+  if (!filename || !["json", "csv"].includes(extension)) {
+    showInlineError("导入失败：请选择之前导出的 .json 或 .csv 文件。");
+    return;
+  }
+
+  try {
+    const text = await readImportText(file);
+    const parsed = extension === "json" ? parseImportedJson(text) : parseImportedCsv(text);
+    applyImportedResults(parsed, extension, filename);
+  } catch (error) {
+    showInlineError(`导入失败：${error.message || "文件格式无法识别"}`);
+  }
+}
+
+async function readImportText(file) {
+  if (typeof file.arrayBuffer === "function") {
+    const buffer = await file.arrayBuffer();
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    return decoder.decode(buffer).replace(/^﻿/, "");
+  }
+  if (typeof file.text === "function") {
+    return (await file.text()).replace(/^﻿/, "");
+  }
+  throw new Error("无法读取文件内容");
+}
+
+function parseImportedJson(text) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new Error("JSON 语法无效，请确认文件未损坏。");
+  }
+  if (!Array.isArray(payload) && !isRecord(payload)) {
+    throw new Error("JSON 顶层必须是结果数组或导出结果对象。");
+  }
+
+  const manifest = isRecord(payload) && isRecord(payload.manifest) ? payload.manifest : null;
+  const candidates = extractJsonResults(payload, manifest);
+  if (!candidates.length) {
+    throw new Error("JSON 中没有可导入的节点结果（需要 results 或 manifest.records）。");
+  }
+  const results = candidates.map((item, index) => normalizeImportedResult(item, index, "json"));
+  const metadata = isRecord(payload) ? payload : {};
+  return { results, manifest, metadata };
+}
+
+function extractJsonResults(payload, manifest) {
+  const container = isRecord(payload) ? payload : {};
+  let source = Array.isArray(payload)
+    ? payload
+    : [container.results, container.scan_results, container.scan?.results, container.data?.results]
+      .find((items) => Array.isArray(items) && items.length) || [];
+
+  if (!source.length && Array.isArray(manifest?.records)) {
+    source = manifest.records.map((entry) => {
+      if (!isRecord(entry)) return entry;
+      return isRecord(entry.summary) ? entry.summary : entry;
+    });
+  }
+  if (!source.length && Array.isArray(container.details)) source = container.details;
+
+  const rootDetails = container.details || container.scan_details || container.data?.details;
+  return source.map((item, index) => {
+    const base = unwrapJsonResult(item);
+    const key = base.node_index ?? base.index ?? index;
+    const external = unwrapJsonResult(findImportedDetail(rootDetails, key, base.node));
+    return { ...base, ...external };
+  });
+}
+
+function unwrapJsonResult(value) {
+  if (!isRecord(value)) return {};
+  const nested = isRecord(value.result) ? value.result : isRecord(value.detail) ? value.detail : null;
+  const summary = isRecord(value.summary) ? value.summary : null;
+  if (!nested && !summary) return { ...value };
+  const direct = { ...value };
+  delete direct.result;
+  delete direct.detail;
+  delete direct.summary;
+  delete direct.details;
+  return { ...(summary || {}), ...direct, ...(nested || {}) };
+}
+
+function findImportedDetail(details, key, node) {
+  if (Array.isArray(details)) {
+    return details.find((item, index) => {
+      if (!isRecord(item)) return index === key;
+      return (item.node_index ?? item.index ?? index) === key || (node && item.node === node);
+    }) || {};
+  }
+  if (!isRecord(details)) return {};
+  return details[String(key)] || details[key] || (node ? details[node] : {}) || {};
+}
+
+function parseImportedCsv(text) {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) throw new Error("CSV 至少需要一行表头和一行节点结果。");
+
+  const headers = rows.shift().map((header, index) => {
+    const value = String(header ?? "").replace(/^﻿/, "").trim();
+    return value || `未命名列${index + 1}`;
+  });
+  const columns = mapCsvColumns(headers);
+  if (columns.node < 0 || columns.known < 2) {
+    throw new Error("CSV 表头无法识别，请使用本页面导出的 CSV 文件。");
+  }
+
+  const results = rows.map((row, rowIndex) => {
+    const value = (key) => columns[key] >= 0 ? String(row[columns[key]] ?? "").trim() : "";
+    const node = value("node");
+    if (!node) throw new Error(`CSV 第 ${rowIndex + 2} 行缺少节点名称。`);
+
+    const status = normalizeImportedStatus(value("status"), value("exit_ip"));
+    const nativeStatus = value("native") || "未知";
+    const securityStatus = value("security") || "";
+    const asnRaw = value("asn");
+    const isNative = /原生|native/i.test(nativeStatus) && !/非原生|广播|broadcast/i.test(nativeStatus)
+      ? true
+      : /广播|非原生|broadcast/i.test(nativeStatus) ? false : null;
+    const isBogon = parseImportedBoolean(value("bogon"));
+
+    // 解析导入的 GPT 字段
+    const chatgptText = value("gpt_chatgpt");
+    const codexText = value("gpt_codex");
+    const gpt_check = [];
+    if (chatgptText) {
+      const match = chatgptText.match(/(\d+)\s*ms/i);
+      const ms = match ? Number(match[1]) : -1;
+      gpt_check.push({
+        name: "chatgpt.com",
+        status: ms >= 0 ? (ms < 250 ? "normal" : ms < 500 ? "good" : "slow") : "failed",
+        text: ms >= 0 ? (ms < 250 ? "正常" : ms < 500 ? "良好" : "较慢") : chatgptText,
+        elapsed_ms: ms,
+        ok: ms >= 0,
+      });
+    }
+    if (codexText) {
+      const match = codexText.match(/(\d+)\s*ms/i);
+      const ms = match ? Number(match[1]) : -1;
+      gpt_check.push({
+        name: "api.openai.com",
+        status: ms >= 0 ? (ms < 250 ? "normal" : ms < 500 ? "good" : "slow") : "failed",
+        text: ms >= 0 ? (ms < 250 ? "正常" : ms < 500 ? "良好" : "较慢") : codexText,
+        elapsed_ms: ms,
+        ok: ms >= 0,
+      });
+    }
+
+    const result = {
+      node,
+      type: value("type") || "未知",
+      status,
+      exit_ip: value("exit_ip") || null,
+      location: value("location") || "",
+      isp: value("isp") || "",
+      as_org: value("isp") || "",
+      asn: parseImportedAsn(asnRaw),
+      asn_kind_display: value("asn_kind"),
+      native_status: nativeStatus,
+      is_native: isNative,
+      is_residential: /住宅/i.test(value("company_type") || "") || /住宅/i.test(nativeStatus),
+      is_datacenter: /机房|托管/i.test(value("company_type") || "") || /机房|托管/i.test(value("asn_kind") || ""),
+      is_bogon: isBogon,
+      bogon_status: value("bogon") || (isBogon ? "是" : "否（公网可达）"),
+      rpki_status: value("rpki") || "",
+      rdns: value("rdns") || "-",
+      company_type: value("company_type") || "未知",
+      traffic_profile: value("traffic_profile") || "未知",
+      security_status: securityStatus,
+      abuse_level: value("abuse_level") || "",
+      honeypot_status: value("honeypot_status") || "",
+      score: parseImportedNumber(value("score")),
+      elapsed_ms: parseImportedNumber(value("elapsed_ms")) ?? 0,
+      is_vpn: /vpn/i.test(securityStatus),
+      is_proxy: /proxy|代理/i.test(securityStatus),
+      is_tor: /tor/i.test(securityStatus),
+      is_crawler: /爬虫/i.test(securityStatus) || /爬虫/i.test(value("traffic_profile") || ""),
+      is_abuser: /滥用/i.test(securityStatus) || /滥用/i.test(value("abuse_level") || ""),
+      gpt_check: gpt_check.length ? gpt_check : [],
+      global_ping: [],
+      node_index: rowIndex,
+      _index: rowIndex,
+      _source: "csv",
+    };
+    return normalizeImportedResult(result, rowIndex, "csv");
+  });
+
+  return { results, manifest: null, metadata: { source_format: "csv" } };
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (next === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\r") {
+      if (next === "\n") i += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else if (char === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows.filter((r) => r.some((item) => String(item ?? "").trim() !== ""));
+}
+
+function mapCsvColumns(headers) {
+  const aliases = {
+    node: ["节点名称", "节点", "node", "name", "nodename"],
+    type: ["协议", "节点类型", "type", "protocol"],
+    status: ["状态", "status"],
+    exit_ip: ["出口ip", "出口_ip", "ip", "exit_ip", "exitip"],
+    location: ["位置", "归属地", "地理位置", "location", "geo"],
+    isp: ["服务商/isp", "服务商", "isp", "运营商", "as_org", "asorganization"],
+    asn: ["asn", "as号", "as"],
+    asn_kind: ["asn自报类型", "自报类型", "asn_kind", "asn_kind_display"],
+    native: ["ip原生性", "原生性", "native", "native_status", "is_native"],
+    bogon: ["bogon", "bogon广播", "bogon_status", "is_bogon"],
+    rpki: ["rpki", "rpki状态", "rpki_status"],
+    rdns: ["反向dns", "rdns", "反向解析"],
+    company_type: ["运营商类型", "场景", "company_type"],
+    traffic_profile: ["人机流量", "人机画像", "traffic_profile"],
+    security: ["安全状态", "安全/威胁指标", "安全指标", "threat", "security_status"],
+    abuse_level: ["滥用等级", "abuse_level"],
+    honeypot_status: ["蜜罐状态", "honeypot_status"],
+    gpt_chatgpt: ["gpt_chatgpt", "chatgpt", "chatgpt.com"],
+    gpt_codex: ["gpt_codex", "codex", "api.openai.com"],
+    score: ["评分", "trustscore", "score", "trust_score"],
+    elapsed_ms: ["耗时(ms)", "耗时", "elapsed_ms", "duration"],
+  };
+
+  const normalized = headers.map(normalizeCsvHeader);
+  const columns = { known: 0 };
+  Object.entries(aliases).forEach(([key, list]) => {
+    const indices = list.map(normalizeCsvHeader);
+    columns[key] = normalized.findIndex((header) => indices.includes(header));
+    if (columns[key] >= 0) columns.known += 1;
+  });
+  return columns;
+}
+
+function normalizeCsvHeader(value) {
+  return String(value ?? "").replace(/[\s﻿]/g, "").toLocaleLowerCase("en-US");
+}
+
+function normalizeImportedResult(raw, index, source) {
+  if (!isRecord(raw)) throw new Error(`第 ${index + 1} 个节点结果不是对象。`);
+  const result = { ...raw };
+  result.node = firstImportedValue(raw.node, raw.node_name, raw.name);
+  if (!result.node) throw new Error(`第 ${index + 1} 个节点结果缺少节点名称。`);
+  result.type = firstImportedValue(raw.type, raw.protocol) || "未知";
+  result.status = normalizeImportedStatus(raw.status, raw.exit_ip);
+  result._index = raw.node_index ?? raw.index ?? index;
+  result.node_index = raw.node_index ?? result._index;
+  result._source = source;
+  if (result.score !== null && result.score !== undefined && result.score !== "") {
+    result.score = parseImportedNumber(result.score);
+  }
+  if (result.elapsed_ms !== null && result.elapsed_ms !== undefined && result.elapsed_ms !== "") {
+    result.elapsed_ms = parseImportedNumber(result.elapsed_ms) ?? 0;
+  }
+  if (!Array.isArray(result.global_ping)) result.global_ping = [];
+  if (!Array.isArray(result.gpt_check)) result.gpt_check = [];
+  return result;
+}
+
+function normalizeImportedStatus(value, exitIp) {
+  const status = String(value ?? "").trim().toLocaleLowerCase("zh-CN");
+  if (["success", "completed", "complete", "成功", "完整"].includes(status)) return "success";
+  if (["partial", "部分", "partially_complete"].includes(status)) return "partial";
+  if (["failed", "failure", "error", "失败"].includes(status)) return "failed";
+  return exitIp ? "partial" : "failed";
+}
+
+function parseImportedBoolean(value) {
+  const normalized = String(value ?? "").trim().toLocaleLowerCase("zh-CN");
+  if (["是", "yes", "true", "1", "bogon"].includes(normalized)) return true;
+  if (["否", "no", "false", "0", "公网可达", "public"].includes(normalized)) return false;
+  return Boolean(normalized && !["未知", "unknown", "-"].includes(normalized));
+}
+
+function parseImportedAsn(value) {
+  const normalized = String(value ?? "").trim().replace(/^AS/i, "");
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : normalized;
+}
+
+function parseImportedNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const number = Number(String(value).replace(/,/g, "").trim());
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstImportedValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function applyImportedResults(parsed, source, filename) {
+  clearTimeout(state.pollTimer);
+  state.pollGeneration += 1;
+  state.detailGeneration += 1;
+  state.activeDetailResult = null;
+  if (elements.detailDialog.open) elements.detailDialog.close();
+
+  const results = parsed.results;
+  const counts = results.reduce((summary, result) => {
+    if (result.status === "success") summary.success += 1;
+    else if (result.status === "partial") summary.partial += 1;
+    else summary.failed += 1;
+    return summary;
+  }, { success: 0, partial: 0, failed: 0 });
+  const metadata = isRecord(parsed.metadata) ? parsed.metadata : {};
+  const manifest = isRecord(parsed.manifest) ? parsed.manifest : null;
+  state.imported = true;
+  state.importSource = source;
+  state.results = results;
+  state.job = {
+    id: `imported-${Date.now()}`,
+    status: "completed",
+    message: `已导入 ${filename}`,
+    created_at: metadata.created_at || manifest?.created_at || null,
+    finished_at: metadata.finished_at || manifest?.finished_at || null,
+    total: results.length,
+    skipped: 0,
+    completed: results.length,
+    success_count: counts.success,
+    partial_count: counts.partial,
+    failed_count: counts.failed,
+    current_node: null,
+    manifest_ready: true,
+    cleanup_confirmed: true,
+    execution_mode: metadata.execution_mode || manifest?.execution_mode || "imported",
+    error: null,
+    results,
+    manifest,
+    imported: true,
+    import_source: source,
+  };
+  renderProgress(state.job);
+  setScanning(false);
+  elements.scanStatusBadge.hidden = false;
+  elements.scanStatusText.textContent = `已导入结果（${results.length}个节点）`;
+  elements.scanProgressCount.textContent = `${results.length}/${results.length}`;
+  showError("");
+  renderRows();
+}
+
+function canExportResults() {
+  return Boolean(state.results.length && state.job?.status === "completed" && state.job?.manifest_ready);
+}
+
+function buildImportedJsonExport() {
+  const data = {
+    id: state.job.id,
+    status: "completed",
+    message: state.job.message,
+    created_at: state.job.created_at,
+    finished_at: state.job.finished_at,
+    total: state.results.length,
+    skipped: 0,
+    completed: state.results.length,
+    success_count: state.job.success_count,
+    partial_count: state.job.partial_count,
+    failed_count: state.job.failed_count,
+    current_node: null,
+    manifest_ready: true,
+    cleanup_confirmed: true,
+    execution_mode: state.job.execution_mode,
+    error: null,
+    import_source: state.importSource,
+    results: state.results.map((result) => cloneImportedForExport(result)),
+  };
+  if (isRecord(state.job.manifest)) data.manifest = state.job.manifest;
+  return data;
+}
+
+function cloneImportedForExport(result) {
+  return JSON.parse(JSON.stringify(result, (key, value) => {
+    if (key === "_index" || key === "_source") return undefined;
+    return value;
+  }));
 }
 
 async function pollJob(jobId, generation) {
@@ -273,10 +755,19 @@ function renderRows() {
           result.as_org,
           result.error,
           result.security_status,
+          result.rpki_status,
+          result.rdns,
+          result.bogon_status,
+          result.company_type,
+          result.traffic_profile,
+          result.abuse_level,
+          result.honeypot_status,
+          result.gpt_check?.map((g) => `${g.name || ""} ${g.text || ""} ${g.elapsed_ms ?? ""}ms`).join(" "),
+          result.global_ping?.map((ping) => `${ping.name || ""} ${ping.code || ""} ${ping.elapsed_ms ?? ""} ${ping.status || ""}`).join(" "),
           result.asn ? `AS${result.asn}` : "",
           result.asn_kind_display,
           result.native_status,
-          result.company_type,
+          result._importedFields ? Object.values(result._importedFields).join(" ") : "",
         ].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query));
         if (!matchesGlobal) return false;
       }
@@ -319,20 +810,26 @@ function renderRows() {
         if (cf.native === "datacenter" && result.is_datacenter !== true) return false;
       }
 
-      // 列筛选 7: 技术指标
-      if (cf.tech) {
-        if (cf.tech === "bogon" && !result.is_bogon) return false;
-        if (cf.tech === "public" && result.is_bogon) return false;
-        if (cf.tech === "rpki_valid" && !String(result.rpki_status || "").includes("Valid")) return false;
-      }
-
-      // 列筛选 8: 安全指标
+      // 列筛选 7: 安全指标
       if (cf.security) {
         if (cf.security === "clean" && (!result.security_status || !result.security_status.includes("纯净"))) return false;
         if (cf.security === "threat" && (result.security_status && result.security_status.includes("纯净"))) return false;
         if (cf.security === "vpn" && !result.is_vpn) return false;
         if (cf.security === "proxy" && !result.is_proxy) return false;
         if (cf.security === "tor" && !result.is_tor) return false;
+      }
+
+      // 列筛选 8: GPT · Codex 延迟检测
+      if (cf.gpt) {
+        const gptFilter = cf.gpt.toLowerCase();
+        const gpts = result.gpt_check || [];
+        const matchesGpt = gpts.some((g) =>
+          String(g.name || "").toLowerCase().includes(gptFilter) ||
+          String(g.text || "").toLowerCase().includes(gptFilter) ||
+          String(g.elapsed_ms || "").includes(gptFilter) ||
+          String(g.status || "").toLowerCase().includes(gptFilter)
+        );
+        if (!matchesGpt) return false;
       }
 
       // 列筛选 9: Coffee 全球 Ping
@@ -356,12 +853,24 @@ function renderRows() {
   rows.forEach((result) => fragment.append(createResultRow(result)));
   elements.resultBody.replaceChildren(fragment);
   elements.emptyResults.hidden = rows.length > 0;
+  const emptyTitle = elements.emptyResults.querySelector(".empty-title");
+  const emptyDesc = elements.emptyResults.querySelector(".empty-desc");
+  if (state.results.length && !rows.length) {
+    emptyTitle.textContent = "没有匹配的节点";
+    emptyDesc.textContent = "请调整搜索条件或列筛选。";
+  } else if (state.imported) {
+    emptyTitle.textContent = "导入结果为空";
+    emptyDesc.textContent = "请选择包含节点结果的 JSON 或 CSV 文件。";
+  } else {
+    emptyTitle.textContent = "等待首个节点结果";
+    emptyDesc.textContent = "每个节点完成并原子暂存后会立即显示；全部节点结束后生成最终 manifest，并开放详情与导出。";
+  }
 }
 
 function createResultRow(result) {
   const row = document.createElement("tr");
 
-  // 1. 节点名称
+  // 1. 节点名称（自适应宽度）
   appendTextCell(row, "", (cell) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -372,7 +881,7 @@ function createResultRow(result) {
     cell.replaceChildren(button);
   });
 
-  // 2. 评分 (移至第2列)
+  // 2. 评分 (第2列，默认降序排)
   appendTextCell(row, "", (cell) => {
     if (result.score == null) {
       cell.innerHTML = '<span class="score-pill score-none">—</span>';
@@ -423,28 +932,30 @@ function createResultRow(result) {
     }
   });
 
-  // 5. 服务商 / ISP
+  // 5. 服务商 / ISP（药丸胶囊风格，严格左对齐并展示完整信息）
   appendTextCell(row, "", (cell) => {
     const ispText = result.isp || result.as_org || "";
     if (ispText) {
-      cell.className = "cell-truncate";
-      cell.textContent = ispText;
-      cell.title = ispText;
+      const span = document.createElement("span");
+      span.className = "chip chip-isp";
+      span.textContent = ispText;
+      span.title = ispText;
+      cell.replaceChildren(span);
     } else {
       cell.textContent = "—";
     }
   });
 
-  // 6. ASN / 原生性
+  // 6. ASN / 原生性 / 运营商类型 / 人机流量（全部药丸形状）
   appendTextCell(row, "", (cell) => {
-    if (result.status === "failed" && !result.asn && !result.is_native) {
+    if (result.status === "failed" && !result.asn && !result.is_native && !result.company_type) {
       cell.textContent = "—";
       return;
     }
     const container = document.createElement("div");
     container.className = "tag-chips";
 
-    // ASN 芯片
+    // ASN 药丸
     if (result.asn) {
       const asnChip = document.createElement("span");
       asnChip.className = "chip chip-asn";
@@ -455,7 +966,7 @@ function createResultRow(result) {
       container.append(asnChip);
     }
 
-    // IP 原生性 芯片
+    // IP 原生性 药丸
     if (result.native_status && result.native_status !== "未知") {
       const natChip = document.createElement("span");
       const isNative = result.is_native === true;
@@ -467,7 +978,7 @@ function createResultRow(result) {
       container.append(natChip);
     }
 
-    // 运营商类型/场景
+    // 运营商类型 药丸 (原生性标记人机流量等全做成药丸)
     if (result.company_type && result.company_type !== "未知") {
       const compChip = document.createElement("span");
       compChip.className = `chip ${result.is_residential ? "chip-ok" : "chip-info"}`;
@@ -475,10 +986,20 @@ function createResultRow(result) {
       container.append(compChip);
     }
 
+    // 人机流量 药丸
+    if (result.traffic_profile && result.traffic_profile !== "未知") {
+      const trafChip = document.createElement("span");
+      const isHuman = result.traffic_profile.includes("人类");
+      const isBad = result.traffic_profile.includes("爬虫") || result.traffic_profile.includes("机器");
+      trafChip.className = `chip ${isHuman ? "chip-ok" : isBad ? "chip-warn" : "chip-asn"}`;
+      trafChip.textContent = result.traffic_profile;
+      container.append(trafChip);
+    }
+
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
   });
 
-  // 7. 技术指标 (Bogon / RPKI / rDNS)
+  // 7. 安全 / 威胁指标（药丸）
   appendTextCell(row, "", (cell) => {
     if (result.status === "failed") {
       cell.textContent = "—";
@@ -487,44 +1008,6 @@ function createResultRow(result) {
     const container = document.createElement("div");
     container.className = "tag-chips";
 
-    // Bogon
-    const bogonChip = document.createElement("span");
-    bogonChip.className = `chip ${result.is_bogon ? "chip-bad" : "chip-ok"}`;
-    bogonChip.textContent = result.is_bogon ? "Bogon 广播" : "公网可达";
-    bogonChip.title = "Bogon / 广播检测";
-    container.append(bogonChip);
-
-    // RPKI
-    if (result.rpki_status && result.rpki_status !== "未知") {
-      const rpkiChip = document.createElement("span");
-      const isValid = result.rpki_status.includes("Valid") && !result.rpki_status.includes("Invalid");
-      rpkiChip.className = `chip ${isValid ? "chip-ok" : "chip-bad"}`;
-      rpkiChip.textContent = `RPKI: ${result.rpki_status}`;
-      container.append(rpkiChip);
-    }
-
-    // rDNS
-    if (result.rdns && result.rdns !== "-") {
-      const rdnsSpan = document.createElement("span");
-      rdnsSpan.className = "chip chip-asn";
-      rdnsSpan.textContent = `rDNS: ${result.rdns}`;
-      rdnsSpan.title = result.rdns;
-      container.append(rdnsSpan);
-    }
-
-    cell.replaceChildren(container);
-  });
-
-  // 8. 安全 / 威胁指标
-  appendTextCell(row, "", (cell) => {
-    if (result.status === "failed") {
-      cell.textContent = "—";
-      return;
-    }
-    const container = document.createElement("div");
-    container.className = "tag-chips";
-
-    // 威胁芯片 (VPN / Proxy / Tor / 爬虫 / 滥用等)
     const riskFlags = [];
     if (result.is_vpn) riskFlags.push({ label: "VPN", cls: "chip-warn" });
     if (result.is_proxy) riskFlags.push({ label: "Proxy", cls: "chip-warn" });
@@ -546,7 +1029,6 @@ function createResultRow(result) {
       container.append(cleanChip);
     }
 
-    // 滥用等级 / 蜜罐
     if (result.abuse_level && result.abuse_level !== "纯净" && result.abuse_level !== "未知") {
       const abuseChip = document.createElement("span");
       abuseChip.className = "chip chip-warn";
@@ -555,6 +1037,11 @@ function createResultRow(result) {
     }
 
     cell.replaceChildren(container);
+  });
+
+  // 8. GPT · Codex 延迟检测 (与 Coffee 全球 Ping 微型条完全一致的高审美延迟条)
+  appendTextCell(row, "", (cell) => {
+    cell.replaceChildren(createMiniGptBar(result.gpt_check));
   });
 
   // 9. Coffee 全球 Ping
@@ -566,6 +1053,43 @@ function createResultRow(result) {
   appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
 
   return row;
+}
+
+// 构建 GPT · Codex 延迟条（与 Coffee 全球 Ping 一致）
+function createMiniGptBar(gptChecks) {
+  if (!Array.isArray(gptChecks) || !gptChecks.length) {
+    const span = document.createElement("span");
+    span.className = "p-timeout p-gray";
+    span.textContent = "-1ms";
+    return span;
+  }
+  const bar = document.createElement("div");
+  bar.className = "mini-gpt-bar";
+  gptChecks.forEach((item) => {
+    const node = document.createElement("span");
+    node.className = "mini-gpt-node";
+    const name = String(item.name || "").toLowerCase();
+    const shortLabel = name.includes("api.openai") ? "Codex" : "ChatGPT";
+    const ms = typeof item.elapsed_ms === "number" ? item.elapsed_ms : -1;
+    const isRestricted = item.status === "restricted";
+
+    if (item.ok && ms >= 0) {
+      const speedCls = ms < 250 ? "p-fast" : ms < 500 ? "p-mid" : "p-slow";
+      node.classList.add(speedCls);
+      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(shortLabel)}</span><span class="p-ms">${ms}ms</span>`;
+      node.title = `${item.name}: 正常 ${ms}ms`;
+    } else if (isRestricted) {
+      node.classList.add("node-restricted");
+      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(shortLabel)}</span><span class="p-ms">受限</span>`;
+      node.title = `${item.name}: 受限地区不可访问`;
+    } else {
+      node.classList.add("node-timeout");
+      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(shortLabel)}</span><span class="p-ms p-timeout">-1ms</span>`;
+      node.title = `${item.name}: ${item.text || "不可访问 (-1ms)"}`;
+    }
+    bar.append(node);
+  });
+  return bar;
 }
 
 function createMiniPingBar(pings) {
@@ -615,16 +1139,30 @@ function compareResults(left, right) {
 document.querySelectorAll(".sort-btn").forEach((button) => {
   button.addEventListener("click", () => {
     const key = button.dataset.sort;
-    if (state.sortKey === key) state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
-    else {
+    if (state.sortKey === key) {
+      state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+    } else {
       state.sortKey = key;
       state.sortDirection = key === "node" || key === "location" ? "asc" : "desc";
     }
+    document.querySelectorAll(".sort-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.sort === state.sortKey);
+      btn.classList.toggle("asc", btn.dataset.sort === state.sortKey && state.sortDirection === "asc");
+    });
     renderRows();
   });
 });
 
 async function openDetails(summary) {
+  if (state.imported) {
+    state.detailGeneration += 1;
+    state.activeDetailResult = summary;
+    elements.detailTitle.textContent = `${summary.node || "节点"} (${summary.type || "未知"})`;
+    elements.detailSubtitle.textContent = `已导入 ${state.importSource.toUpperCase()} · 出口：${summary.exit_ip || "未知"} · ${summary.location || "位置未知"}`;
+    renderDetails(summary);
+    elements.detailDialog.showModal();
+    return;
+  }
   if (state.job?.status !== "completed" || !state.job.manifest_ready) {
     showInlineError("完整 manifest 生成后才能读取节点详情");
     return;
@@ -649,6 +1187,7 @@ function renderDetails(result) {
   const lookup = result.coffee?.lookup || {};
   const intel = lookup.intelligence || {};
   const pings = result.global_ping || [];
+  const gpts = result.gpt_check || [];
   const ports = result.coffee?.port_scan?.ports || result.port_scan || {};
 
   const content = document.createDocumentFragment();
@@ -739,7 +1278,30 @@ function renderDetails(result) {
   threatSection.append(intelCard, deepRiskCard);
   content.append(threatSection);
 
-  // 4. Coffee 全球 Ping 卡片
+  // 4. GPT · Codex 可用检测卡片
+  if (Array.isArray(gpts) && gpts.length) {
+    const gptCard = document.createElement("section");
+    gptCard.className = "card sub-card";
+    const cells = gpts.map((g) => {
+      const ms = g.ok && typeof g.elapsed_ms === "number" ? `${g.elapsed_ms} ms` : (g.text || "不可访问");
+      const speedCls = g.ok && g.elapsed_ms < 250 ? "p-fast" : g.ok && g.elapsed_ms < 500 ? "p-mid" : "p-slow";
+      const isCodex = g.name.includes("api.openai");
+      const tipText = isCodex ? "Codex / API 走的独立链路，与网页认证链路不同" : "ChatGPT 网页及用户认证链路";
+      return `
+        <div class="gp-cell">
+          <span class="gp-head"><span class="gp-city">${escapeHtml(g.name)}<span class="tip-wrap">ⓘ<span class="tip-text">${tipText}</span></span></span></span>
+          <span class="gp-val ${speedCls}">${escapeHtml(ms)}</span>
+        </div>
+      `;
+    }).join("");
+    gptCard.innerHTML = `
+      <h3>GPT · Codex 可用与延迟检测</h3>
+      <div class="gp-grid">${cells}</div>
+    `;
+    content.append(gptCard);
+  }
+
+  // 5. Coffee 全球 Ping 卡片
   if (Array.isArray(pings) && pings.length) {
     const pingCard = document.createElement("section");
     pingCard.className = "card sub-card";
@@ -760,7 +1322,7 @@ function renderDetails(result) {
     content.append(pingCard);
   }
 
-  // 5. 原始暂存与代理证据
+  // 6. 原始暂存与代理证据
   const raw = document.createElement("details");
   raw.innerHTML = `<summary>查看完整结构化 JSON</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
   content.append(raw);
