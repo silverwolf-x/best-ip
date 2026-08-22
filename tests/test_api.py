@@ -40,7 +40,7 @@ def test_health_reports_application_and_core_state() -> None:
 
 
 def test_scan_request_rejects_missing_mihomo_core(tmp_path, monkeypatch) -> None:
-    request_id = "b" * 32
+    request_id = "req-" + "b" * 32
     monkeypatch.setattr(
         job_manager,
         "settings",
