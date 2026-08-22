@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import ipaddress
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,13 +17,13 @@ from .mihomo import (
     MihomoNotReadyError,
     MihomoProcess,
     MihomoStopError,
+    resolve_outbound_interface,
 )
 from .result_store import ResultStoreError, result_store
 from .scanner import CoffeeCollector
 from .subscription import (
     SubscriptionError,
     download_subscription,
-    extract_subscription_dns,
     is_subscription_metadata,
     parse_subscription,
 )
@@ -202,11 +203,14 @@ class ScanJobManager:
                     and hashlib.sha256(content).hexdigest() != subscription_sha256
                 ):
                     raise SubscriptionError("订阅内容与请求快照不一致")
-                subscription_dns = extract_subscription_dns(content)
+                outbound_interface = resolve_outbound_interface(
+                    self.settings.outbound_interface
+                )
                 parsed_proxies = parse_subscription(content, max_nodes=self.settings.max_nodes)
                 proxies = [
                     proxy for proxy in parsed_proxies if not is_subscription_metadata(proxy)
                 ]
+                dns_bootstrap_candidates = _dns_bootstrap_candidates(proxies)
                 job["skipped"] = len(parsed_proxies) - len(proxies)
                 if not proxies:
                     raise SubscriptionError("订阅中没有可检测的代理节点")
@@ -226,7 +230,8 @@ class ScanJobManager:
                             proxies,
                             proxy,
                             index,
-                            subscription_dns,
+                            dns_bootstrap_candidates,
+                            outbound_interface,
                             node_semaphore,
                         )
                     )
@@ -308,63 +313,101 @@ class ScanJobManager:
         proxies: list[dict[str, Any]],
         proxy: dict[str, Any],
         index: int,
-        subscription_dns: dict[str, Any] | None,
+        dns_bootstrap_candidates: list[str],
+        outbound_interface: str | None,
         node_semaphore: asyncio.Semaphore,
     ) -> None:
         async with node_semaphore:
             node_name = str(proxy["name"])
             node_type = str(proxy["type"])
-            mihomo = MihomoProcess(
-                self.settings.mihomo_path,
-                work_dir / f"node-{index:04d}",
-                proxies,
-                dns_config=subscription_dns,
-                selector_names=[node_name],
-            )
-            log_offset = 0
-            try:
-                job["message"] = f"正在并行检测 {index + 1}/{job['total']}：{node_name}"
-                await mihomo.start()
-                log_offset = mihomo.log_offset()
-                selected = await mihomo.select(node_name)
-                collector = CoffeeCollector(
-                    mihomo.proxy_url,
-                    timeout_ms=self.settings.page_timeout_ms,
-                )
-                result = await asyncio.wait_for(
-                    collector.collect(
-                        job_id=job["id"],
-                        node_index=index,
-                        node_name=node_name,
-                        node_type=node_type,
-                        selected_proxy=selected,
-                        mihomo_instance=mihomo.instance_id,
-                    ),
-                    timeout=self.settings.page_timeout_ms / 1000,
-                )
-                _attach_mihomo_error(result, mihomo, log_offset)
-            except asyncio.CancelledError:
-                raise
-            except MihomoNotReadyError:
-                raise
-            except Exception as exc:
-                mihomo_error = _read_mihomo_error(mihomo, log_offset)
-                result = _failed_node(
-                    job["id"],
-                    index,
-                    node_name,
-                    node_type,
-                    exc,
-                    mihomo_error=mihomo_error,
-                    mihomo=mihomo,
-                )
-            finally:
-                try:
-                    await mihomo.stop()
-                finally:
-                    if not _remove_work_dir(mihomo.work_dir):
-                        raise MihomoStopError("Mihomo 工作目录清理未确认")
+            attempt_errors: list[str] = []
+            result: dict[str, Any] | None = None
+            final_mihomo: MihomoProcess | None = None
+            attempts_used = 0
 
+            for attempt in range(1, self.settings.max_node_attempts + 1):
+                attempts_used = attempt
+                dns_bootstrap_proxy = _dns_bootstrap_for_attempt(
+                    proxy,
+                    dns_bootstrap_candidates,
+                    node_index=index,
+                    attempt=attempt,
+                )
+                mihomo = MihomoProcess(
+                    self.settings.mihomo_path,
+                    work_dir / f"node-{index:04d}-attempt-{attempt:02d}",
+                    proxies,
+                    selector_names=[node_name],
+                    outbound_interface=outbound_interface,
+                    dns_bootstrap_proxy=dns_bootstrap_proxy,
+                )
+                final_mihomo = mihomo
+                log_offset = 0
+                try:
+                    job["message"] = (
+                        f"正在并行检测 {index + 1}/{job['total']}：{node_name}，"
+                        f"尝试 {attempt}/{self.settings.max_node_attempts}"
+                    )
+                    await mihomo.start()
+                    log_offset = mihomo.log_offset()
+                    selected = await mihomo.select(node_name)
+                    collector = CoffeeCollector(
+                        mihomo.proxy_url,
+                        timeout_ms=self.settings.page_timeout_ms,
+                    )
+                    result = await asyncio.wait_for(
+                        collector.collect(
+                            job_id=job["id"],
+                            node_index=index,
+                            node_name=node_name,
+                            node_type=node_type,
+                            selected_proxy=selected,
+                            mihomo_instance=mihomo.instance_id,
+                        ),
+                        timeout=self.settings.page_timeout_ms / 1000,
+                    )
+                    _attach_mihomo_error(result, mihomo, log_offset)
+                except asyncio.CancelledError:
+                    raise
+                except MihomoNotReadyError:
+                    raise
+                except Exception as exc:
+                    mihomo_error = _read_mihomo_error(mihomo, log_offset)
+                    result = _failed_node(
+                        job["id"],
+                        index,
+                        node_name,
+                        node_type,
+                        exc,
+                        mihomo_error=mihomo_error,
+                        mihomo=mihomo,
+                    )
+                finally:
+                    try:
+                        await mihomo.stop()
+                    finally:
+                        if not _remove_work_dir(mihomo.work_dir):
+                            raise MihomoStopError("Mihomo 工作目录清理未确认")
+
+                if result.get("status") != "failed":
+                    break
+                attempt_errors.append(_attempt_error(result))
+                if attempt >= self.settings.max_node_attempts:
+                    break
+                if self.settings.node_retry_backoff_ms:
+                    await asyncio.sleep(
+                        self.settings.node_retry_backoff_ms * attempt / 1000
+                    )
+
+            if result is None or final_mihomo is None:
+                raise RuntimeError("节点扫描没有产生终态记录")
+            _attach_attempt_evidence(
+                result,
+                attempts_used=attempts_used,
+                max_attempts=self.settings.max_node_attempts,
+                attempt_errors=attempt_errors,
+                mihomo=final_mihomo,
+            )
             result_store.write_node(job["id"], index, result)
             _count_result(job, result)
             job["completed"] += 1
@@ -426,6 +469,65 @@ _TRANSPORT_ERROR_TYPES = {
     "WriteError",
     "WriteTimeout",
 }
+
+
+def _dns_bootstrap_candidates(proxies: list[dict[str, Any]]) -> list[str]:
+    candidates: list[str] = []
+    for proxy in proxies:
+        try:
+            address = ipaddress.ip_address(str(proxy.get("server") or ""))
+        except ValueError:
+            continue
+        name = str(proxy.get("name") or "")
+        if address.is_global and name:
+            candidates.append(name)
+    return list(dict.fromkeys(candidates))
+
+
+def _dns_bootstrap_for_attempt(
+    proxy: dict[str, Any],
+    candidates: list[str],
+    *,
+    node_index: int,
+    attempt: int,
+) -> str | None:
+    if not candidates:
+        return None
+    try:
+        ipaddress.ip_address(str(proxy.get("server") or ""))
+    except ValueError:
+        return candidates[(node_index + attempt - 1) % len(candidates)]
+    return None
+
+
+def _attempt_error(result: dict[str, Any]) -> str:
+    error = str(result.get("transport_error") or result.get("error") or "节点检测失败")
+    return " ".join(error.split())[:500]
+
+
+def _attach_attempt_evidence(
+    result: dict[str, Any],
+    *,
+    attempts_used: int,
+    max_attempts: int,
+    attempt_errors: list[str],
+    mihomo: MihomoProcess,
+) -> None:
+    result["attempt_count"] = attempts_used
+    result["retry_count"] = attempts_used - 1
+    result["attempt_errors"] = list(attempt_errors)
+    evidence = result.get("proxy_evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+        result["proxy_evidence"] = evidence
+    evidence.update(
+        {
+            "outbound_interface": mihomo.outbound_interface,
+            "dns_bootstrap_proxy": mihomo.dns_bootstrap_proxy,
+            "fresh_mihomo_per_attempt": True,
+            "max_attempts": max_attempts,
+        }
+    )
 
 
 def _read_mihomo_error(mihomo: MihomoProcess, offset: int) -> str:

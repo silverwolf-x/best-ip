@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -212,3 +214,146 @@ async def test_shutdown_marks_never_started_job_cancelled() -> None:
     assert job["status"] == "cancelled"
     assert job["cleanup_confirmed"] is True
     assert job["finished_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_scan_node_retries_with_fresh_mihomo_processes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    instances: list[Any] = []
+    written: dict[str, Any] = {}
+    collector_calls = 0
+
+    class RetryMihomo:
+        group_name = "BEST-IP"
+
+        def __init__(
+            self,
+            _core_path: Path,
+            work_dir: Path,
+            _proxies: list[dict[str, Any]],
+            *,
+            selector_names: list[str],
+            outbound_interface: str | None,
+            dns_bootstrap_proxy: str | None,
+        ) -> None:
+            self.work_dir = work_dir
+            self.outbound_interface = outbound_interface
+            self.dns_bootstrap_proxy = dns_bootstrap_proxy
+            self.instance_id = f"instance-{len(instances) + 1}"
+            self.proxy_url = f"http://127.0.0.1:{21000 + len(instances)}"
+            self.stopped = False
+            assert selector_names == ["node-a"]
+            instances.append(self)
+
+        async def start(self) -> None:
+            self.work_dir.mkdir(parents=True)
+
+        def log_offset(self) -> int:
+            return 0
+
+        async def select(self, node_name: str) -> str:
+            return node_name
+
+        def read_log_since(self, _offset: int) -> str:
+            return "connect error: i/o timeout"
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    class RetryCollector:
+        def __init__(self, proxy_url: str, *, timeout_ms: int) -> None:
+            assert proxy_url.startswith("http://127.0.0.1:")
+            assert timeout_ms > 0
+
+        async def collect(self, **kwargs: Any) -> dict[str, Any]:
+            nonlocal collector_calls
+            collector_calls += 1
+            if collector_calls < 3:
+                return {
+                    "status": "failed",
+                    "error": "ConnectError",
+                    "transport_error": None,
+                    "requests": {"trace": {"error_type": "ConnectError"}},
+                    "pages": {"ip": {"error": "ConnectError"}},
+                    "proxy_evidence": {
+                        "mihomo_instance": kwargs["mihomo_instance"],
+                    },
+                }
+            return {
+                "status": "success",
+                "error": None,
+                "transport_error": None,
+                "requests": {},
+                "pages": {"ip": {"error": None}},
+                "proxy_evidence": {
+                    "mihomo_instance": kwargs["mihomo_instance"],
+                },
+            }
+
+    def capture_node(_job_id: str, _index: int, result: dict[str, Any]) -> None:
+        written["result"] = result
+
+    async def ignore_progress(_job: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr("backend.app.jobs.MihomoProcess", RetryMihomo)
+    monkeypatch.setattr("backend.app.jobs.CoffeeCollector", RetryCollector)
+    monkeypatch.setattr(result_store, "write_node", capture_node)
+    manager = ScanJobManager(
+        Settings(
+            mihomo_path=tmp_path / "mihomo.exe",
+            max_parallel_nodes=1,
+            max_node_attempts=3,
+            node_retry_backoff_ms=0,
+        )
+    )
+    monkeypatch.setattr(manager, "_write_progress", ignore_progress)
+    job = {
+        "id": "job-a",
+        "total": 1,
+        "completed": 0,
+        "success_count": 0,
+        "partial_count": 0,
+        "failed_count": 0,
+    }
+
+    await manager._scan_node(
+        job,
+        tmp_path / "job-work",
+        [{"name": "node-a", "type": "ss"}],
+        {"name": "node-a", "type": "ss"},
+        0,
+        ["bootstrap-a", "bootstrap-b", "bootstrap-c"],
+        "WLAN",
+        asyncio.Semaphore(1),
+    )
+
+    result = written["result"]
+    assert collector_calls == 3
+    assert [instance.instance_id for instance in instances] == [
+        "instance-1",
+        "instance-2",
+        "instance-3",
+    ]
+    assert [instance.dns_bootstrap_proxy for instance in instances] == [
+        "bootstrap-a",
+        "bootstrap-b",
+        "bootstrap-c",
+    ]
+    assert all(instance.stopped for instance in instances)
+    assert all(not instance.work_dir.exists() for instance in instances)
+    assert result["status"] == "success"
+    assert result["attempt_count"] == 3
+    assert result["retry_count"] == 2
+    assert result["attempt_errors"] == [
+        "连接节点服务器超时",
+        "连接节点服务器超时",
+    ]
+    assert result["proxy_evidence"]["outbound_interface"] == "WLAN"
+    assert result["proxy_evidence"]["dns_bootstrap_proxy"] == "bootstrap-c"
+    assert result["proxy_evidence"]["fresh_mihomo_per_attempt"] is True
+    assert result["proxy_evidence"]["max_attempts"] == 3
+    assert job["completed"] == 1
+    assert job["success_count"] == 1

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import ipaddress
 import re
 import socket
@@ -136,16 +135,6 @@ async def download_subscription(
                 return b"".join(chunks)
 
     raise SubscriptionError("订阅地址重定向次数过多")
-
-
-def extract_subscription_dns(content: bytes) -> dict[str, Any] | None:
-    try:
-        document = yaml.safe_load(content.decode("utf-8-sig"))
-    except (UnicodeDecodeError, yaml.YAMLError):
-        return None
-    if not isinstance(document, dict) or not isinstance(document.get("dns"), dict):
-        return None
-    return copy.deepcopy(document["dns"])
 
 
 def parse_subscription(content: bytes, *, max_nodes: int) -> list[dict[str, Any]]:

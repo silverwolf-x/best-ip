@@ -21,6 +21,9 @@ _SUMMARY_KEYS = (
     "status",
     "error",
     "transport_error",
+    "attempt_count",
+    "retry_count",
+    "attempt_errors",
     "exit_ip",
     "cidr",
     "rdns",
@@ -93,6 +96,9 @@ _NODE_FIELDS = {
     "error",
     "phase",
     "transport_error",
+    "attempt_count",
+    "retry_count",
+    "attempt_errors",
     "started_at",
     "finished_at",
     "exit_ip",
@@ -414,6 +420,32 @@ class ResultStore:
                 raise ResultStoreError(f"节点记录的 {field} 无效")
 
         status = record.get("status")
+        attempt_count = record.get("attempt_count")
+        retry_count = record.get("retry_count")
+        attempt_errors = record.get("attempt_errors")
+        if any(
+            value is not None for value in (attempt_count, retry_count, attempt_errors)
+        ):
+            evidence = record["proxy_evidence"]
+            expected_error_count = attempt_count if status == "failed" else retry_count
+            if (
+                not isinstance(attempt_count, int)
+                or isinstance(attempt_count, bool)
+                or attempt_count < 1
+                or not isinstance(retry_count, int)
+                or isinstance(retry_count, bool)
+                or retry_count != attempt_count - 1
+                or not isinstance(attempt_errors, list)
+                or len(attempt_errors) != expected_error_count
+                or not all(
+                    isinstance(error, str) and bool(error.strip())
+                    for error in attempt_errors
+                )
+                or evidence.get("fresh_mihomo_per_attempt") is not True
+                or not isinstance(evidence.get("max_attempts"), int)
+                or evidence.get("max_attempts") < attempt_count
+            ):
+                raise ResultStoreError("节点重试证据无效")
         if status in {"success", "partial"}:
             evidence = record["proxy_evidence"]
             proxy_url = evidence.get("proxy_url")

@@ -4,7 +4,6 @@ import pytest
 
 from backend.app.subscription import (
     SubscriptionError,
-    extract_subscription_dns,
     parse_subscription,
     validate_public_url,
 )
@@ -28,22 +27,6 @@ proxies:
     proxies = parse_subscription(content, max_nodes=10)
     assert [proxy["name"] for proxy in proxies] == ["node-a", "node-b"]
     assert proxies[1]["type"] == "trojan"
-
-
-def test_extract_subscription_dns_returns_mapping() -> None:
-    content = b"""
-dns:
-  enable: true
-  enhanced-mode: fake-ip
-  nameserver:
-    - https://dns.example/dns-query
-proxies: []
-"""
-    assert extract_subscription_dns(content) == {
-        "enable": True,
-        "enhanced-mode": "fake-ip",
-        "nameserver": ["https://dns.example/dns-query"],
-    }
 
 
 @pytest.mark.parametrize(

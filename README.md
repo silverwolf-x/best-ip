@@ -6,16 +6,17 @@
 
 - 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开订阅地址。
 - 订阅 metadata（流量、重置、到期等信息项）不会作为节点；每个真实节点恰好产生一条成功、部分或失败终态记录。
-- 每个并发节点使用独立的 Mihomo 进程、mixed-port、controller、selector、连接池和临时工作目录；selector 只暴露当前检测节点，同时保留完整代理定义以支持节点间拨号依赖。
+- 每个并发节点最多执行 `BEST_IP_MAX_NODE_ATTEMPTS` 次；每次尝试都使用新的 Mihomo 进程、mixed-port、controller、selector、连接池和临时工作目录，失败实例完整退出并清理后才退避重试。每个实例只暴露当前检测节点，同时保留完整代理定义以支持节点间拨号依赖。
 - 单节点内，页面与 trace 并行请求；取得并核验出口 IP 后，global ping、portscan、pingcheck 和 related 查询并行调度，related 的轮询仍按顺序执行。
-- Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份。
+- Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份；并发 worker 的启动阶段串行到 controller 就绪，避免空闲端口探测与真正绑定之间的竞态。
+- Windows worker 会从活动 IPv4 默认路由中自动选择物理网卡，并通过 Mihomo 顶层 `interface-name` 绑定所有出站套接字；可用 `BEST_IP_OUTBOUND_INTERFACE` 显式覆盖，无法确认物理出口时失败关闭，不回落到本机 TUN。
 - Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径。
 - 不访问 GPT、Claude、OpenAI、Anthropic 或其他站外数据源；不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链。
 - 节点扫描阶段不做 Coffee 的宿主 DNS、固定 IP 连接或 direct fallback；所有 Coffee HTTP 请求都交给当前 Mihomo mixed-port。
 - 失败节点的 `exit_ip` 始终为 JSON `null`；后端只从 Mihomo 日志映射固定、脱敏的 DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 或网络不可达原因，不保存原始节点日志。
-- 节点扫描不会原样启动订阅中的 `url-test`、`fallback` 和通用规则；这些配置可能主动探测其他节点，破坏当前 worker 的单节点归属。worker 只复用代理定义和 DNS 数据，并用固定 Coffee 规则隔离检测流量。
+- 节点扫描不会原样启动订阅中的 `url-test`、`fallback`、通用规则或 DNS 规则；这些配置可能主动探测其他节点、继承宿主 fake-ip 或让 DNS 重新进入规则链，破坏当前 worker 的单节点归属。worker 只复用代理定义，使用固定 IP DoH、`redir-host` 和 Coffee 规则隔离检测流量；域名型节点会选择订阅内服务器为公网字面 IP 的节点作为 `BEST-IP-DNS` 引导代理，重试时轮换引导节点，Coffee 数据面仍只经待测节点。
 - 节点文件和进度文件都使用显式字段集合；节点写入、manifest 读取和导出会重新校验记录结构、代理证据、状态/出口 IP 约束、文件大小和 SHA-256。
-- `runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志；后端只有在子进程退出且工作目录删除后才返回 `cleanup_confirmed=true`。
+- `runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志；每次重试的子进程退出且尝试目录删除后才允许下一次尝试，所有节点结束且任务目录删除后后端才返回 `cleanup_confirmed=true`。
 - 显式 `/ip/{ip}` 页面最终仍调用与当前采集器相同的 `/api/ip/lookup/{ip}`，HTML 摘要字段反而更少；入口服务器 IP 不得冒充出口 IP，因此不增加显式 IP 或站外回显 fallback。
 
 ## 结果生命周期
@@ -32,7 +33,7 @@ runtime/results/<job_id>/
 
 节点文件和进度文件使用同目录临时文件、`flush`、`fsync`、`os.replace` 原子发布。`manifest.json` 只有在节点索引完整、状态/出口 IP 约束、文件大小和 SHA-256 校验都通过后才生成。任务 API 在 manifest 出现前返回进度与已完成节点的安全摘要；单节点详情和导出在此之前返回 HTTP 409。
 
-`runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志，任务结束后清理；运行目录不提交 Git。Windows 用户态程序能保证的是应用层 Coffee 请求边界，不能声称隔离宿主物理网卡或其他进程的网络。
+`runtime/jobs/<job_id>` 只用于 Mihomo 临时配置和日志，任务结束后清理；运行目录不提交 Git。Windows 用户态程序通过 Mihomo 的 `IP_UNICAST_IF`/`IPV6_UNICAST_IF` 出站网卡绑定绕过宿主默认 TUN 路由，但这仍是进程套接字级隔离，不能隔离物理网卡、路由器或其他进程。
 
 ## Windows 本地运行
 
@@ -130,15 +131,19 @@ DELETE /api/scans/{id}
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
 | `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
-| `BEST_IP_MAX_PARALLEL_NODES` | `4` | 单个扫描任务同时启动的独立 Mihomo 节点检测数；可按内存与上游承载能力下调 |
-| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单节点 Coffee 采集总时间预算；page、trace、lookup 和 related 共用该上限 |
+| `BEST_IP_MAX_PARALLEL_NODES` | `4` | 单个扫描任务同时检测的节点数；每个并发槽位内的重试串行执行 |
+| `BEST_IP_MAX_NODE_ATTEMPTS` | `3` | 单节点最大尝试次数；每次使用全新的 Mihomo 进程、端口和目录 |
+| `BEST_IP_NODE_RETRY_BACKOFF_MS` | `500` | 重试基础退避毫秒数；第 N 次失败后等待 `N ×` 该值 |
+| `BEST_IP_OUTBOUND_INTERFACE` | 自动检测 | Windows Mihomo 物理出站网卡名称；不设置时按活动物理默认路由检测，无法确认则失败关闭 |
+| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次尝试的 Coffee 采集总时间预算；page、trace、lookup 和 related 共用该上限 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
 
 ## 已知限制
 
+- 若订阅全部节点的服务器都是域名，且宿主 TUN 的严格路由同时阻断物理接口直连 DNS，则没有可用于打破“先解析节点、再通过节点访问 DoH”循环的公网字面 IP 引导节点；此时会按配置重试并明确返回 DNS 失败，不回落到宿主代理路径。
 - 只支持顶部含 `proxies` 列表的 Mihomo YAML；URI 列表和仅含远程 `proxy-providers` 的配置返回明确错误。
 - 不启动浏览器，不采集浏览器专属的 DNS 泄漏、WebRTC 或设备指纹结果。
 - Coffee 接口、字段、限流和异步 pending 语义属于外部服务，改版时必须先更新页面证据和 URL allowlist。
-- 节点并发受 `BEST_IP_MAX_PARALLEL_NODES` 限制；每个并发节点都有独立 Mihomo，但每个实例仍会加载该订阅的完整代理定义，因此节点很多时内存和进程开销会随并发数增加。
+- 节点并发受 `BEST_IP_MAX_PARALLEL_NODES` 限制，单节点重试受 `BEST_IP_MAX_NODE_ATTEMPTS` 限制；每个并发节点同一时刻只有一个独立 Mihomo，但每个实例仍会加载订阅的完整代理定义，内存峰值随并发数增加，失败任务总时长随尝试数增加。
 - 扫描中只返回已完成节点的安全摘要；单节点完整详情与导出必须等待最终 manifest，避免把进行中状态误认为最终事实。

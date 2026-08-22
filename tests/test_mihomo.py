@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from backend.app.mihomo import (
     MIHOMO_NOT_READY_MESSAGE,
@@ -183,3 +184,55 @@ async def test_stop_finishes_cleanup_before_propagating_cancellation(
     assert cleaned is True
     assert mihomo.process is None
     assert log_handle.closed is True
+
+
+async def test_start_writes_physical_interface_and_independent_dns(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    process = FakeProcess()
+
+    async def fake_spawn(*_args: Any, **_kwargs: Any) -> FakeProcess:
+        return process
+
+    async def ready(_self: MihomoProcess) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "backend.app.mihomo.asyncio.create_subprocess_exec",
+        fake_spawn,
+    )
+    monkeypatch.setattr(MihomoProcess, "_wait_until_ready", ready)
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    mihomo = MihomoProcess(
+        core_path,
+        tmp_path / "workspace",
+        [
+            {"name": "node-a", "type": "ss"},
+            {"name": "bootstrap-node", "type": "ss", "server": "1.2.3.4"},
+        ],
+        outbound_interface="WLAN",
+        dns_bootstrap_proxy="bootstrap-node",
+    )
+
+    await mihomo.start()
+    config = yaml.safe_load((mihomo.work_dir / "config.yaml").read_text("utf-8"))
+    await mihomo.stop()
+
+    assert config["interface-name"] == "WLAN"
+    assert config["dns"]["enhanced-mode"] == "redir-host"
+    assert config["dns"]["respect-rules"] is False
+    assert "nameserver-policy" not in config["dns"]
+    assert all(
+        resolver.endswith("#BEST-IP-DNS")
+        for resolver in config["dns"]["proxy-server-nameserver"]
+    )
+    dns_group = next(
+        group
+        for group in config["proxy-groups"]
+        if group["name"] == "BEST-IP-DNS"
+    )
+    assert dns_group["proxies"] == ["bootstrap-node"]
+    controller_port = int(config["external-controller"].rsplit(":", 1)[-1])
+    assert config["mixed-port"] != controller_port

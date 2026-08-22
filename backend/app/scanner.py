@@ -526,11 +526,12 @@ def _format_native(lookup_data: dict[str, Any]) -> dict[str, Any]:
         return {"is_native": True, "native_status": "原生 IP", "native_detail": ""}
 
     reg_up = reg_lo.upper()
+    country_up = str(lookup_data.get("country") or "").upper()
     tip_more = f" ({reg_name})" if reg_name else ""
     return {
         "is_native": False,
         "native_status": f"广播 IP ({reg_up})",
-        "native_detail": f"IP注册在 {reg_up}{tip_more} 和IP归属地 {str(lookup_data.get('country') or '').upper()} 不一致",
+        "native_detail": f"IP注册在 {reg_up}{tip_more} 和IP归属地 {country_up} 不一致",
     }
 
 
@@ -636,8 +637,16 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     asn_kind_display = _asn_kind_label(asn_kind_raw)
 
     # 人机流量画像
-    is_crawler = ip_result.get("is_crawler") if isinstance(ip_result.get("is_crawler"), bool) else None
-    is_abuser = ip_result.get("is_abuser") if isinstance(ip_result.get("is_abuser"), bool) else None
+    is_crawler = (
+        ip_result.get("is_crawler")
+        if isinstance(ip_result.get("is_crawler"), bool)
+        else None
+    )
+    is_abuser = (
+        ip_result.get("is_abuser")
+        if isinstance(ip_result.get("is_abuser"), bool)
+        else None
+    )
     is_public_service = bool(ip_result.get("is_public_service"))
     if is_public_service:
         traffic_profile = "服务器/任播 DNS"
@@ -681,9 +690,20 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     # IP 情报 / 威胁指标
     intel = ip_result.get("intelligence") if isinstance(ip_result.get("intelligence"), dict) else {}
     threats = intel.get("threats") if isinstance(intel.get("threats"), list) else []
-    threat_labels = [str(t.get("label") or "") for t in threats if isinstance(t, dict) and t.get("label")]
-    abuse_info = _abuser_level_label(intel.get("abuser_level"), intel.get("abuser_score_raw"))
-    honeypot_info = _httpbl_level_label(intel.get("rep_threat") if intel.get("rep_threat") is not None else intel.get("httpbl_threat"))
+    threat_labels = [
+        str(threat.get("label") or "")
+        for threat in threats
+        if isinstance(threat, dict) and threat.get("label")
+    ]
+    abuse_info = _abuser_level_label(
+        intel.get("abuser_level"), intel.get("abuser_score_raw")
+    )
+    rep_threat = (
+        intel.get("rep_threat")
+        if intel.get("rep_threat") is not None
+        else intel.get("httpbl_threat")
+    )
+    honeypot_info = _httpbl_level_label(rep_threat)
 
     if risk_flags or threat_labels:
         all_flags = list(dict.fromkeys(risk_flags + threat_labels))

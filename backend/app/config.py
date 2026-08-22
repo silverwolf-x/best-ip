@@ -24,6 +24,11 @@ class Settings:
     max_nodes: int = int(os.getenv("BEST_IP_MAX_NODES", "500"))
     max_parallel_jobs: int = int(os.getenv("BEST_IP_MAX_PARALLEL_JOBS", "2"))
     max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "4"))
+    max_node_attempts: int = int(os.getenv("BEST_IP_MAX_NODE_ATTEMPTS", "3"))
+    node_retry_backoff_ms: int = int(os.getenv("BEST_IP_NODE_RETRY_BACKOFF_MS", "500"))
+    outbound_interface: str | None = (
+        os.getenv("BEST_IP_OUTBOUND_INTERFACE", "").strip() or None
+    )
     page_timeout_ms: int = int(os.getenv("BEST_IP_PAGE_TIMEOUT_MS", "45000"))
     subscription_timeout_seconds: float = float(
         os.getenv("BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS", "30")
@@ -35,10 +40,13 @@ class Settings:
             "max_nodes",
             "max_parallel_jobs",
             "max_parallel_nodes",
+            "max_node_attempts",
             "page_timeout_ms",
         ):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} 必须大于 0")
+        if self.node_retry_backoff_ms < 0:
+            raise ValueError("node_retry_backoff_ms 不能小于 0")
         if self.subscription_timeout_seconds <= 0:
             raise ValueError("subscription_timeout_seconds 必须大于 0")
 
