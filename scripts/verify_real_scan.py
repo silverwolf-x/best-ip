@@ -633,8 +633,11 @@ def main() -> None:
     try:
         asyncio.run(verify())
     except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        suffix = f" HTTP {status_code}" if isinstance(status_code, int) else ""
         raise SystemExit(
-            f"正式订阅闭环失败（{exc.__class__.__name__}）"
+            f"正式订阅闭环失败（{exc.__class__.__name__}{suffix}）"
         ) from exc
     except (TimeoutError, RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
