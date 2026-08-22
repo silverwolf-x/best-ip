@@ -327,7 +327,6 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
         0,
         ["bootstrap-a", "bootstrap-b", "bootstrap-c"],
         "WLAN",
-        asyncio.Semaphore(1),
     )
 
     result = written["result"]
@@ -357,3 +356,140 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
     assert result["proxy_evidence"]["max_attempts"] == 3
     assert job["completed"] == 1
     assert job["success_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_pool_caps_single_and_dual_job_concurrency(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    proxies = [{"name": f"node-{index}", "type": "ss"} for index in range(20)]
+    active = 0
+    peak_active = 0
+
+    async def fake_download(
+        _url: str,
+        *,
+        max_bytes: int,
+        timeout_seconds: float,
+    ) -> bytes:
+        assert max_bytes > 0
+        assert timeout_seconds > 0
+        return b"snapshot"
+
+    def fake_parse(_content: bytes, *, max_nodes: int) -> list[dict[str, Any]]:
+        assert max_nodes == 20
+        return proxies
+
+    async def fake_scan_node(
+        job: dict[str, Any],
+        _work_dir: Path,
+        _proxies: list[dict[str, Any]],
+        _proxy: dict[str, Any],
+        index: int,
+        _dns_bootstrap_candidates: list[str],
+        _outbound_interface: str | None,
+    ) -> None:
+        nonlocal active, peak_active
+        metrics = job["metrics"]
+        active += 1
+        metrics["active_nodes"] += 1
+        metrics["peak_active_nodes"] = max(
+            metrics["peak_active_nodes"], metrics["active_nodes"]
+        )
+        peak_active = max(peak_active, active)
+        try:
+            await asyncio.sleep(0.03)
+            job["completed"] += 1
+            job["success_count"] += 1
+            manager._summaries[job["id"]][index] = {"node_index": index}
+        finally:
+            metrics["active_nodes"] -= 1
+            active -= 1
+
+    monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(result_store, "root", tmp_path / "results")
+    monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
+    monkeypatch.setattr("backend.app.jobs.parse_subscription", fake_parse)
+    monkeypatch.setattr(
+        "backend.app.jobs.resolve_outbound_interface",
+        lambda _configured: None,
+    )
+    monkeypatch.setattr(result_store, "initialize", lambda *_args: None)
+    monkeypatch.setattr(result_store, "finalize", lambda *_args: {})
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    manager = ScanJobManager(
+        Settings(
+            mihomo_path=core_path,
+            max_parallel_jobs=2,
+            max_parallel_nodes=8,
+            max_nodes=20,
+        )
+    )
+    monkeypatch.setattr(manager, "_scan_node", fake_scan_node)
+
+    async def ignore_progress(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_write_progress", ignore_progress)
+    monkeypatch.setattr(manager, "_safe_write_progress", ignore_progress)
+
+    first = manager.create("https://subscription.example/one", request_id="job-one")
+    second = manager.create("https://subscription.example/two", request_id="job-two")
+    await asyncio.gather(manager.tasks[first["id"]], manager.tasks[second["id"]])
+
+    assert peak_active == 16
+    for job_id in (first["id"], second["id"]):
+        job = manager.jobs[job_id]
+        assert job["status"] == "completed"
+        assert job["completed"] == 20
+        assert job["metrics"]["configured_node_parallelism"] == 8
+        assert job["metrics"]["peak_active_nodes"] == 8
+        assert len(manager._summaries[job_id]) == 20
+
+
+def test_running_get_uses_memory_summary_cache(monkeypatch) -> None:
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+    job_id = "cached-job"
+    manager.jobs[job_id] = {
+        "id": job_id,
+        "status": "running",
+        "completed": 1,
+        "total": 2,
+    }
+    manager._summaries[job_id] = {
+        1: {"node_index": 1, "nested": {"status": "success"}},
+    }
+
+    def fail_disk_read(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("running polling must not read node files")
+
+    monkeypatch.setattr(result_store, "read_available_summaries", fail_disk_read)
+    snapshot = manager.get(job_id)
+    snapshot["results"][0]["nested"]["status"] = "mutated"
+
+    assert snapshot["results"] == [
+        {"node_index": 1, "nested": {"status": "mutated"}},
+    ]
+    assert manager._summaries[job_id][1]["nested"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_safe_progress_write_uses_result_store_root(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "results"
+    job_id = "job-root"
+    (root / job_id).mkdir(parents=True)
+    monkeypatch.setattr(result_store, "root", root)
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+    called = False
+    job = {"id": job_id, "status": "failed"}
+
+    async def capture(_job: dict[str, Any], *, force: bool = False) -> None:
+        nonlocal called
+        called = force
+
+    monkeypatch.setattr(manager, "_write_progress", capture)
+    await manager._safe_write_progress(job)
+
+    assert called is True

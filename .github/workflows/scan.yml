@@ -1,0 +1,146 @@
+name: Scan subscription
+
+run-name: Best IP scan ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Browser-generated correlation ID
+        required: true
+        type: string
+      key_id:
+        description: Public encryption key fingerprint
+        required: true
+        type: string
+      encrypted_subscription_url:
+        description: AES-GCM URL envelope; never send plaintext here
+        required: true
+        type: string
+
+concurrency:
+  group: best-ip-scan
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate dispatch envelope
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          KEY_ID: ${{ inputs.key_id }}
+          EXPECTED_KEY_ID: ${{ vars.SCAN_KEY_ID }}
+          ENVELOPE: ${{ inputs.encrypted_subscription_url }}
+        shell: bash
+        run: |
+          [[ "$REQUEST_ID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]
+          [[ "$KEY_ID" =~ ^[A-Za-z0-9:_-]{8,256}$ ]]
+          [[ -n "$ENVELOPE" && ${#ENVELOPE} -le 65535 ]]
+          [[ -n "$EXPECTED_KEY_ID" && "$KEY_ID" == "$EXPECTED_KEY_ID" ]]
+
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen --dev
+
+      - name: Download pinned Mihomo
+        run: >-
+          uv run python scripts/download_mihomo.py
+          --tag v1.19.30
+          --archive-sha256 cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
+
+      - name: Materialize private key in runner temp
+        env:
+          SCAN_PRIVATE_KEY_PEM: ${{ secrets.SCAN_PRIVATE_KEY_PEM }}
+        shell: bash
+        run: |
+          test -n "$SCAN_PRIVATE_KEY_PEM"
+          key_path="$RUNNER_TEMP/scan-private.pem"
+          printf '%s\n' "$SCAN_PRIVATE_KEY_PEM" > "$key_path"
+          chmod 600 "$key_path"
+          printf 'SCAN_PRIVATE_KEY_PATH=%s\n' "$key_path" >> "$GITHUB_ENV"
+
+      - name: Decrypt subscription URL to runner temp
+        env:
+          BEST_IP_ENVELOPE: ${{ inputs.encrypted_subscription_url }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          KEY_ID: ${{ inputs.key_id }}
+        shell: bash
+        run: >-
+          node scripts/decrypt_subscription.mjs
+          --private-key "$SCAN_PRIVATE_KEY_PATH"
+          --output "$RUNNER_TEMP/subscription-url"
+          --request-id "$REQUEST_ID"
+          --key-id "$KEY_ID"
+
+      - name: Start local API
+        shell: bash
+        run: |
+          uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          printf '%s' "$!" > "$RUNNER_TEMP/uvicorn.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/api/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run strict structural scan verifier
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          BEST_IP_API_BASE: http://127.0.0.1:8000
+          BEST_IP_REAL_SCAN_TIMEOUT_SECONDS: "1500"
+          BEST_IP_ALLOW_PARTIAL: "1"
+        shell: bash
+        run: |
+          export BEST_IP_REQUEST_ID="$REQUEST_ID"
+          export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
+          uv run python scripts/verify_real_scan.py
+
+      - name: Build sanitized result artifact
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
+          uv run python scripts/sanitize_action_artifact.py \
+            --job-id "$REQUEST_ID" \
+            --request-id "$REQUEST_ID" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --output-dir "$RUNNER_TEMP/action-artifact"
+
+      - name: Upload sanitized result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: best-ip-result-${{ inputs.request_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/action-artifact
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove runner secrets and workspaces
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/uvicorn.pid" ]]; then kill "$(<"$RUNNER_TEMP/uvicorn.pid")" 2>/dev/null || true; fi
+          rm -f "$RUNNER_TEMP/scan-private.pem" "$RUNNER_TEMP/subscription-url" "$RUNNER_TEMP/uvicorn.pid" "$RUNNER_TEMP/uvicorn.log"
+          rm -rf runtime/jobs runtime/results runtime/mihomo

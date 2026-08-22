@@ -1,10 +1,16 @@
 const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, "") || "";
+const githubActionsMode = Boolean(window.BestIpAction?.isPagesMode?.());
 
 const state = {
   job: null,
   results: [],
   imported: false,
   importSource: "",
+  githubPat: "",
+  actionRequestId: null,
+  actionRunId: null,
+  actionDispatchedAt: 0,
+  actionPollDelay: 2000,
   sortKey: "score",
   sortDirection: "desc",
   pollTimer: null,
@@ -28,6 +34,10 @@ const elements = {
   form: document.querySelector("#scanForm"),
   subscriptionUrl: document.querySelector("#subscriptionUrl"),
   revealButton: document.querySelector("#revealButton"),
+  githubPatWrap: document.querySelector("#githubPatWrap"),
+  githubPat: document.querySelector("#githubPat"),
+  clearGithubPat: document.querySelector("#clearGithubPat"),
+  modeHint: document.querySelector("#modeHint"),
   startButton: document.querySelector("#startButton"),
   cancelButton: document.querySelector("#cancelButton"),
   healthStatus: document.querySelector("#healthStatus"),
@@ -74,6 +84,14 @@ elements.themeButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
+if (githubActionsMode) {
+  elements.githubPatWrap.hidden = false;
+  elements.modeHint.hidden = false;
+  elements.healthStatus.textContent = "GitHub Actions 模式";
+  elements.healthStatus.className = "health ready";
+}
+elements.clearGithubPat?.addEventListener("click", () => clearGithubPat());
+
 elements.revealButton.addEventListener("click", () => {
   const revealing = elements.subscriptionUrl.type === "password";
   elements.subscriptionUrl.type = revealing ? "url" : "password";
@@ -101,14 +119,35 @@ elements.form.addEventListener("submit", async (event) => {
   renderRows();
 
   try {
-    const response = await fetch(apiUrl("/api/scans"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subscription_url: subscriptionUrl }),
-    });
-    const created = await readResponse(response);
-    state.job = created;
-    await pollJob(created.id, generation);
+    if (githubActionsMode) {
+      const pat = elements.githubPat.value.trim();
+      state.githubPat = pat;
+      const dispatched = await window.BestIpAction.dispatch(pat, subscriptionUrl);
+      state.actionRequestId = dispatched.requestId;
+      state.actionRunId = dispatched.runId;
+      state.actionDispatchedAt = dispatched.dispatchedAt || Date.now();
+      state.actionPollDelay = 2000;
+      elements.subscriptionUrl.value = "";
+      elements.githubPat.value = "";
+      state.job = {
+        id: state.actionRequestId,
+        status: "dispatching",
+        total: 0,
+        completed: 0,
+        results: [],
+        manifest_ready: false,
+      };
+      await pollAction(generation);
+    } else {
+      const response = await fetch(apiUrl("/api/scans"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription_url: subscriptionUrl }),
+      });
+      const created = await readResponse(response);
+      state.job = created;
+      await pollJob(created.id, generation);
+    }
   } catch (error) {
     if (generation === state.pollGeneration) showFatalError(error.message);
   }
@@ -118,10 +157,18 @@ elements.cancelButton.addEventListener("click", async () => {
   if (!state.job?.id) return;
   elements.cancelButton.disabled = true;
   try {
-    const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
-    state.job = await readResponse(response);
-    renderProgress(state.job);
-    setScanning(false);
+    if (githubActionsMode) {
+      await window.BestIpAction.cancel(state.githubPat, state.actionRunId);
+      state.job = { ...state.job, status: "cancelled", error: "已请求取消 GitHub Actions 扫描" };
+      renderProgress(state.job);
+      setScanning(false);
+      clearGithubPat();
+    } else {
+      const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
+      state.job = await readResponse(response);
+      renderProgress(state.job);
+      setScanning(false);
+    }
   } catch (error) {
     elements.cancelButton.disabled = false;
     showInlineError(`停止失败：${error.message}`);
@@ -692,6 +739,81 @@ function cloneImportedForExport(result) {
     if (key === "_index" || key === "_source") return undefined;
     return value;
   }));
+}
+
+async function pollAction(generation) {
+  if (!state.actionRequestId || generation !== state.pollGeneration) return;
+  try {
+    const remote = await window.BestIpAction.poll(
+      state.githubPat,
+      state.actionRequestId,
+      state.actionRunId,
+      state.actionDispatchedAt,
+    );
+    if (generation !== state.pollGeneration) return;
+    state.actionRunId = remote.runId || state.actionRunId;
+    state.job = {
+      id: state.actionRequestId,
+      status: remote.status,
+      total: Number(remote.total || 0),
+      completed: Number(remote.completed || 0),
+      success_count: Number(remote.success_count || 0),
+      partial_count: Number(remote.partial_count || 0),
+      failed_count: Number(remote.failed_count || 0),
+      manifest_ready: remote.manifest_ready === true,
+      cleanup_confirmed: remote.cleanup_confirmed === true,
+      results: [],
+      error: remote.error || null,
+      action_run_url: remote.run?.html_url || null,
+    };
+    renderProgress(state.job);
+    if (remote.status === "completed" && remote.manifest_ready) {
+      applyActionResults(remote);
+      clearGithubPat();
+      setScanning(false);
+      return;
+    }
+    if (["failed", "cancelled"].includes(remote.status)) {
+      clearGithubPat();
+      setScanning(false);
+      return;
+    }
+    elements.scanStatusText.textContent = remote.status === "dispatching"
+      ? "等待 GitHub Actions 建立运行"
+      : remote.status === "queued" ? "GitHub Actions 排队中" : "GitHub Actions 扫描中";
+    state.actionPollDelay = Math.min(
+      window.BestIpAction.MAX_POLL_DELAY_MS || 10_000,
+      Math.round(state.actionPollDelay * 1.5),
+    );
+    state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
+  } catch (error) {
+    if (generation !== state.pollGeneration) return;
+    showInlineError(`读取 GitHub Actions 状态失败，重试中：${error.message}`);
+    state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
+  }
+}
+
+function applyActionResults(payload) {
+  const actionResult = payload.action_result || payload;
+  const records = Array.isArray(actionResult.results) ? actionResult.results : [];
+  state.results = records.map((record, index) => ({
+    ...record,
+    _index: record.node_index ?? index,
+  }));
+  state.imported = true;
+  state.importSource = "github-actions";
+  state.job = {
+    ...actionResult,
+    id: state.actionRequestId,
+    status: "completed",
+    manifest_ready: true,
+    cleanup_confirmed: actionResult.cleanup_confirmed === true,
+    results: state.results,
+    action_run_id: state.actionRunId,
+    action_run_url: payload.run?.html_url || null,
+  };
+  renderProgress(state.job);
+  renderRows();
 }
 
 async function pollJob(jobId, generation) {
@@ -1367,6 +1489,11 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
 
+function clearGithubPat() {
+  state.githubPat = "";
+  if (elements.githubPat) elements.githubPat.value = "";
+}
+
 function setScanning(scanning) {
   const ready = !scanning && state.job?.status === "completed" && state.job?.manifest_ready === true;
   elements.startButton.disabled = scanning;
@@ -1384,7 +1511,7 @@ function showError(message) {
 
 function showInlineError(message) { showError(message); }
 function showFatalError(message) { setScanning(false); elements.scanStatusBadge.hidden = true; showError(message); }
-function jobTitle(status) { return ({ queued: "排队中", preparing: "准备中", running: "扫描中", completed: "已完成", failed: "失败", cancelled: "已停止" }[status] || status || "准备中"); }
+function jobTitle(status) { return ({ dispatching: "等待 Actions", queued: "Actions 排队中", preparing: "准备中", running: "扫描中", completed: "已完成", failed: "失败", cancelled: "已停止" }[status] || status || "准备中"); }
 
 async function readResponse(response) {
   let data;
@@ -1395,6 +1522,11 @@ async function readResponse(response) {
 }
 
 async function checkHealth() {
+  if (githubActionsMode) {
+    elements.healthStatus.textContent = "GitHub Actions 模式";
+    elements.healthStatus.className = "health ready";
+    return;
+  }
   try {
     const data = await readResponse(await fetch(apiUrl("/api/health"), { cache: "no-store" }));
     if (!data.mihomo_ready) throw new Error("Mihomo 未就绪");

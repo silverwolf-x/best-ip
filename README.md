@@ -6,12 +6,13 @@
 
 - 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开订阅地址。
 - 订阅 metadata（流量、重置、到期等信息项）不会作为节点；每个真实节点恰好产生一条成功、部分或失败终态记录。
-- 每个并发节点最多执行 `BEST_IP_MAX_NODE_ATTEMPTS` 次；每次尝试都使用新的 Mihomo 进程、mixed-port、controller、selector、连接池和临时工作目录，失败实例完整退出并清理后才退避重试。每个实例只暴露当前检测节点，同时保留完整代理定义以支持节点间拨号依赖。
+- 每个并发节点最多执行 `BEST_IP_MAX_NODE_ATTEMPTS` 次；每次尝试都使用新的 Mihomo 进程、mixed-port、controller、连接池和临时工作目录，失败实例完整退出并清理后才退避重试。每个实例只暴露当前检测节点，同时保留完整代理定义以支持节点间拨号依赖。
 - 单节点内，页面与 trace 并行请求；取得并核验出口 IP 后，global ping、portscan、pingcheck 和 related 查询并行调度，related 的轮询仍按顺序执行。
-- Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份；并发 worker 的启动阶段串行到 controller 就绪，避免空闲端口探测与真正绑定之间的竞态。
+- Mihomo mixed-port 和 controller 只监听 `127.0.0.1`，selector 切换后由 Controller GET 确认实际节点身份；并发 worker 只在端口分配阶段持有短锁，配置写入、进程启动和 readiness 等待可以重叠，避免把 8 个 worker 串行化。
 - Windows worker 会从活动 IPv4 默认路由中自动选择物理网卡，并通过 Mihomo 顶层 `interface-name` 绑定所有出站套接字；可用 `BEST_IP_OUTBOUND_INTERFACE` 显式覆盖，无法确认物理出口时失败关闭，不回落到本机 TUN。
-- Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径。
-- 不访问 GPT、Claude、OpenAI、Anthropic 或其他站外数据源；不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链。
+- Coffee 业务客户端固定 `trust_env=False`、禁用重定向，并且只允许 `https://ip.net.coffee` 的页面、trace、lookup、related、被动 portscan、pingcheck 和固定八地 global ping 路径；在当前节点 mixed-port 上并行探测 ChatGPT 与 Codex 可用性，并把结果作为节点字段保存。
+- GPT/Codex 探测只经当前 Mihomo mixed-port，并受现有国家/地区限制与 allowlist 约束；不会为了性能优化而删除已有探测字段。
+- 不执行 Coffee 页面 JavaScript，因此不会触发页面中的第三方外链；ChatGPT/Codex 仅按 scanner allowlist 经当前 Mihomo mixed-port 探测，结果不扩展到其他站外数据源。
 - 节点扫描阶段不做 Coffee 的宿主 DNS、固定 IP 连接或 direct fallback；所有 Coffee HTTP 请求都交给当前 Mihomo mixed-port。
 - 失败节点的 `exit_ip` 始终为 JSON `null`；后端只从 Mihomo 日志映射固定、脱敏的 DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 或网络不可达原因，不保存原始节点日志。
 - 节点扫描不会原样启动订阅中的 `url-test`、`fallback`、通用规则或 DNS 规则；这些配置可能主动探测其他节点、继承宿主 fake-ip 或让 DNS 重新进入规则链，破坏当前 worker 的单节点归属。worker 只复用代理定义，使用固定 IP DoH、`redir-host` 和 Coffee 规则隔离检测流量；域名型节点会选择订阅内服务器为公网字面 IP 的节点作为 `BEST-IP-DNS` 引导代理，重试时轮换引导节点，Coffee 数据面仍只经待测节点。
@@ -47,12 +48,39 @@ uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 打开 <http://127.0.0.1:8000>。前端默认使用同源 `/api/...`，不会自动改写到固定 loopback API；分离开发时请在 HTML 的 `meta[name="api-base"]` 中显式配置后端地址。
 
+## GitHub Pages 与 Actions 扫描
+
+推送 `main` 后，`.github/workflows/pages.yml` 会把 `frontend/` 发布为项目站点：
+
+```text
+https://<owner>.github.io/best-ip/
+```
+
+Pages 模式仍然是一个可独立使用的静态前端：不填写 PAT 时可以导入此前导出的 JSON/CSV、筛选、查看详情并导出。输入订阅 URL 并开始扫描时，页面要求一个临时的 Fine-grained PAT（仓库 Actions Read and write）：
+
+1. PAT 只保存在当前页面 JavaScript 内存，清除任务/页面后不写入 localStorage、URL、仓库或 artifact。
+2. 浏览器使用 WebCrypto 的 AES-256-GCM 加密订阅 URL，再用仓库提交的 RSA-OAEP-3072 公钥包裹 AES key；Actions workflow input 只包含 request ID、key ID 和密文 envelope。
+3. Actions 用仓库 Secret `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，运行后端正式验收，并只上传 `status.json` 与 `result.json`。结果 artifact 保留 1 天，浏览器会校验 request/run identity、SHA-256、ZIP CRC、manifest、节点计数和敏感字段边界。
+4. 页面只接受与 request ID、`main` 分支、workflow_dispatch 事件和 run name 完全匹配的运行，不按“最新运行”猜测；结束后会清除 PAT。扫描中只展示 workflow 级状态，不伪造逐节点实时进度。
+
+仓库管理员需要配置：
+
+- Actions Secret `SCAN_PRIVATE_KEY_PEM`：与 `frontend/scan-public.pem` 配对的私钥，只存在 GitHub Secret。
+- Actions/Repository variable `SCAN_KEY_ID`：公钥 SPKI DER 的 SHA-256 指纹，必须与 `frontend/site-config.js` 中的 `keyId` 相同。
+- Pages source：GitHub Actions。
+
+PAT 是临时授权而不是用户认证；建议只授予当前仓库 Actions 读写、设置短过期时间，并在扫描后立即撤销。GitHub 仍会保存 workflow input 的密文历史，私钥轮换和 envelope 短过期时间是必要的安全边界。
+
 ## 验证
 
 ```powershell
 uv run pytest -q
 uv run ruff check .
 node --check frontend/app.js
+node --check frontend/action-client.js
+node --check frontend/zip-reader.js
+node --check scripts/decrypt_subscription.mjs
+node --test tests/frontend_modules.test.mjs
 git diff --check
 ```
 
@@ -71,6 +99,17 @@ uv run --env-file .env python scripts/verify_real_scan.py
 脚本会先取得一次订阅快照，并把其 SHA-256 与客户端生成的任务 ID 绑定到创建请求；后端实际下载内容若不同会直接失败。扫描过程中还会核对 `results` 摘要数量始终等于 `completed`。终态时逐节点核对订阅顺序、metadata 数、trace/lookup 出口一致性、selector 和代理证据、manifest 本地文件 hash、完整导出、临时工作目录清理及订阅 URL/节点凭据不泄露；只有 `failed_count=0` 才通过正式可用性验收，不能再用“都有终态记录”掩盖真实节点失败。异常或超时会取消并确认后台任务与 Mihomo 清理终态。`BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 是从订阅预取到终态 API 核验的总预算；超时后的取消清理另有最多 35 秒安全宽限期，不会被伪装为验收通过。
 
 `BEST_IP_API_BASE` 只能指向与脚本共享当前 `runtime/results` 和 `runtime/jobs` 的本机后端；正式闭环会强制读取本地节点文件重算 hash，因此不支持无共享文件系统的远程或容器后端。
+
+### 性能证据
+
+在同一 22 节点订阅快照上，旧 HEAD 的 4-worker 三次 wall 为 `36.238 / 34.989 / 27.105s`，中位数 `34.989s`；最新 8-worker 三次 wall 为 `20.320 / 17.351 / 18.301s`，中位数 `18.301s`。中位数 speedup 为 `1.912x`，节点吞吐中位数从 `0.6288` 提升到 `1.2021 nodes/s`，峰值 active node 为 8。最新三次均无 failed、无 retry，成功分布为两次 `22 success`、一次 `21 success + 1 partial`，且每次 `cleanup_confirmed=true`；同一最新代码的严格真实闭环另验收为 `22/22 success`。
+
+复测命令（API 地址是非敏感的本机端口，订阅仍只由 `.env` 注入）：
+
+```powershell
+$env:BEST_IP_API_BASE = 'http://127.0.0.1:8765'
+uv run --env-file .env python scripts/benchmark_scan.py --label optimized-8 --warmup 1 --runs 3
+```
 
 ## API
 
@@ -131,7 +170,7 @@ DELETE /api/scans/{id}
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
 | `BEST_IP_MAX_PARALLEL_JOBS` | `2` | 同时运行的扫描任务数 |
-| `BEST_IP_MAX_PARALLEL_NODES` | `4` | 单个扫描任务同时检测的节点数；每个并发槽位内的重试串行执行 |
+| `BEST_IP_MAX_PARALLEL_NODES` | `8` | 单个扫描任务同时检测的节点数；每个并发槽位内的重试串行执行，两个任务的有效节点上限为 16 |
 | `BEST_IP_MAX_NODE_ATTEMPTS` | `3` | 单节点最大尝试次数；每次使用全新的 Mihomo 进程、端口和目录 |
 | `BEST_IP_NODE_RETRY_BACKOFF_MS` | `500` | 重试基础退避毫秒数；第 N 次失败后等待 `N ×` 该值 |
 | `BEST_IP_OUTBOUND_INTERFACE` | 自动检测 | Windows Mihomo 物理出站网卡名称；不设置时按活动物理默认路由检测，无法确认则失败关闭 |

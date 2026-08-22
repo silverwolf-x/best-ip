@@ -1,0 +1,13 @@
+.git
+.claude
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.env
+*.log
+runtime/jobs
+runtime/results
+runtime/mihomo
+runtime/mihomo-*
+best-ip-results-*.json

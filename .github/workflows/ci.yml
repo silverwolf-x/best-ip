@@ -18,5 +18,13 @@ jobs:
         run: uv sync --frozen --dev
       - name: Lint
         run: uv run ruff check .
-      - name: Test
+      - name: Test Python
         run: uv run pytest
+      - name: Check JavaScript syntax
+        run: |
+          node --check frontend/app.js
+          node --check frontend/action-client.js
+          node --check frontend/zip-reader.js
+          node --check scripts/decrypt_subscription.mjs
+      - name: Test browser security modules
+        run: node --test tests/frontend_modules.test.mjs

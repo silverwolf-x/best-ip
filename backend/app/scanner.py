@@ -91,6 +91,11 @@ class CoffeeCollector:
             timeout=timeout,
             follow_redirects=False,
             trust_env=False,
+            limits=httpx.Limits(
+                max_connections=8,
+                max_keepalive_connections=8,
+                keepalive_expiry=5,
+            ),
             headers={
                 "User-Agent": "Mozilla/5.0 best-ip/0.2 (Coffee-only; workspace Mihomo)"
             },

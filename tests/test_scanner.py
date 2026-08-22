@@ -89,7 +89,7 @@ def test_gpt_check_summary_marks_restricted_country_after_connection() -> None:
 
     checks = _gpt_check_summary(responses, {"countryCode": "CN"})
 
-    assert GPT_RESTRICTED_COUNTRIES == {"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"}
+    assert {"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"} == GPT_RESTRICTED_COUNTRIES
     assert all(check["status"] == "restricted" for check in checks)
     assert all(check["text"] == "不可访问" for check in checks)
     assert all(check["ok"] is False for check in checks)

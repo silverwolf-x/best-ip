@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -63,7 +64,7 @@ async def create_scan(request: ScanRequest) -> ScanCreated:
 @app.get("/api/scans/{job_id}")
 async def get_scan(job_id: str) -> dict[str, Any]:
     try:
-        return job_manager.get(job_id)
+        return await asyncio.to_thread(job_manager.get, job_id)
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail="扫描任务不存在") from exc
 
@@ -71,7 +72,7 @@ async def get_scan(job_id: str) -> dict[str, Any]:
 @app.get("/api/scans/{job_id}/export")
 async def export_scan(job_id: str) -> dict[str, Any]:
     try:
-        return job_manager.export(job_id)
+        return await asyncio.to_thread(job_manager.export, job_id)
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail="扫描任务不存在") from exc
     except JobNotReadyError as exc:
@@ -81,7 +82,7 @@ async def export_scan(job_id: str) -> dict[str, Any]:
 @app.get("/api/scans/{job_id}/results/{index}")
 async def get_scan_result(job_id: str, index: int) -> dict[str, Any]:
     try:
-        return job_manager.get_result(job_id, index)
+        return await asyncio.to_thread(job_manager.get_result, job_id, index)
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail="扫描结果不存在") from exc
     except JobNotReadyError as exc:

@@ -48,7 +48,20 @@ _DEFAULT_DNS_CONFIG = {
     "proxy-server-nameserver": list(_DOH_RESOLVERS),
     "respect-rules": False,
 }
-_MIHOMO_START_LOCK = asyncio.Lock()
+_MIHOMO_PORT_LOCK = asyncio.Lock()
+_RESERVED_PORTS: set[int] = set()
+
+
+async def _to_thread_uncancelled(function: Any, *args: Any, **kwargs: Any) -> Any:
+    operation = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(operation)
+    except asyncio.CancelledError:
+        with suppress(BaseException):
+            await asyncio.shield(operation)
+        raise
+
+
 _WINDOWS_INTERFACE_DISCOVERY_SCRIPT = r"""
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $interfaceMetrics = @{}
@@ -166,8 +179,9 @@ class MihomoProcess:
             if outbound_interface is not None
             else None
         )
-        self.mixed_port = self._free_port()
-        self.controller_port = self._free_port()
+        self.mixed_port = 0
+        self.controller_port = 0
+        self._ports_reserved = False
         self.secret = secrets.token_urlsafe(24)
         self.instance_id = secrets.token_hex(8)
         self.process: asyncio.subprocess.Process | None = None
@@ -192,57 +206,85 @@ class MihomoProcess:
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.secret}"}
 
+    async def _reserve_ports(self) -> None:
+        async with _MIHOMO_PORT_LOCK:
+            if self._ports_reserved:
+                raise MihomoError("Mihomo 端口已分配")
+            allocated: list[int] = []
+            while len(allocated) < 2:
+                port = self._free_port()
+                if port in _RESERVED_PORTS or port in allocated:
+                    continue
+                allocated.append(port)
+            self.mixed_port, self.controller_port = allocated
+            _RESERVED_PORTS.update(allocated)
+            self._ports_reserved = True
+
+    async def _release_ports(self) -> None:
+        async with _MIHOMO_PORT_LOCK:
+            if not self._ports_reserved:
+                return
+            _RESERVED_PORTS.discard(self.mixed_port)
+            _RESERVED_PORTS.discard(self.controller_port)
+            self._ports_reserved = False
+
+    def _write_config(self) -> Path:
+        self.work_dir.mkdir(parents=True, exist_ok=False)
+        config_path = self.work_dir / "config.yaml"
+        proxy_groups = [
+            {
+                "name": self.group_name,
+                "type": "select",
+                "proxies": self.selector_names,
+            }
+        ]
+        if self.dns_bootstrap_proxy:
+            proxy_groups.append(
+                {
+                    "name": self.dns_group_name,
+                    "type": "select",
+                    "proxies": [self.dns_bootstrap_proxy],
+                }
+            )
+        config = {
+            "mixed-port": self.mixed_port,
+            "allow-lan": False,
+            "bind-address": "127.0.0.1",
+            "mode": "rule",
+            "log-level": "warning",
+            "ipv6": False,
+            "external-controller": f"127.0.0.1:{self.controller_port}",
+            "secret": self.secret,
+            "profile": {"store-selected": False, "store-fake-ip": False},
+            "dns": self.dns_config,
+            "proxies": self.proxies,
+            "proxy-groups": proxy_groups,
+            "rules": [
+                f"DOMAIN,{COFFEE_HOST},{self.group_name}",
+                f"DOMAIN,chatgpt.com,{self.group_name}",
+                f"DOMAIN,api.openai.com,{self.group_name}",
+                "MATCH,REJECT",
+            ],
+        }
+        if self.outbound_interface:
+            config["interface-name"] = self.outbound_interface
+        config_path.write_text(
+            yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        return config_path
+
     async def start(self) -> None:
         if not self.core_path.is_file():
             raise MihomoNotReadyError(MIHOMO_NOT_READY_MESSAGE)
 
-        async with _MIHOMO_START_LOCK:
-            self.mixed_port = self._free_port()
-            self.controller_port = self._free_port()
-            self.work_dir.mkdir(parents=True, exist_ok=False)
-            config_path = self.work_dir / "config.yaml"
-            proxy_groups = [
-                {
-                    "name": self.group_name,
-                    "type": "select",
-                    "proxies": self.selector_names,
-                }
-            ]
-            if self.dns_bootstrap_proxy:
-                proxy_groups.append(
-                    {
-                        "name": self.dns_group_name,
-                        "type": "select",
-                        "proxies": [self.dns_bootstrap_proxy],
-                    }
-                )
-            config = {
-                "mixed-port": self.mixed_port,
-                "allow-lan": False,
-                "bind-address": "127.0.0.1",
-                "mode": "rule",
-                "log-level": "warning",
-                "ipv6": False,
-                "external-controller": f"127.0.0.1:{self.controller_port}",
-                "secret": self.secret,
-                "profile": {"store-selected": False, "store-fake-ip": False},
-                "dns": self.dns_config,
-                "proxies": self.proxies,
-                "proxy-groups": proxy_groups,
-                "rules": [
-                    f"DOMAIN,{COFFEE_HOST},{self.group_name}",
-                    f"DOMAIN,chatgpt.com,{self.group_name}",
-                    f"DOMAIN,api.openai.com,{self.group_name}",
-                    "MATCH,REJECT",
-                ],
-            }
-            if self.outbound_interface:
-                config["interface-name"] = self.outbound_interface
-            config_path.write_text(
-                yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        await self._reserve_ports()
+        try:
+            config_path = await _to_thread_uncancelled(self._write_config)
+            self._log_handle = await _to_thread_uncancelled(
+                self.log_path.open,
+                "w",
+                encoding="utf-8",
             )
-
-            self._log_handle = self.log_path.open("w", encoding="utf-8")
             kwargs: dict[str, Any] = {}
             if os.name == "nt":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -256,19 +298,17 @@ class MihomoProcess:
                 stderr=subprocess.STDOUT,
                 **kwargs,
             )
-
+            await self._wait_until_ready()
+        except BaseException as exc:
             try:
-                await self._wait_until_ready()
-            except BaseException as exc:
-                try:
-                    await self.stop()
-                except MihomoStopError:
-                    raise
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
-                detail = self._read_log_tail(self.log_path)
-                suffix = f"：{detail}" if detail else ""
-                raise MihomoError(f"Mihomo 启动失败{suffix}") from None
+                await self.stop()
+            except MihomoStopError:
+                raise
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            detail = await asyncio.to_thread(self._read_log_tail, self.log_path)
+            suffix = f"：{detail}" if detail else ""
+            raise MihomoError(f"Mihomo 启动失败{suffix}") from None
 
     async def _wait_until_ready(self) -> None:
         deadline = asyncio.get_running_loop().time() + 15
@@ -331,14 +371,12 @@ class MihomoProcess:
 
     async def stop(self) -> None:
         process = self.process
-        if not process or process.returncode is not None:
-            self.process = None
-            if self._log_handle:
-                self._log_handle.close()
-                self._log_handle = None
-            return
-
-        cleanup_task = asyncio.create_task(self._stop_process(process))
+        cleanup = (
+            self._release_ports()
+            if not process or process.returncode is not None
+            else self._stop_process_and_release(process)
+        )
+        cleanup_task = asyncio.create_task(cleanup)
         cancelled = False
         try:
             while True:
@@ -360,6 +398,13 @@ class MihomoProcess:
                 self._log_handle = None
             if cancelled:
                 raise asyncio.CancelledError
+
+    async def _stop_process_and_release(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        await self._stop_process(process)
+        await self._release_ports()
 
     @staticmethod
     async def _stop_process(process: asyncio.subprocess.Process) -> None:

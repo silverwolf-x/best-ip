@@ -100,16 +100,31 @@ def extract(archive: Path, destination: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="下载并校验最新 Mihomo 核心")
+    parser = argparse.ArgumentParser(description="下载并校验 Mihomo 核心")
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=ROOT_DIR / "runtime" / "mihomo",
         help="核心输出目录",
     )
+    parser.add_argument(
+        "--tag",
+        default=os.getenv("BEST_IP_MIHOMO_TAG"),
+        help="固定 release tag；未提供时使用 latest（本地开发兼容）",
+    )
+    parser.add_argument(
+        "--archive-sha256",
+        default=os.getenv("BEST_IP_MIHOMO_ARCHIVE_SHA256"),
+        help="固定下载归档 SHA-256；生产 workflow 必须提供",
+    )
     args = parser.parse_args()
 
-    release = github_json(f"https://api.github.com/repos/{REPOSITORY}/releases/latest")
+    release_url = (
+        f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{args.tag}"
+        if args.tag
+        else f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+    )
+    release = github_json(release_url)
     asset = select_asset(release)
     _, _, executable_name = platform_asset()
     destination = args.output_dir.resolve() / executable_name
@@ -121,7 +136,8 @@ def main() -> None:
     try:
         print(f"下载 {asset['name']} ({release['tag_name']})")
         download(asset["browser_download_url"], archive)
-        digest = verify_digest(archive, asset.get("digest"))
+        expected_digest = args.archive_sha256 or asset.get("digest")
+        digest = verify_digest(archive, expected_digest)
         extract(archive, destination)
     finally:
         archive.unlink(missing_ok=True)

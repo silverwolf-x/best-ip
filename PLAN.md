@@ -1,178 +1,112 @@
-# Best IP Coffee-only 重构计划
+# Best IP 当前实现计划与验收账本
 
-> 该文档是本轮重构的执行账本。先保证节点归属和结果完整性，再优化并发；历史混合扫描结果不作为本轮验收依据。
+> 本文以当前代码为准：后端保留 Coffee、ChatGPT/Codex 探测，默认 8 个节点 worker；前端同时支持本地 FastAPI 和 GitHub Pages 静态模式。订阅凭据只通过忽略的 `.env` 或浏览器到 Actions 的密文链路注入，不写入仓库。
 
-## 1. 最终目标
+## 1. 目标与边界
 
-用户提交 Mihomo YAML 订阅后，后端只使用工作区内启动的 Mihomo 访问 Coffee IP 页面及该页面真实依赖的 `ip.net.coffee` 同源结构化接口。后端为每个真实节点采集并原子暂存一份完整记录；前端轮询时立即读取已完成节点的安全摘要，扫描完成后再生成只读 manifest，详情与导出仍等待最终 manifest。
+- 单个任务默认最多 8 个并发节点，`BEST_IP_MAX_PARALLEL_JOBS=2`，进程有效节点上限为 16。
+- 每个节点尝试使用独立 Mihomo 进程、工作目录、mixed-port、controller-port、selector、连接池和日志游标；重试前确认进程退出和目录清理。
+- Coffee、ChatGPT、Codex 请求均固定经当前节点 mixed-port，HTTP 客户端使用 `trust_env=False`，不提供 direct fallback。
+- 每个真实节点必须落一条 success/partial/failed 终态记录；出口 IP、selector 身份、trace/lookup、代理证据和 manifest hash 必须可复核。
+- 运行中只返回已持久化的安全摘要；完整详情和导出必须等全部节点写入、manifest 完整校验后开放。
+- GitHub Pages 在没有后端时仍可导入 JSON/CSV、筛选、查看详情和导出；输入订阅后用临时 Fine-grained PAT dispatch Actions。
 
-### 必须满足
+## 2. 后端并发实现
 
-- 所有 Coffee HTTP/HTTPS 请求必须通过当前节点对应的工作区 Mihomo mixed-port。
-- HTTP 客户端固定 `trust_env=False`，不继承宿主 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 或直连回退。
-- 不再访问 GPT、Claude、OpenAI、Anthropic 或其他 AI 端点。
-- 订阅中的 metadata 不作为节点；每个真实节点恰好产生一份结构化暂存记录。
-- 成功记录必须包含由 Coffee trace 返回并通过 IP 格式校验的真实出口 IP。
-- 隧道无法建立时也必须原子写入失败记录，但出口 IP 必须为 `null`，不得使用入口 IP、节点名称、地区标签或宿主 IP 伪造。
-- 活动扫描状态与结果读取分离：扫描器只负责采集和落盘，前端/API 只消费暂存文件与最终 manifest。
-- 所有真实节点均产生一份结构化暂存记录；节点之间可使用独立 Mihomo worker 做有界并发，但单个 worker 内不得重叠 selector 切换与 Coffee 请求。
+### Mihomo 启动
 
-### 网络隔离边界
+`backend/app/mihomo.py` 使用短生命周期端口分配锁和进程内 reservation set。锁只覆盖两个 OS-free 端口的选择和 reservation；YAML 写入、日志打开、进程 spawn 和 readiness 等待在锁外运行。取消时会等待已经提交的同步配置/文件线程结束，再停止进程或释放 reservation，避免后台线程与清理竞态。
 
-本项目能保证**应用层隔离**：Coffee 请求只能交给工作区 Mihomo，代理内的远端 DNS/节点协议由 Mihomo 处理，应用不直接解析或连接 Coffee。物理网络仍由 Windows 宿主网卡承载；若要求操作系统网络命名空间级隔离，需要另行放入容器或虚拟机。应用代码不得以该物理边界为理由增加任何宿主直连路径。
+### Job worker pool
 
-## 2. Coffee 页面数据链路门控
+`backend/app/jobs.py` 使用每任务固定大小的 `asyncio.Queue` worker pool，而不是为每个节点先创建 task 再等待 semaphore。每个 worker 内的 retry 串行，最多 `max_node_attempts` 次；active/peak metrics 在 `try/finally` 中维护。ResultStore 的初始化、节点写入、进度、manifest、导出相关同步 I/O 移出事件循环，并在取消期间等待已启动的线程操作完成。
 
-先经工作区 Mihomo 实测检查 `https://ip.net.coffee/ip/` 当前 HTML 与内联脚本。页面本身不包含当前出口的结构化结果：浏览器先取 trace，再调用 lookup；页面还引用以下 Coffee 同源接口。实测页面只有 Google Tag Manager 外部脚本，采集器不会执行或请求该脚本。
+运行中摘要由 manager 内存 cache 提供，只有节点原子写入成功后才发布摘要和递增计数。进度写入按 job 加锁，并对非终态写入做 200ms coalescing；终态强制写入。完成态仍从磁盘重新读取所有节点，校验字段、状态、出口 IP、代理证据、文件大小和 SHA-256 后才生成 manifest。
 
-1. `GET https://ip.net.coffee/ip/`：证明目标页面本身可经当前节点访问，并记录响应状态、最终 URL、耗时和内容摘要。
-2. `GET https://ip.net.coffee/cdn-cgi/trace`：取得当前代理出口 IP；仅接受合法 IPv4/IPv6。
-3. `GET https://ip.net.coffee/api/ip/lookup/{exit_ip}`：取得评分、ASN、地理、网络属性、风险与其他 IP 页结构化字段。
-4. `GET https://ip.net.coffee/api/ping/global?host={exit_ip}&node=n01&node=n02&node=n03&node=n04&node=n09&node=n11&node=n13&node=n15`：页面全球 8 地 Ping。
-5. `GET https://ip.net.coffee/api/ip/portscan/{exit_ip}?probe=0` 与 `GET https://ip.net.coffee/api/ip/pingcheck/{exit_ip}`：页面端口缓存状态与 Ping 判断。
-6. lookup 返回关联域名仍在扫描时，按页面行为轮询 `GET https://ip.net.coffee/api/ip/related/{exit_ip}`，最多 10 次、间隔 1.5 秒。
+### Scanner
 
-所有这些请求都必须经当前节点对应的 mixed-port。采集器只下载 Coffee HTML，不执行页面 JavaScript，因此不会请求 Google Tag Manager。
+`CoffeeCollector` 保留原有页面/trace 依赖、lookup、global ping、portscan、pingcheck、related 轮询和 ChatGPT/Codex 探测，只增加每节点连接池上限；不以性能名义删除探测或放宽 URL allowlist。
 
-禁止为补齐字段调用 Coffee 之外的数据源。任一 Coffee 请求不得把主机替换成宿主解析出的固定地址，也不得设置 direct fallback。
+## 3. 前端与 GitHub Actions
 
-## 3. 分阶段实施
+### Pages
 
-### 阶段 A：严格顺序正确性
+- `frontend/index.html`、CSS、JS 使用项目相对路径，适配 `/best-ip/`。
+- `site-config.js` 只含仓库、workflow、分支、公钥路径和 key ID 等非秘密元数据。
+- Pages host 自动使用 Actions provider；localhost/127.0.0.1 仍使用本地 FastAPI provider。
+- PAT 只在页面内存中保存；主题是唯一允许写 localStorage 的值。订阅输入在 dispatch 后清空，并提供显式 PAT 清除操作。
 
-1. 下载订阅，解析 DNS 与节点，过滤 metadata。
-2. 启动一个工作区 Mihomo 实例和一个 selector。
-3. 对每个节点严格执行：
-   - selector 切换并等待确认；
-   - 记录所选 proxy identity；
-   - 为该节点创建全新的、强制走当前 mixed-port 的 HTTP 客户端；
-   - 完成 Coffee 页面及同源结构化采集；
-   - 关闭客户端，确保连接池不能跨节点复用；
-   - 原子写入该节点 JSON；
-   - 再切换下一节点。
-4. 20 个节点均产生记录后，原子生成 completed manifest。
-5. 前端轮询时展示已原子暂存的节点摘要；completed manifest 出现后开放节点详情与导出。
+### 密文 dispatch
 
-单 selector 上禁止重叠节点请求，因为 selector 在请求期间切换会造成出口串线。
+- 每次请求生成 request ID、AES-256-GCM key/IV 和 15 分钟 envelope。
+- envelope 的 AAD 绑定 request ID、key ID、过期时间；RSA-OAEP 使用 SHA-256 包裹 AES key。
+- workflow input 不携带明文 URL、PAT 或代理凭据。
+- `scan-public.pem` 的 SPKI DER SHA-256 指纹必须等于 `site-config.js` 与 Actions variable `SCAN_KEY_ID`。
+- Actions 通过 `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，错误输出不包含明文。
 
-### 阶段 B：后端暂存仓
+### 精确关联与 artifact
 
-每个任务使用独立目录：
+- workflow 仅 `workflow_dispatch`，固定 `main` ref，单一 concurrency group，30 分钟超时。
+- 页面只接受 exact request ID 的 run name、workflow_dispatch event、main branch、创建时间窗口和唯一 run；不按最新 run 猜测。
+- artifact 名称绑定 request ID、run ID、run attempt，保留 1 天。
+- sanitizer 只写 `status.json` 和 `result.json`，并拒绝 URL query/path token、凭据字段和凭据值；结果 JSON 的实际 UTF-8 bytes SHA-256 写入 status。
+- 浏览器 ZIP reader 限制压缩/解压大小，拒绝目录、路径穿越、重复文件、加密 ZIP、不支持算法、CRC 错误和解压炸弹；随后校验 result digest、manifest summaries、节点 identity、状态计数和可用性。
+- workflow 使用用户选择的 major action tags（如 checkout@v4、upload-artifact@v4），不把 PAT 交给 workflow。
 
-```text
-runtime/results/<job_id>/
-  nodes/
-    0000.json
-    0001.json
-    ...
-  progress.json
-  manifest.json
+## 4. 已验证性能证据
+
+同一 `.env` 注入的订阅 URL、同一 22 节点快照口径：
+
+| 版本 | worker | 三次 wall 秒 | 中位数 | 节点/s 中位数 | 状态 | peak | cleanup |
+|---|---:|---|---:|---:|---|---:|---|
+| HEAD 基线 | 4 | 36.238 / 34.989 / 27.105 | 34.989 | 0.6288 | 22 success，0 partial，0 failed，0 retry | 4 | true |
+| 优化后最新复测 | 8 | 20.320 / 17.351 / 18.301 | 18.301 | 1.2021 | 2 次 22 success；1 次 21 success + 1 partial；0 failed，0 retry | 8 | true |
+
+中位数 wall speedup = `34.989 / 18.301 = 1.912x`，节点吞吐比约 `1.912x`。优化结果同时记录了 `prepare/start/select/collect/stop/write/finalize` phase metrics；外部节点网络有波动，不能把单次失败误报成提速。
+
+## 5. 验证命令
+
+```powershell
+uv run ruff check .
+uv run pytest -q
+node --check frontend/app.js
+node --check frontend/action-client.js
+node --check frontend/zip-reader.js
+node --check scripts/decrypt_subscription.mjs
+node --test tests/frontend_modules.test.mjs
+git diff --check
 ```
 
-所有 JSON 先写同目录临时文件，再用 `os.replace()` 原子替换。节点记录至少包含：
-
-- `schema_version`、`job_id`、`node_index`、`node`、`node_type`
-- `selected_proxy` 与 selector 确认值
-- `coffee_page_url`
-- `status`、`started_at`、`finished_at`、`elapsed_ms`
-- `exit_ip`
-- `requests`：页面、trace、lookup 及经确认的同源辅助接口状态/耗时/错误
-- `coffee`：原始结构化 payload
-- `transport_error`：Mihomo 隧道层失败原因
-- `completeness`：必需步骤逐项布尔值及缺失项
-- `proxy_evidence`：mixed-port、Mihomo 实例标识和节点切换确认；不保存订阅凭据
-
-`manifest.json` 只在所有真实节点均有记录后生成，包含总数、成功/失败数、记录索引、完整性检查和完成时间。任务导出必须从该 manifest 组装，不能从内存扫描对象拼装。
-
-### 阶段 C：Coffee-only 前端
-
-- 删除 GPT/Claude 列、筛选标签、详情卡、CSV/JSON 字段和文案。
-- 只展示暂存 Coffee 结果：出口 IP、评分、位置/ASN/ISP、网络属性、风险、全球 Ping、耗时与完整性。
-- 失败行直接展示结构化 Mihomo 隧道错误。
-- 完成前禁止导出；完成后 JSON/CSV 均从暂存结果 API 获取。
-
-### 阶段 D：独立 Mihomo 有界并发
-
-节点级有界并发已实现：
-
-- 每个并发节点使用独立 Mihomo 进程、配置目录、mixed-port、controller-port、selector、连接池和日志游标。
-- 每个实例的 selector 只暴露当前检测节点，但保留完整代理定义以支持节点间拨号依赖。
-- 默认并发为 4（正式订阅 A/B 中相对 2 workers 降低约 46% 墙钟时间），可通过 `BEST_IP_MAX_PARALLEL_NODES` 按资源下调；单个 worker 内仍严格执行 `select + collect`，不重叠切换。
-- 单节点内的页面/trace，以及出口 IP 依赖的 lookup、global ping、portscan、pingcheck 已按依赖关系并行调度；related 仍按页面语义顺序轮询。
-- 正式订阅已完成 20 节点并发实测；后续订阅内容会由供应商动态变化，验收结果必须绑定具体任务 ID 和当次节点总数。
-
-### 阶段 E：显式 IP 与失败根因探索
-
-探索结论：
-
-- `GET /ip/{ip}` 的路径参数只会跳过当前出口 trace，再调用同一个 `/api/ip/lookup/{ip}`；其 HTML 服务端摘要少于现有 lookup JSON，不能补充更多结构化字段。
-- 订阅中的服务器地址及其 DNS 解析结果是节点入口，不是代理出口，禁止用于 Coffee 查询结果中的 `exit_ip`。
-- 对失败代表节点分别经 Coffee trace、Cloudflare trace 和 ipify 查询出口 IP，三者均在节点握手阶段返回连接错误；无法先取得可信出口 IP，显式 IP fallback 不能修复这类失败。
-- 当前重建配置与保留原生订阅 DNS、proxy-groups、rules 的三节点 A/B 返回相同错误类别：REALITY 认证失败、节点连接超时和上游 EOF。原生配置没有增加可用数据，也不是这些失败的主因。
-- 不把完整原生 `url-test`、`fallback` 和数百条通用规则直接带入扫描 worker：这些组会主动探测其他节点，且原生规则可能引入非当前节点流量，破坏“一 worker 一节点”的归属证据。worker 继续使用订阅的代理定义和 DNS 数据，只保留 Coffee 检测所需的隔离配置。
-- 不增加站外出口回显或宿主直连 Coffee fallback；失败记录改为从 Mihomo 日志提取固定、脱敏的传输层原因，同时保持 `exit_ip=null`。
-
-收敛实现：
-
-- 单节点 Coffee 采集由 `BEST_IP_PAGE_TIMEOUT_MS` 约束总 wall-clock 预算；related 自身仍有 20 秒硬上限。
-- 正式验收先固定订阅快照，并用 SHA-256 与客户端任务 ID 绑定实际扫描；动态订阅发生变化时失败而不是用两个快照做凭据和节点数核验。
-- 结果仓采用显式字段集合；写入、manifest 读取和导出都会重新校验节点结构、代理证据、完成字段、文件大小与 SHA-256。导出顶层总数和计数只来自已校验 manifest。
-- 取消和完成响应只有在 Mihomo 子进程退出且临时工作目录删除后才设置 `cleanup_confirmed=true`；正式验收会检查该事实和 `runtime/jobs/<job_id>` 不存在。
-
-## 4. 验收标准
-
-### 静态与单元测试
-
-- 扫描路径不存在 GPT/Claude/OpenAI/Anthropic URL。
-- 扫描器不存在 direct Coffee client、固定 Coffee IP、DoH 解析或代理失败后的 direct fallback。
-- 每个 Coffee request 都由唯一的 proxied client 发出，且代理 URL 等于当前工作区 Mihomo mixed-port。
-- 切换节点后必须新建并关闭连接池。
-- manifest 缺任一节点记录时不得标记 completed 或导出。
-- 失败记录的 `exit_ip` 必须为 `null`。
-- 前端契约中不存在 AI 字段。
-
-### 真实全量扫描
-
-使用正式订阅测试连接完成网站端到端验收；订阅 URL 只放在 Git 忽略的工作区 `.env` 的 `BEST_IP_TEST_SUBSCRIPTION_URL`，禁止把 token 写入本仓库或命令行。执行：
+真实本地闭环使用被忽略的 `.env`，不把订阅 URL 写进命令行：
 
 ```powershell
 uv run --env-file .env python scripts/verify_real_scan.py
 ```
 
-验收要求：
+性能复测需显式指定非敏感 API 地址：
 
-- 原始配置数、metadata 数和当前真实节点数以本次订阅实际返回为准，并记录实测值。
-- 暂存记录：真实节点数 / 真实节点数，不允许缺失。
-- 每个成功或部分节点都有合法 Coffee trace 出口 IP、lookup 结构化结果和代理证据；失败节点的出口 IP 为 `null`。
-- 从网站 `GET /api/scans/{job_id}/export` 得到新的完整 JSON；导出 manifest 和逐节点结果必须与前面核验的快照完全一致，并通过本地 `ResultStore` 重算节点文件大小和 SHA-256。
-- API 返回、导出和持久化暂存文件不包含订阅 URL、其 query/path token 或节点凭据；原始 Mihomo 日志只在临时目录内使用，任务结束即删除，不写入结果。
-- 脚本会逐节点读取结果、核对 trace/lookup、selector/代理证据、manifest hash、导出数量和凭据边界，作为每次后端采集改动后的闭环验收入口。
+```powershell
+$env:BEST_IP_API_BASE = 'http://127.0.0.1:8765'
+uv run --env-file .env python scripts/benchmark_scan.py --label optimized-8 --warmup 1 --runs 3
+```
 
-### 验证命令
+## 6. 发布前清单
 
-1. `uv run pytest -q`
-2. `uv run ruff check .`
-3. `node --check frontend/app.js`
-4. `git diff --check`
-5. 启动本地网站，从工作区 `.env` 读取正式订阅并运行 `uv run --env-file .env python scripts/verify_real_scan.py`。
-6. 脚本核对 manifest、节点文件数、出口 IP 格式、selector 身份、失败真实性、敏感信息和导出完整性。
+- [ ] 用 `gh` 配置 `SCAN_PRIVATE_KEY_PEM`、`SCAN_KEY_ID`，只提交公钥；配置 Pages source 为 GitHub Actions。
+- [ ] 推送 `main` 后检查 `https://<owner>.github.io/best-ip/` 的相对资源、JSON/CSV 无 PAT 导入路径。
+- [ ] 使用短期仓库级 PAT 做真实 Pages-origin dispatch、精确 run polling、artifact 下载、ZIP 校验、表格/详情/导出，并在完成后撤销 PAT。
+- [ ] 在真实浏览器验证 GitHub API artifact 的重定向下载是否允许 Pages origin CORS；若失败，必须报告为平台限制，不增加未批准的外部 broker。
+- [ ] 发布前删除仓库外临时私钥和 `.env`，检查 `git status` 保留用户未跟踪的 `C.md` 不被修改。
 
-## 5. 执行清单
+## 7. 已知限制
 
-- [x] 重新定义 Coffee-only 目标、隔离边界、暂存契约和阶段门控
-- [x] 复核 Coffee IP 页当前同源请求集合
-- [x] 实现 Mihomo 强制代理 Coffee collector
-- [x] 实现每节点原子暂存仓与 completed manifest
-- [x] 解耦 JobManager、结果读取 API 和扫描器活动状态
-- [x] 删除前端 GPT/Claude 展示与筛选
-- [x] 更新测试与 README
-- [x] 完成正式订阅全量网站扫描并导出新 JSON（历史任务 `9984538c804a4a14995b90618292412b`：20/20，完整 8，部分 0，失败 12；探索诊断任务 `a31a580343aa4c9a8769240f4f3e3fe7`：11/11，均以脱敏传输错误终态落盘；最终收敛任务 `25327ad825d54268a88f2d2e4aba1c6e`：9/9，完整 0，部分 0，失败 9，manifest/export/hash/凭据与清理闭环通过；订阅内容由供应商动态变化）
-- [x] 实现独立 Mihomo 有界并发和单节点内 Coffee 请求并行（默认 4 workers；2/4 workers 正式订阅 A/B 已验证）
-- [x] 完成显式 IP、原生配置 A/B 和失败根因探索，不引入无事实收益的 fallback
-- [x] 将 Mihomo DNS、REALITY、超时、拒绝连接、TLS、连接重置、EOF 和网络不可达日志映射为固定脱敏错误
-- [x] 将正式验收绑定到订阅 SHA-256/确定任务 ID，强制核对节点顺序、metadata、manifest/export、本地 hash、凭据和 Mihomo 清理终态
-- [x] 收紧 ResultStore 显式字段与完成事实校验，并使单节点 Coffee 采集遵守总 wall-clock 预算
+- PAT 仍可被当前页面、浏览器扩展、DevTools 或 XSS 读取，必须短期、仓库 scoped、用后撤销。
+- GitHub 会保存 workflow input 的密文历史；私钥泄露会使历史密文具备解密风险，因此 envelope 过期和 key rotation 必须执行。
+- 每个 Mihomo 实例加载完整代理定义，8 worker 会增加 CPU/RSS；资源受限机器可通过环境变量下调。
+- Actions 只提供 workflow 级进度，不能在无外部状态服务时伪造逐节点实时进度。
+- artifact 只保留 1 天；用户应在完成后导出结果。
+- Pages artifact 的 GitHub signed-redirect CORS 行为仍需真实 Pages origin 浏览器验收，本地 curl/Node 不能替代该门禁。
 
-## 6. 历史结果说明
+## 8. 工作树约束
 
-`best-ip-results-2026-08-21.json` 及任务 `1aff3b23ea9f405b84e01919ed13229d` 属于旧架构：包含 GPT/Claude，并允许显式出口 IP 的 Coffee 请求走宿主直连。它只能作为旧行为基线，不能作为本轮 Coffee-only、强制代理、后端暂存架构的验收结果。
+不要提交或修改用户的 `C.md`。不要把 `.env`、私钥、runtime/jobs、runtime/results、Mihomo 日志或原始配置加入仓库、Pages bundle、workflow artifact 或公开日志。

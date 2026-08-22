@@ -7,6 +7,7 @@ import ipaddress
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -196,7 +197,7 @@ def _require_no_failed_nodes(job: dict[str, Any]) -> None:
     failed_count = job.get("failed_count")
     if not isinstance(failed_count, int) or failed_count < 0:
         raise RuntimeError("正式订阅没有合法失败节点计数")
-    if failed_count:
+    if failed_count and os.environ.get("BEST_IP_ALLOW_PARTIAL") != "1":
         raise RuntimeError(
             f"正式订阅可用性验收失败：{failed_count} 个节点未获得有效结果"
         )
@@ -295,7 +296,10 @@ async def verify() -> None:
 
     timeout = httpx.Timeout(15.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        job_id = uuid4().hex
+        requested_job_id = os.environ.get("BEST_IP_REQUEST_ID", "").strip()
+        if requested_job_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", requested_job_id):
+            raise RuntimeError("BEST_IP_REQUEST_ID 格式无效")
+        job_id = requested_job_id or uuid4().hex
         try:
             created_response = await asyncio.wait_for(
                 client.post(

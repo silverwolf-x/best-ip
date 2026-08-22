@@ -500,6 +500,10 @@ class ResultStore:
             raise ResultStoreError("节点记录状态无效")
 
     @staticmethod
+    def summary(record: dict[str, Any]) -> dict[str, Any]:
+        return ResultStore._summary(record)
+
+    @staticmethod
     def _summary(record: dict[str, Any]) -> dict[str, Any]:
         return {key: record.get(key) for key in _SUMMARY_KEYS}
 

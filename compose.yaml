@@ -5,4 +5,5 @@ services:
       - "8000:8000"
     environment:
       BEST_IP_MAX_PARALLEL_JOBS: "2"
+      BEST_IP_MAX_PARALLEL_NODES: "8"
     restart: unless-stopped

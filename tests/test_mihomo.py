@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+import backend.app.mihomo as mihomo_module
 from backend.app.mihomo import (
     MIHOMO_NOT_READY_MESSAGE,
+    MihomoError,
     MihomoNotReadyError,
     MihomoProcess,
     MihomoStopError,
@@ -88,6 +92,7 @@ async def test_start_cancellation_stops_spawned_process(tmp_path, monkeypatch) -
     with pytest.raises(asyncio.CancelledError):
         await task
     assert stop_called is True
+    await mihomo._release_ports()
 
 
 async def test_stop_reports_unconfirmed_process_exit(tmp_path, monkeypatch) -> None:
@@ -140,6 +145,130 @@ async def test_stop_wraps_unexpected_cleanup_error(tmp_path, monkeypatch) -> Non
 
     assert mihomo.process is process
     assert log_handle.closed is False
+
+
+async def test_concurrent_starts_overlap_and_use_distinct_reserved_ports(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    processes: list[FakeProcess] = []
+    ready_release = asyncio.Event()
+    ready_active = 0
+    max_ready_active = 0
+
+    async def fake_spawn(*_args: Any, **_kwargs: Any) -> FakeProcess:
+        process = FakeProcess()
+        processes.append(process)
+        return process
+
+    async def concurrent_ready(_self: MihomoProcess) -> None:
+        nonlocal ready_active, max_ready_active
+        ready_active += 1
+        max_ready_active = max(max_ready_active, ready_active)
+        try:
+            await ready_release.wait()
+        finally:
+            ready_active -= 1
+
+    monkeypatch.setattr(
+        "backend.app.mihomo.asyncio.create_subprocess_exec",
+        fake_spawn,
+    )
+    monkeypatch.setattr(MihomoProcess, "_wait_until_ready", concurrent_ready)
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    instances = [
+        MihomoProcess(
+            core_path,
+            tmp_path / f"workspace-{index}",
+            [{"name": f"node-{index}"}],
+        )
+        for index in range(2)
+    ]
+    tasks = [asyncio.create_task(instance.start()) for instance in instances]
+
+    try:
+        deadline = asyncio.get_running_loop().time() + 2
+        while (
+            len(processes) < 2
+            or max_ready_active < 2
+        ) and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        assert len(processes) == 2
+        assert max_ready_active == 2
+        assert len({instance.mixed_port for instance in instances}) == 2
+        assert len({instance.controller_port for instance in instances}) == 2
+        assert set(instance.mixed_port for instance in instances).isdisjoint(
+            instance.controller_port for instance in instances
+        )
+    finally:
+        ready_release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*(instance.stop() for instance in instances))
+
+    assert all(instance._ports_reserved is False for instance in instances)
+    assert all(
+        port not in mihomo_module._RESERVED_PORTS
+        for instance in instances
+        for port in (instance.mixed_port, instance.controller_port)
+    )
+
+
+async def test_start_cancellation_waits_for_config_thread_and_releases_ports(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    original_write_config = MihomoProcess._write_config
+
+    def slow_write_config(self: MihomoProcess) -> Path:
+        entered.set()
+        assert release.wait(5)
+        return original_write_config(self)
+
+    monkeypatch.setattr(MihomoProcess, "_write_config", slow_write_config)
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    work_dir = tmp_path / "workspace"
+    mihomo = MihomoProcess(core_path, work_dir, [{"name": "node-a"}])
+    task = asyncio.create_task(mihomo.start())
+
+    assert await asyncio.to_thread(entered.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert mihomo._ports_reserved is False
+    assert (work_dir / "config.yaml").is_file()
+    shutil.rmtree(work_dir)
+
+
+async def test_failed_readiness_releases_reserved_ports(tmp_path, monkeypatch) -> None:
+    async def fake_spawn(*_args: Any, **_kwargs: Any) -> FakeProcess:
+        return FakeProcess()
+
+    async def fail_ready(_self: MihomoProcess) -> None:
+        raise MihomoError("controller unavailable")
+
+    monkeypatch.setattr(
+        "backend.app.mihomo.asyncio.create_subprocess_exec",
+        fake_spawn,
+    )
+    monkeypatch.setattr(MihomoProcess, "_wait_until_ready", fail_ready)
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    mihomo = MihomoProcess(core_path, tmp_path / "workspace", [{"name": "node-a"}])
+
+    with pytest.raises(MihomoError, match="Mihomo 启动失败"):
+        await mihomo.start()
+
+    assert mihomo._ports_reserved is False
+    assert mihomo.process is None
+    assert mihomo.mixed_port not in mihomo_module._RESERVED_PORTS
+    assert mihomo.controller_port not in mihomo_module._RESERVED_PORTS
 
 
 async def test_stop_finishes_cleanup_before_propagating_cancellation(

@@ -23,7 +23,7 @@ class Settings:
     subscription_max_bytes: int = int(os.getenv("BEST_IP_SUBSCRIPTION_MAX_BYTES", 5 * 1024 * 1024))
     max_nodes: int = int(os.getenv("BEST_IP_MAX_NODES", "500"))
     max_parallel_jobs: int = int(os.getenv("BEST_IP_MAX_PARALLEL_JOBS", "2"))
-    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "4"))
+    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "8"))
     max_node_attempts: int = int(os.getenv("BEST_IP_MAX_NODE_ATTEMPTS", "3"))
     node_retry_backoff_ms: int = int(os.getenv("BEST_IP_NODE_RETRY_BACKOFF_MS", "500"))
     outbound_interface: str | None = (
