@@ -165,7 +165,10 @@ def test_frontend_is_coffee_only_and_has_no_default_credential() -> None:
         app_script = client.get("/app.js")
     assert response.status_code == app_script.status_code == 200
     assert "Coffee" in response.text
-    assert "每个节点完成并原子暂存后会立即显示" in response.text
+    assert (
+        "Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果"
+        in response.text
+    )
     assert "state.results = Array.isArray(job.results)" in app_script.text
     assert 'value="https://' not in response.text
     forbidden_terms = (

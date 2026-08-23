@@ -7,11 +7,11 @@
   <meta name="api-base" content="">
   <title>Best IP · Coffee 节点检测</title>
   <link rel="stylesheet" href="./styles.css?v=20260822-8">
-  <script src="./site-config.js?v=20260822-1" defer></script>
-  <script src="./action-client.js?v=20260822-4" defer></script>
+  <script src="./site-config.js?v=20260823-1" defer></script>
+  <script src="./action-client.js?v=20260823-1" defer></script>
 
   <script src="./zip-reader.js?v=20260822-1" defer></script>
-  <script src="./app.js?v=20260822-9" defer></script>
+  <script src="./app.js?v=20260823-1" defer></script>
 </head>
 <body>
   <div class="container">
@@ -26,7 +26,7 @@
 
     <header class="page-header">
       <div class="ip-section-header"><h1>Coffee IP 评分 · 订阅节点检测</h1></div>
-      <p class="desc">所有节点按顺序经工作区 Mihomo 切换，仅采集 Coffee IP 页面及其明确的同源结构化接口；每个节点完成后立即展示已原子暂存的摘要，全部结束后再生成最终 manifest。</p>
+      <p class="desc">所有节点按顺序经工作区 Mihomo 切换，仅采集 Coffee IP 页面及其明确的同源结构化接口；扫描期间展示 Actions Job/Step 进度，全部结束并校验终态 artifact 后统一展示节点结果与最终 manifest。</p>
     </header>
 
     <form id="scanForm" class="search-bar">
@@ -34,15 +34,10 @@
         <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴 Mihomo YAML 订阅链接 (https://...)" required>
         <button id="revealButton" class="reveal-btn" type="button" aria-label="切换显示">👁️</button>
       </div>
-      <div id="githubPatWrap" class="github-pat-wrap" hidden>
-        <label class="sr-only" for="githubPat">临时 GitHub Fine-grained PAT</label>
-        <input id="githubPat" type="password" autocomplete="off" spellcheck="false" placeholder="临时 GitHub PAT（仅保存在当前页面内存）">
-        <button id="clearGithubPat" class="reveal-btn" type="button" aria-label="清除 GitHub PAT">×</button>
-      </div>
       <button id="startButton" class="btn btn-primary" type="submit">开始检测</button>
       <button id="cancelButton" class="btn btn-cancel" type="button" hidden>停止</button>
     </form>
-    <p id="modeHint" class="import-hint" hidden>Pages 模式：PAT 仅用于本次 GitHub Actions 调度和取回结果，订阅地址会在浏览器内加密后发送。</p>
+    <p id="modeHint" class="import-hint" hidden>个人网关模式：Cloudflare Access 会话负责访问控制，订阅地址在浏览器内加密后发送，无需 GitHub 凭证；终态 artifact 校验完成后展示节点结果。</p>
     <p id="errorMessage" class="error-box" role="alert" hidden></p>
 
     <section class="toolbar-panel card" id="resultsToolbar">
@@ -143,7 +138,7 @@
         </thead>
         <tbody id="resultBody"></tbody>
       </table>
-      <div id="emptyResults" class="empty-state"><p class="empty-title">等待首个节点结果</p><p class="empty-desc">每个节点完成并原子暂存后会立即显示；全部节点结束后生成最终 manifest，并开放详情与导出。</p></div>
+      <div id="emptyResults" class="empty-state"><p class="empty-title">等待终态 artifact</p><p class="empty-desc">Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。</p></div>
     </section>
 
     <footer class="footer">Best IP · Coffee IP 页面结构化节点检测</footer>

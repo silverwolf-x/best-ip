@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "best-ip",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-08-23",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./frontend",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+}

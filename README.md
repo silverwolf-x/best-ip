@@ -1,6 +1,6 @@
 # Best IP
 
-通过独立工作区 Mihomo 实例有界并发检测订阅节点，只经各自的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端为每个真实节点写入原子 JSON；前端在轮询中立即展示已完成节点的安全摘要，全部节点校验后再生成 `manifest.json`，详情与导出仍以最终 manifest 为门禁。
+通过独立工作区 Mihomo 实例有界并发检测订阅节点，只经各自的本地 mixed-port 访问 `ip.net.coffee` IP 页面及其明确的同源结构化接口。后端为每个真实节点写入原子 JSON；本地 FastAPI 模式继续逐节点展示摘要，Cloudflare Worker 网关模式在 Actions 运行期间展示 Job/Step，终态 artifact 完整校验后统一展示节点结果与 `manifest.json`。
 
 ## 核心行为
 
@@ -48,43 +48,43 @@ uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 打开 <http://127.0.0.1:8000>。前端默认使用同源 `/api/...`，不会自动改写到固定 loopback API；分离开发时请在 HTML 的 `meta[name="api-base"]` 中显式配置后端地址。
 
-## GitHub Pages 与 Actions 扫描
+## Cloudflare Worker + GitHub App 扫描
 
-推送 `main` 后，`.github/workflows/pages.yml` 会把 `frontend/` 发布为项目站点：
+生产入口是 Cloudflare Worker 的 `workers.dev` 地址（默认名称 `best-ip`）。Worker 同源托管 `frontend/` 和专用扫描 API；Cloudflare Access 只允许你配置的邮箱访问，因此日常扫描只需保持 Access 会话，不需要在页面输入任何 GitHub 凭证。
 
-```text
-https://<owner>.github.io/best-ip/
-```
+浏览器仍使用 WebCrypto 的 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key。Worker 只接受带 request ID、key ID 的 envelope，并由固定仓库、固定分支和固定 `scan.yml` workflow 调度。Worker 通过仅安装到 `silverwolf-x/best-ip` 的 GitHub App 读取 Job/Step、精确匹配 run/attempt、取消运行并代理唯一 artifact；GitHub App token 和私钥永不进入浏览器或仓库。
 
-Pages 模式仍然是一个可独立使用的静态前端：不填写 PAT 时可以导入此前导出的 JSON/CSV、筛选、查看详情并导出。输入订阅 URL 并开始扫描时，页面要求一个临时的 Fine-grained PAT（仓库 Actions Read and write）：
+扫描期间页面显示真实 Actions Job/Step 生命周期；节点计数显示“等待终态 artifact”，不把 `0/0` 当作扫描进度。只有 artifact 的 ZIP、CRC、SHA-256、request/run identity、manifest、节点计数和敏感字段校验全部通过后，页面才统一展示节点结果、详情和导出。Worker 返回的 scan token 有效期两小时，只保存在页面内存，并且只能通过 `X-Best-IP-Scan-Token` 请求头发送，禁止 URL/localStorage。
 
-1. PAT 只保存在当前页面 JavaScript 内存，清除任务/页面后不写入 localStorage、URL、仓库或 artifact。
-2. 浏览器使用 WebCrypto 的 AES-256-GCM 加密订阅 URL，再用仓库提交的 RSA-OAEP-3072 公钥包裹 AES key；Actions workflow input 只包含 request ID、key ID 和密文 envelope。
-3. Actions 用仓库 Secret `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，运行后端正式验收，并只上传 `status.json` 与 `result.json`。结果 artifact 保留 1 天，浏览器会校验 request/run identity、SHA-256、ZIP CRC、manifest、节点计数和敏感字段边界。
-4. 页面只接受与 request ID、`main` 分支、workflow_dispatch 事件和 run name 完全匹配的运行，不按“最新运行”猜测；扫描期间从精确 `run_attempt` 的 Jobs API 读取真实 job/step 状态、当前步骤、结论和耗时，独立进度面板会显示 `Job x/y` 与 `Step x/y`。GitHub Jobs API 不提供 verifier 内部节点计数，因此扫描期间节点统计显示 `—`/“等待终态 artifact”，不把 `0/0` 当作扫描进度；只有终态 artifact 通过完整校验后才显示真实节点数量。结束后会清除 PAT。
+### 一次性平台配置
 
-仓库管理员需要配置：
+1. 创建 GitHub App，权限只授予当前仓库 `Actions: Read and write`、`Metadata: Read`；安装到 `silverwolf-x/best-ip`，记下 App ID、Installation ID 和私钥。
+2. 在 Cloudflare 发布 Worker：本地执行 `npm ci && npm run deploy`，或在仓库 Actions 中配置具备 Workers Scripts 编辑权限的 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 后推送 `main`。
+3. 在 Cloudflare Access 为 `best-ip.<account>.workers.dev` 启用单用户策略，记下 Team domain、Application Audience（AUD），只允许自己的邮箱。可使用 Worker-level Access（Worker 运行时通过 `ctx.access` 提供已验证身份），或使用 hostname-based Access（Worker 通过 `Cf-Access-Jwt-Assertion` 和 Team domain JWKS 验证）；Access 会话建议 30 天。
+4. 在 Worker secrets/variables 中配置以下值（使用 `wrangler secret put` 或 Cloudflare 控制台；不要写入 Git）：
 
-- Actions Secret `SCAN_PRIVATE_KEY_PEM`：与 `frontend/scan-public.pem` 配对的私钥，只存在 GitHub Secret。
-- Actions/Repository variable `SCAN_KEY_ID`：公钥 SPKI DER 的 SHA-256 指纹，必须与 `frontend/site-config.js` 中的 `keyId` 相同。
-- Pages source：GitHub Actions。
+   - `SCAN_KEY_ID`：`frontend/scan-public.pem` 的 SPKI DER SHA-256 指纹。
+   - `GITHUB_APP_ID`、`GITHUB_APP_INSTALLATION_ID`、`GITHUB_APP_PRIVATE_KEY`（GitHub 下载的 RSA PEM，Worker 同时接受 PKCS#1/PKCS#8）。
+   - `SCAN_TOKEN_SECRET`：随机高熵 HMAC 密钥。
+   - `ACCESS_TEAM_DOMAIN`、`ACCESS_POLICY_AUD`、`ACCESS_ALLOWED_EMAIL`。
+   - Actions Secret `SCAN_PRIVATE_KEY_PEM`：与前端公钥配对的订阅解密私钥。
 
-PAT 是临时授权而不是用户认证；建议只授予当前仓库 Actions 读写、设置短过期时间，并在扫描后立即撤销。GitHub 仍会保存 workflow input 的密文历史，私钥轮换和 envelope 短过期时间是必要的安全边界。
+缺失任一生产配置时 Worker 失败关闭；`.dev.vars.example` 仅用于本地 Worker 模拟。GitHub App、Access、Cloudflare token 和上述 secrets 需要在平台侧一次性建立，代码不会替用户创建或轮换它们。密钥轮换时先发布兼容配置、完成一次验收，再撤销旧值；若 Worker 故障，可通过 Cloudflare 回滚上一版本，GitHub Actions 的 `scan.yml` 仍保留扫描和 artifact 结构。
+
+旧 GitHub Pages workflow 已移除。Worker 线上验收通过后，请在 GitHub Actions/Pages 设置中手动取消仍在发布的旧 Pages 任务，并以受 Access 保护的 Worker 地址作为唯一入口。
 
 ## 验证
 
 ```powershell
 uv run pytest -q
 uv run ruff check .
-node --check frontend/app.js
-node --check frontend/action-client.js
-node --check frontend/zip-reader.js
-node --check scripts/decrypt_subscription.mjs
-node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs
+npm ci
+npm test
+npm run dry-run
 git diff --check
 ```
 
-Pages 的 Actions 进度只代表 GitHub runner 的 job/step 生命周期，不代表扫描器内部节点完成数。节点级 `total/completed` 以经过 ZIP、CRC、SHA-256、run identity 和 manifest 校验的终态 artifact 为唯一依据；本地 FastAPI 模式仍显示后端返回的真实节点计数。
+Worker 的 Actions 进度只代表 GitHub runner 的 job/step 生命周期，不代表扫描器内部节点完成数。节点级 `total/completed` 以经过 ZIP、CRC、SHA-256、run identity 和 manifest 校验的终态 artifact 为唯一依据；本地 FastAPI 模式仍显示后端返回的真实节点计数。Worker 单测还覆盖 Access JWT、scan token、CSRF、envelope、GitHub App token、分页 Job、精确 run 和 artifact 唯一匹配。
 
 健康检查：
 
@@ -115,55 +115,52 @@ uv run --env-file .env python scripts/benchmark_scan.py --label optimized-8 --wa
 
 ## API
 
+Worker 模式只开放以下同源接口。除 `GET /api/health` 外，请求都要携带内存中的 `X-Best-IP-Scan-Token`；状态变更还必须通过同源 `Origin`/Fetch-Metadata 检查。订阅明文只存在浏览器加密前的短暂内存，不作为请求字段发送。
+
 ### 创建扫描
 
 ```http
 POST /api/scans
 Content-Type: application/json
 
-{"subscription_url":"https://example.com/subscription"}
+{"request_id":"req-...","key_id":"<64 hex>","envelope":{...}}
 ```
 
-响应 `202` 和任务 ID。订阅地址不会写入任务状态、manifest 或导出。正式验收脚本还会传入可选的 64 位 `subscription_sha256` 和 32 位 `request_id`，用于把实际扫描绑定到预取快照，并在创建响应丢失时仍可取消确定的任务；普通客户端无需提供。
+响应 `202`，包含 `request_id`、`dispatched_at` 和两小时有效 `scan_token`。Worker 固定调度 `silverwolf-x/best-ip` 的 `main` 分支 `scan.yml`，不提供通用 GitHub API 代理。
 
-### 查询进度/完成摘要
+### 查询进度
 
 ```http
-GET /api/scans/{id}
+GET /api/scans/{request_id}?run_id=<id>&run_attempt=<attempt>
+X-Best-IP-Scan-Token: <memory-only-token>
 ```
 
-扫描中返回状态、计数、阶段信息以及所有已原子暂存节点的轻量摘要；状态为 `completed` 且 `manifest_ready=true` 后，额外返回经完整校验的最终 manifest。
+返回规范化 Actions run、分页 Job/Step 和 artifact 是否可用。运行中只返回步骤进度；节点结果必须等待终态 artifact。
 
-### 查询单节点完整结果
+### 代理唯一 artifact
 
 ```http
-GET /api/scans/{id}/results/{index}
+GET /api/scans/{request_id}/artifact?run_id=<id>&run_attempt=<attempt>
+X-Best-IP-Scan-Token: <memory-only-token>
 ```
 
-仅在完成 manifest 后可用；结果直接从已校验节点 JSON 读取。
-
-### 导出完整任务 JSON
-
-```http
-GET /api/scans/{id}/export
-```
-
-仅在 manifest 完整校验通过后返回。导出包含 Coffee 原始结构化 payload、请求证据、完整性状态和每节点记录。
+Worker 只代理精确匹配 request/run/attempt/name、未过期且唯一的 ZIP，并限制响应大小；浏览器随后校验 ZIP、CRC、SHA-256、manifest 和节点记录。
 
 ### 停止任务
 
 ```http
-DELETE /api/scans/{id}
+DELETE /api/scans/{request_id}?run_id=<id>
+X-Best-IP-Scan-Token: <memory-only-token>
 ```
 
-取消任务不会生成 completed manifest，也不会把未完成扫描伪装为完成。
+取消请求由 Worker 使用 GitHub App 运行身份执行，不生成 completed manifest，也不会把未完成扫描伪装为完成。`GET /api/health` 用于 Access 会话和 Worker 配置健康检查。
 
 ## 安全边界
 
 - 订阅 URL 仅允许公开 HTTP/HTTPS，拒绝认证信息、本机、内网、回环和保留地址；重定向逐跳重新验证。
 - 订阅下载和 Mihomo 节点连接属于准备/传输控制面；Coffee 数据面不复用其直连客户端或 DNS 解析路径。
 - 节点配置可能含代理凭据，只写入临时 Mihomo 目录并在任务结束清理；结果文件使用字段 allowlist，不保存订阅 URL。
-- 本项目没有用户认证。若部署到公网，必须在反向代理层增加认证、HTTPS、限速和并发限制。
+- 本地 FastAPI 模式不提供用户认证，只应监听 loopback；生产 Worker 必须启用 Cloudflare Access 单用户策略，并由 Worker 校验 issuer、audience 和允许邮箱。
 
 ## 配置
 

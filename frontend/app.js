@@ -1,5 +1,5 @@
 const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, "") || "";
-const githubActionsMode = Boolean(window.BestIpAction?.isPagesMode?.());
+const gatewayMode = Boolean(window.BestIpAction?.isGatewayMode?.());
 const ACTION_QUEUE_DEADLINE_MS = 13 * 60 * 1000;
 const ACTION_RUN_DEADLINE_MS = 31 * 60 * 1000;
 
@@ -8,7 +8,7 @@ const state = {
   results: [],
   imported: false,
   importSource: "",
-  githubPat: "",
+  scanToken: "",
   actionRequestId: null,
   actionRunId: null,
   actionDispatchedAt: 0,
@@ -47,9 +47,6 @@ const elements = {
   form: document.querySelector("#scanForm"),
   subscriptionUrl: document.querySelector("#subscriptionUrl"),
   revealButton: document.querySelector("#revealButton"),
-  githubPatWrap: document.querySelector("#githubPatWrap"),
-  githubPat: document.querySelector("#githubPat"),
-  clearGithubPat: document.querySelector("#clearGithubPat"),
   modeHint: document.querySelector("#modeHint"),
   startButton: document.querySelector("#startButton"),
   cancelButton: document.querySelector("#cancelButton"),
@@ -132,7 +129,7 @@ function actionStatusLabel(progress) {
 }
 
 function renderActionProgress(progress) {
-  if (!githubActionsMode || !elements.actionProgressPanel) return;
+  if (!gatewayMode || !elements.actionProgressPanel) return;
   elements.actionProgressPanel.hidden = !progress;
   if (!progress) {
     elements.scanProgressCount.textContent = "—";
@@ -165,8 +162,8 @@ function renderActionProgress(progress) {
 }
 
 function renderNodeProgress(progress, job) {
-  const isPagesProgress = githubActionsMode && progress?.source === "artifact";
-  if (isPagesProgress && progress.phase !== "terminal") {
+  const isGatewayProgress = gatewayMode && progress?.source === "artifact";
+  if (isGatewayProgress && progress.phase !== "terminal") {
     elements.totalStat.textContent = "—";
     elements.completedStat.textContent = "—";
     elements.successStat.textContent = "—";
@@ -177,18 +174,18 @@ function renderNodeProgress(progress, job) {
       : "节点统计：等待终态 artifact（Actions 只提供步骤进度）";
     return;
   }
-  const source = isPagesProgress ? progress : job;
-  const total = isPagesProgress ? source?.total : Number(source?.total || 0);
-  const completed = isPagesProgress ? source?.completed : Number(source?.completed || 0);
-  const success = isPagesProgress ? source?.success_count : Number(source?.success_count || 0);
-  const partial = isPagesProgress ? source?.partial_count : Number(source?.partial_count || 0);
-  const failed = isPagesProgress ? source?.failed_count : Number(source?.failed_count || 0);
+  const source = isGatewayProgress ? progress : job;
+  const total = isGatewayProgress ? source?.total : Number(source?.total || 0);
+  const completed = isGatewayProgress ? source?.completed : Number(source?.completed || 0);
+  const success = isGatewayProgress ? source?.success_count : Number(source?.success_count || 0);
+  const partial = isGatewayProgress ? source?.partial_count : Number(source?.partial_count || 0);
+  const failed = isGatewayProgress ? source?.failed_count : Number(source?.failed_count || 0);
   elements.totalStat.textContent = formatCount(total);
   elements.completedStat.textContent = formatCount(completed);
   elements.successStat.textContent = formatCount(success);
   elements.issueStat.textContent = Number.isInteger(partial) && Number.isInteger(failed) ? String(partial + failed) : "—";
-  elements.nodeProgressHint.hidden = !(isPagesProgress && source?.usable === false);
-  if (isPagesProgress && source?.usable === false) {
+  elements.nodeProgressHint.hidden = !(isGatewayProgress && source?.usable === false);
+  if (isGatewayProgress && source?.usable === false) {
     elements.nodeProgressHint.textContent = "节点统计：artifact 已完成，但包含部分/失败节点";
   }
 }
@@ -208,13 +205,11 @@ elements.themeButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
-if (githubActionsMode) {
-  elements.githubPatWrap.hidden = false;
+if (gatewayMode) {
   elements.modeHint.hidden = false;
-  elements.healthStatus.textContent = "GitHub Actions 模式";
+  elements.healthStatus.textContent = "个人 Actions 网关模式";
   elements.healthStatus.className = "health ready";
 }
-elements.clearGithubPat?.addEventListener("click", () => clearGithubPat());
 
 elements.revealButton.addEventListener("click", () => {
   const revealing = elements.subscriptionUrl.type === "password";
@@ -233,7 +228,7 @@ elements.form.addEventListener("submit", async (event) => {
   state.imported = false;
   state.importSource = "";
   state.actionProgress = null;
-  state.nodeProgress = githubActionsMode ? waitingNodeProgress() : {
+  state.nodeProgress = gatewayMode ? waitingNodeProgress() : {
     source: "none",
     phase: "idle",
     total: null,
@@ -250,24 +245,22 @@ elements.form.addEventListener("submit", async (event) => {
   showError("");
   elements.scanStatusBadge.hidden = false;
   elements.scanStatusText.textContent = "创建任务";
-  elements.scanProgressCount.textContent = githubActionsMode ? "步骤 —/—" : "0/0";
+  elements.scanProgressCount.textContent = gatewayMode ? "步骤 —/—" : "0/0";
   renderRows();
-  if (githubActionsMode) {
+  if (gatewayMode) {
     renderActionProgress(null);
     renderNodeProgress(state.nodeProgress, null);
   }
 
   try {
-    if (githubActionsMode) {
-      const pat = elements.githubPat.value.trim();
-      state.githubPat = pat;
-      const dispatched = await window.BestIpAction.dispatch(pat, subscriptionUrl);
+    if (gatewayMode) {
+      const dispatched = await window.BestIpAction.dispatch(subscriptionUrl);
+      state.scanToken = dispatched.scanToken;
       state.actionRequestId = dispatched.requestId;
       state.actionRunId = dispatched.runId;
       state.actionDispatchedAt = dispatched.dispatchedAt || Date.now();
       state.actionPollDelay = 2000;
       elements.subscriptionUrl.value = "";
-      elements.githubPat.value = "";
       state.job = {
         id: state.actionRequestId,
         status: "dispatching",
@@ -304,8 +297,8 @@ elements.cancelButton.addEventListener("click", async () => {
   state.pollTimer = null;
   elements.cancelButton.disabled = true;
   try {
-    if (githubActionsMode) {
-      await window.BestIpAction.cancel(state.githubPat, state.actionRunId);
+    if (gatewayMode) {
+      await window.BestIpAction.cancel(state.scanToken, state.actionRequestId, state.actionRunId);
       state.pollGeneration += 1;
       state.actionProgress = state.actionProgress
         ? { ...state.actionProgress, run_status: "cancelled", raw_run_status: "cancelled", conclusion: "cancelled" }
@@ -318,7 +311,7 @@ elements.cancelButton.addEventListener("click", async () => {
       };
       renderProgress(state.job);
       setScanning(false);
-      clearGithubPat();
+      clearScanToken();
     } else {
       const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
       state.pollGeneration += 1;
@@ -330,8 +323,8 @@ elements.cancelButton.addEventListener("click", async () => {
     elements.cancelButton.disabled = false;
     if (generation === state.pollGeneration && !state.pollTimer && state.job?.id) {
       state.pollTimer = setTimeout(
-        () => (githubActionsMode ? pollAction(generation) : pollJob(state.job.id, generation)),
-        githubActionsMode ? state.actionPollDelay : 1000,
+        () => (gatewayMode ? pollAction(generation) : pollJob(state.job.id, generation)),
+        gatewayMode ? state.actionPollDelay : 1000,
       );
     }
     showInlineError(`停止失败：${error.message}`);
@@ -932,7 +925,7 @@ async function pollAction(generation) {
   if (actionPollDeadlineExceeded(generation)) return;
   try {
     const remote = await window.BestIpAction.poll(
-      state.githubPat,
+      state.scanToken,
       state.actionRequestId,
       state.actionRunId,
       state.actionDispatchedAt,
@@ -961,7 +954,7 @@ async function pollAction(generation) {
     renderProgress(state.job);
     if (remote.status === "completed" && remote.manifest_ready) {
       applyActionResults(remote);
-      clearGithubPat();
+      clearScanToken();
       setScanning(false);
       if (remote.action_status?.usable === false) {
         showInlineError("扫描已完成，但结果包含部分或失败节点，不能视为完整可用。");
@@ -969,7 +962,7 @@ async function pollAction(generation) {
       return;
     }
     if (["failed", "cancelled"].includes(remote.status)) {
-      clearGithubPat();
+      clearScanToken();
       setScanning(false);
       return;
     }
@@ -1061,7 +1054,7 @@ async function pollJob(jobId, generation) {
 }
 
 function renderProgress(job) {
-  const actionJob = githubActionsMode && (job?.action_progress || state.actionProgress || state.importSource === "github-actions");
+  const actionJob = gatewayMode && (job?.action_progress || state.actionProgress || state.importSource === "github-actions");
   if (actionJob) {
     renderActionProgress(job?.action_progress || state.actionProgress);
     renderNodeProgress(job?.node_progress || state.nodeProgress, job);
@@ -1202,8 +1195,8 @@ function renderRows() {
     emptyTitle.textContent = "导入结果为空";
     emptyDesc.textContent = "请选择包含节点结果的 JSON 或 CSV 文件。";
   } else {
-    emptyTitle.textContent = "等待首个节点结果";
-    emptyDesc.textContent = "每个节点完成并原子暂存后会立即显示；全部节点结束后生成最终 manifest，并开放详情与导出。";
+    emptyTitle.textContent = "等待终态 artifact";
+    emptyDesc.textContent = "Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。";
   }
 }
 
@@ -1707,9 +1700,8 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
 
-function clearGithubPat() {
-  state.githubPat = "";
-  if (elements.githubPat) elements.githubPat.value = "";
+function clearScanToken() {
+  state.scanToken = "";
 }
 
 function setScanning(scanning) {
@@ -1733,7 +1725,7 @@ function showError(message) {
 
 function showInlineError(message) { showError(message); }
 function showFatalError(message) {
-  clearGithubPat();
+  clearScanToken();
   setScanning(false);
   elements.scanStatusBadge.hidden = true;
   showError(message);
@@ -1749,9 +1741,15 @@ async function readResponse(response) {
 }
 
 async function checkHealth() {
-  if (githubActionsMode) {
-    elements.healthStatus.textContent = "GitHub Actions 模式";
-    elements.healthStatus.className = "health ready";
+  if (gatewayMode) {
+    try {
+      const data = await readResponse(await fetch(apiUrl("/api/health"), { cache: "no-store", credentials: "same-origin" }));
+      elements.healthStatus.textContent = data.mode === "github-actions-gateway" ? "个人网关就绪" : "网关就绪";
+      elements.healthStatus.className = "health ready";
+    } catch (error) {
+      elements.healthStatus.textContent = error.message;
+      elements.healthStatus.className = "health error";
+    }
     return;
   }
   try {

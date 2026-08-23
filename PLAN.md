@@ -1,6 +1,6 @@
 # Best IP 当前实现计划与验收账本
 
-> 本文以当前代码为准：后端保留 Coffee、ChatGPT/Codex 探测，默认 8 个节点 worker；前端同时支持本地 FastAPI 和 GitHub Pages 静态模式。订阅凭据只通过忽略的 `.env` 或浏览器到 Actions 的密文链路注入，不写入仓库。
+> 本文以当前代码为准：后端保留 Coffee、ChatGPT/Codex 探测，默认 8 个节点 worker；前端同时支持本地 FastAPI 和 Cloudflare Worker gateway。订阅凭据只通过忽略的 `.env` 或浏览器到 Worker 的 WebCrypto 密文链路注入，不写入仓库。
 
 ## 1. 目标与边界
 
@@ -9,7 +9,10 @@
 - Coffee、ChatGPT、Codex 请求均固定经当前节点 mixed-port，HTTP 客户端使用 `trust_env=False`，不提供 direct fallback。
 - 每个真实节点必须落一条 success/partial/failed 终态记录；出口 IP、selector 身份、trace/lookup、代理证据和 manifest hash 必须可复核。
 - 运行中只返回已持久化的安全摘要；完整详情和导出必须等全部节点写入、manifest 完整校验后开放。
-- GitHub Pages 在没有后端时仍可导入 JSON/CSV、筛选、查看详情和导出；输入订阅后用临时 Fine-grained PAT dispatch Actions。
+- Cloudflare Worker 同源托管前端和专用 API；生产入口由 Cloudflare Access 单用户策略保护。
+- 浏览器不输入 GitHub PAT。订阅 URL 在浏览器端用 AES-256-GCM 加密，再用 RSA-OAEP-3072 包裹 AES key；Worker 只接收绑定 request ID/key ID 的 envelope。
+- Worker 通过仅安装到 `silverwolf-x/best-ip` 的 GitHub App 调度固定 `main` 分支 `scan.yml`，读取 Job/Step，代理唯一终态 artifact，并执行取消。
+- 本地 FastAPI 仍用于 loopback 开发和正式本地扫描；远程 Worker 模式的节点结果必须等待终态 artifact 完整校验。
 
 ## 2. 后端并发实现
 
@@ -29,29 +32,22 @@
 
 ## 3. 前端与 GitHub Actions
 
-### Pages
+### Worker gateway 与 Actions 密文 dispatch
 
-- `frontend/index.html`、CSS、JS 使用项目相对路径，适配 `/best-ip/`。
-- `site-config.js` 只含仓库、workflow、分支、公钥路径和 key ID 等非秘密元数据。
-- Pages host 自动使用 Actions provider；localhost/127.0.0.1 仍使用本地 FastAPI provider。
-- PAT 只在页面内存中保存；主题是唯一允许写 localStorage 的值。订阅输入在 dispatch 后清空，并提供显式 PAT 清除操作。
-
-### 密文 dispatch
-
-- 每次请求生成 request ID、AES-256-GCM key/IV 和 15 分钟 envelope。
-- envelope 的 AAD 绑定 request ID、key ID、过期时间；RSA-OAEP 使用 SHA-256 包裹 AES key。
-- workflow input 不携带明文 URL、PAT 或代理凭据。
-- `scan-public.pem` 的 SPKI DER SHA-256 指纹必须等于 `site-config.js` 与 Actions variable `SCAN_KEY_ID`。
-- Actions 通过 `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，错误输出不包含明文。
+- 页面使用同源 Worker API；`frontend/action-client.js` 不读取或发送 GitHub 用户凭据。
+- 每次请求生成 request ID、AES-256-GCM key/IV 和 15 分钟 envelope；AAD 绑定 request ID、key ID 和过期时间，RSA-OAEP 使用 SHA-256 包裹 AES key。
+- Worker 通过 Cloudflare Access 校验允许邮箱，再由 GitHub App JWT 换取仅限 `silverwolf-x/best-ip` 的 installation token；workflow input 不携带明文 URL、PAT 或代理凭据。
+- `scan-public.pem` 的 SPKI DER SHA-256 指纹必须等于 Worker 动态 `/site-config.js` 与 Actions variable `SCAN_KEY_ID`。
+- Actions 通过 `SCAN_PRIVATE_KEY_PEM` 在 runner 临时目录解密，错误输出不包含明文；清理步骤删除私钥、订阅和运行目录。
 
 ### 精确关联与 artifact
 
 - workflow 仅 `workflow_dispatch`，固定 `main` ref，单一 concurrency group，30 分钟超时。
-- 页面只接受 exact request ID 的 run name、workflow_dispatch event、main branch、创建时间窗口和唯一 run；不按最新 run 猜测。
-- artifact 名称绑定 request ID、run ID、run attempt，保留 1 天。
+- Worker 只接受 exact request ID 的 run title、workflow path、workflow_dispatch event、main branch、创建时间窗口和唯一 run/attempt。
+- artifact 名称绑定 request ID、run ID、run attempt，保留 1 天；Worker 只代理未过期且唯一的匹配 artifact。
 - sanitizer 只写 `status.json` 和 `result.json`，并拒绝 URL query/path token、凭据字段和凭据值；结果 JSON 的实际 UTF-8 bytes SHA-256 写入 status。
 - 浏览器 ZIP reader 限制压缩/解压大小，拒绝目录、路径穿越、重复文件、加密 ZIP、不支持算法、CRC 错误和解压炸弹；随后校验 result digest、manifest summaries、节点 identity、状态计数和可用性。
-- workflow 使用用户选择的 major action tags（如 checkout@v4、upload-artifact@v4），不把 PAT 交给 workflow。
+- Actions Job/Step 是扫描期间唯一的实时进度；节点计数在终态 artifact 之前显示等待状态，不能伪造为 `0/0`。
 
 ## 4. 已验证性能证据
 
@@ -90,24 +86,21 @@ $env:BEST_IP_API_BASE = 'http://127.0.0.1:8765'
 uv run --env-file .env python scripts/benchmark_scan.py --label optimized-8 --warmup 1 --runs 3
 ```
 
-## 6. 发布前清单
+## 6. Worker 生产发布与验收清单
 
-- [x] 用 `gh` 配置 `SCAN_PRIVATE_KEY_PEM`、`SCAN_KEY_ID`，只提交公钥；配置 Pages source 为 GitHub Actions。
-- [x] 推送 `main` 后检查 `https://silverwolf-x.github.io/best-ip/` 的相对资源；首页、CSS、JS、公钥资源均 HTTPS 200，静态导入代码已由本地 Node 测试覆盖。
-- [x] 使用密文 workflow input 完成一次真实 Actions scan rerun：run `32552269467` attempt `2` 成功，artifact 精确匹配并验收为 22/22 success、manifest/digest/敏感字段校验通过；该步骤使用 GitHub CLI 会话，不等价于浏览器内 Fine-grained PAT 输入。
-- [ ] 使用短期仓库级 PAT 做真实 Pages-origin dispatch、精确 run polling、artifact 下载、ZIP 校验、表格/详情/导出，并在完成后撤销 PAT。
-- [ ] 在真实浏览器验证 GitHub API artifact 的重定向下载是否允许 Pages origin CORS；若失败，必须报告为平台限制，不增加未批准的外部 broker。
-- [x] 已删除仓库外临时私钥和 E2E helper；用户已有的 `.env` 与未跟踪 `C.md` 未擅自删除或修改。
+- [x] Worker gateway 代码、前端同源 API、GitHub App 调度、Access 校验、Job/Step 状态和 artifact 完整校验已实现。
+- [x] 本地门禁已通过：`uv run pytest -q`、`uv run ruff check .`、`npm test`、`npm run dry-run`、`git diff --check`。
+- [ ] 将迁移提交通过 PR 合并到默认 `main`；PR 必须通过 Python、Node、Worker tests 和 Wrangler dry-run，且不包含 `C.md` 或本地 settings 修改。
+- [ ] 配置 GitHub App：仅 `Metadata: read` 与 `Actions: read/write`，且只安装到 `silverwolf-x/best-ip`；将 App ID、Installation ID、PEM 写入 Worker secrets 后删除临时 PEM。
+- [ ] 配置 GitHub Actions 的 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`，确认 main push 的 Worker deployment workflow 成功。
+- [ ] 在 Access 浏览器会话中验证 Worker `/api/health`、动态 `/site-config.js` 和无 PAT 页面。
+- [ ] 完成两次真实浏览器验收：一次成功扫描（Job/Step、唯一 artifact、ZIP/manifest/results/export），一次已建立 run 后取消（GitHub cancelled、无完成 artifact/manifest）。
+- [ ] 成功与取消验收均通过后，关闭旧 GitHub Pages 设置并确认 Worker 是唯一生产入口。
 
-## 7. 已知限制
+## 7. 发布回滚与已知限制
 
-- PAT 仍可被当前页面、浏览器扩展、DevTools 或 XSS 读取，必须短期、仓库 scoped、用后撤销。
-- GitHub 会保存 workflow input 的密文历史；私钥泄露会使历史密文具备解密风险，因此 envelope 过期和 key rotation 必须执行。
-- 每个 Mihomo 实例加载完整代理定义，8 worker 会增加 CPU/RSS；资源受限机器可通过环境变量下调。
-- Actions 只提供 workflow 级进度，不能在无外部状态服务时伪造逐节点实时进度。
-- artifact 只保留 1 天；用户应在完成后导出结果。
-- Pages artifact 的 GitHub signed-redirect CORS 行为仍需真实 Pages origin 浏览器验收，本地 curl/Node 不能替代该门禁。
-
-## 8. 工作树约束
+- PR/CI、App、secret 或 Worker 部署失败时不关闭 Pages；Worker 运行时可回滚到上一已知版本，代码回滚使用 revert PR，不直接推送 `main`。
+- 真实 E2E 只能由 Access 登录浏览器证明；本地 mock 测试和 GitHub CLI 只能作为契约/平台侧佐证，不能替代浏览器的同源 WebCrypto、Job/Step UI、artifact 下载和取消链路。
+- artifact 只保留 1 天；成功验收应保存脱敏的 run/artifact 关联信息，禁止保存 scan token、Access cookie/JWT、App token、私钥或订阅 URL。
 
 不要提交或修改用户的 `C.md`。不要把 `.env`、私钥、runtime/jobs、runtime/results、Mihomo 日志或原始配置加入仓库、Pages bundle、workflow artifact 或公开日志。

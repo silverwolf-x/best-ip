@@ -20,11 +20,13 @@ jobs:
         run: uv run ruff check .
       - name: Test Python
         run: uv run pytest
-      - name: Check JavaScript syntax
-        run: |
-          node --check frontend/app.js
-          node --check frontend/action-client.js
-          node --check frontend/zip-reader.js
-          node --check scripts/decrypt_subscription.mjs
-      - name: Test browser security and application modules
-        run: node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs
+      - name: Install Node dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check and test JavaScript/Worker
+        run: npm test
+      - name: Wrangler dry-run
+        run: npm run dry-run
