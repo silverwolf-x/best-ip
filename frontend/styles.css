@@ -252,24 +252,6 @@ h1 {
   border-color: var(--text);
 }
 
-.github-pat-wrap {
-  position: relative;
-  flex: 0 1 300px;
-  min-width: 220px;
-}
-.github-pat-wrap input {
-  width: 100%;
-  height: 42px;
-  padding: 0 34px 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  font-size: 0.85em;
-  outline: none;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  background: var(--bg-card);
-  color: var(--text);
-}
-.github-pat-wrap input:focus { border-color: var(--text); }
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1123,8 +1105,7 @@ pre {
 @media (max-width: 720px) {
   .container { padding: 16px 12px; }
   .search-bar { flex-direction: column; gap: 8px; }
-  .search-bar .input-wrap,
-  .search-bar .github-pat-wrap { width: 100%; flex-basis: auto; }
+  .search-bar .input-wrap { width: 100%; flex-basis: auto; }
   .search-bar .btn { width: 100%; }
   .stats-ribbon { flex-wrap: wrap; }
   .stat-pill { flex: 1 1 calc(50% - 6px); }

@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
 const appSource = readFileSync("frontend/app.js", "utf8");
 const indexSource = readFileSync("frontend/index.html", "utf8");
+const frontendAssetSource = readdirSync("frontend", { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => readFileSync(`frontend/${entry.name}`, "utf8"))
+  .join("\n");
 
 class FakeElement {
   constructor(id) {
@@ -66,7 +70,7 @@ class FakeElement {
   }
 }
 
-function createFixture({ includeError = true, dispatch, poll, cancel, pagesMode = true, fetchImpl } = {}) {
+function createFixture({ includeError = true, dispatch, poll, cancel, gatewayMode = true, fetchImpl } = {}) {
   const ids = [...new Set(
     [...indexSource.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => id),
   )].filter((id) => includeError || id !== "errorMessage");
@@ -93,10 +97,10 @@ function createFixture({ includeError = true, dispatch, poll, cancel, pagesMode 
   const logs = [];
   const action = {
     MAX_POLL_DELAY_MS: 10_000,
-    isPagesMode: () => pagesMode,
+    isGatewayMode: () => gatewayMode,
     dispatch: dispatch || (async (...args) => {
       calls.push(args);
-      throw new Error("PAT 无效");
+      throw new Error("网关请求失败");
     }),
     poll: poll || (async () => ({ status: "dispatching", manifest_ready: false })),
     cancel: cancel || (async () => {}),
@@ -131,24 +135,29 @@ function submit(fixture) {
   return listener({ preventDefault() {} });
 }
 
-test("the real page includes the error node and failed Pages submit is recoverable", async () => {
+test("gateway page has no browser GitHub credential surface", () => {
+  const actionSource = readFileSync("frontend/action-client.js", "utf8");
+  assert.doesNotMatch(indexSource, /githubPat|Fine-grained|Pages 模式/iu);
+  assert.doesNotMatch(actionSource, /api\.github\.com|Authorization|github_pat|Fine-grained/iu);
+  assert.doesNotMatch(frontendAssetSource, /github[-_]?pat|api\.github\.com|Authorization|github_pat|Fine-grained/iu);
+});
+
+test("the real page includes the error node and failed gateway submit is recoverable", async () => {
   assert.equal((indexSource.match(/id="errorMessage"/g) || []).length, 1);
   const fixture = createFixture();
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"a".repeat(40)}`;
 
   await submit(fixture);
 
   assert.equal(fixture.calls.length, 1);
   assert.equal(fixture.nodes.errorMessage.hidden, false);
-  assert.equal(fixture.nodes.errorMessage.textContent, "PAT 无效");
+  assert.equal(fixture.nodes.errorMessage.textContent, "网关请求失败");
   assert.equal(fixture.nodes.startButton.disabled, false);
   assert.equal(fixture.nodes.cancelButton.hidden, true);
-  assert.equal(fixture.nodes.githubPat.value, "");
   assert.equal(fixture.logs.length, 0);
 });
 
-test("a transient Pages polling failure keeps the retry timer alive", async () => {
+test("a transient gateway polling failure keeps the retry timer alive", async () => {
   const dispatchCalls = [];
   const fixture = createFixture({
     dispatch: async (...args) => {
@@ -158,7 +167,6 @@ test("a transient Pages polling failure keeps the retry timer alive", async () =
     poll: async () => { throw new Error("暂时网络错误"); },
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"b".repeat(40)}`;
 
   await submit(fixture);
 
@@ -172,7 +180,6 @@ test("a transient Pages polling failure keeps the retry timer alive", async () =
 test("missing error markup cannot crash terminal error handling", async () => {
   const fixture = createFixture({ includeError: false });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"c".repeat(40)}`;
 
   await submit(fixture);
 
@@ -181,7 +188,7 @@ test("missing error markup cannot crash terminal error handling", async () => {
   assert.match(fixture.logs.join("\n"), /错误提示区域不可用/);
 });
 
-test("Pages renders real Actions job and step progress without node 0/0", async () => {
+test("gateway renders real Actions job and step progress without node 0/0", async () => {
   const stepName = "<img src=x onerror=alert(1)> verifier";
   const fixture = createFixture({
     dispatch: async () => ({ requestId: "req-progress", runId: 42, dispatchedAt: Date.now() }),
@@ -225,7 +232,6 @@ test("Pages renders real Actions job and step progress without node 0/0", async 
     }),
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"d".repeat(40)}`;
 
   await submit(fixture);
 
@@ -244,7 +250,7 @@ test("Pages renders real Actions job and step progress without node 0/0", async 
   assert.match(fixture.nodes.nodeProgressHint.textContent, /等待终态 artifact/);
 });
 
-test("Pages switches to verified terminal artifact node counts", async () => {
+test("gateway switches to verified terminal artifact node counts", async () => {
   const fixture = createFixture({
     dispatch: async () => ({ requestId: "req-terminal", runId: 43, dispatchedAt: Date.now() }),
     poll: async () => ({
@@ -294,7 +300,6 @@ test("Pages switches to verified terminal artifact node counts", async () => {
     }),
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"e".repeat(40)}`;
 
   await submit(fixture);
 
@@ -323,7 +328,7 @@ test("local mode keeps node progress counters and hides Actions panel", async ()
     manifest_ready: false,
   };
   const fixture = createFixture({
-    pagesMode: false,
+    gatewayMode: false,
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => job }),
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
@@ -339,7 +344,7 @@ test("local mode keeps node progress counters and hides Actions panel", async ()
   assert.match(fixture.nodes.scanStatusText.textContent, /node-c/);
 });
 
-test("failed Pages cancellation restores polling and controls", async () => {
+test("failed gateway cancellation restores polling and controls", async () => {
   const fixture = createFixture({
     dispatch: async () => ({ requestId: "req-cancel-failure", runId: 44, dispatchedAt: Date.now() }),
     poll: async () => ({
@@ -364,7 +369,6 @@ test("failed Pages cancellation restores polling and controls", async () => {
     cancel: async () => { throw new Error("取消接口暂时不可用"); },
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"j".repeat(40)}`;
   await submit(fixture);
 
   const cancelListener = fixture.nodes.cancelButton.listeners.get("click")?.[0];
@@ -378,7 +382,7 @@ test("failed Pages cancellation restores polling and controls", async () => {
   assert.match(fixture.nodes.errorMessage.textContent, /停止失败：取消接口暂时不可用/);
 });
 
-test("successful Pages cancellation marks the visible Actions state cancelled", async () => {
+test("successful gateway cancellation marks the visible Actions state cancelled", async () => {
   const fixture = createFixture({
     dispatch: async () => ({ requestId: "req-cancel-success", runId: 45, dispatchedAt: Date.now() }),
     poll: async () => ({
@@ -402,7 +406,6 @@ test("successful Pages cancellation marks the visible Actions state cancelled", 
     }),
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-  fixture.nodes.githubPat.value = `github_pat_${"k".repeat(40)}`;
   await submit(fixture);
 
   const cancelListener = fixture.nodes.cancelButton.listeners.get("click")?.[0];

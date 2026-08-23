@@ -1,37 +1,13 @@
 (() => {
   const config = window.BEST_IP_CONFIG || {};
-  const GITHUB_API = "https://api.github.com";
   const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
   const MAX_POLL_DELAY_MS = 10_000;
-  const MAX_JOB_PAGES = 10;
 
-  function isPagesMode() {
+  function isGatewayMode() {
     if (config.mode === "local") return false;
-    if (config.mode === "github-pages") return true;
+    if (config.mode === "gateway") return true;
     const host = window.location.hostname.toLowerCase();
-    return host.endsWith(".github.io") || host === "github.io";
-  }
-
-  function repositoryPath() {
-    const owner = String(config.owner || "").trim();
-    const repository = String(config.repository || "").trim();
-    if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repository)) {
-      throw new Error("GitHub 仓库配置无效");
-    }
-    return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
-  }
-
-  function workflowPath() {
-    const workflow = String(config.workflowFile || "").trim();
-    if (!/^[A-Za-z0-9_.-]+$/.test(workflow)) throw new Error("扫描 workflow 配置无效");
-    return `${repositoryPath()}/actions/workflows/${encodeURIComponent(workflow)}`;
-  }
-
-  function validatePat(pat) {
-    if (!pat || pat.length < 20 || pat.length > 512 || /[\r\n]/.test(pat)) {
-      throw new Error("请输入当前仓库 Actions Read and write 的临时 Fine-grained PAT");
-    }
-    return pat;
+    return host.endsWith(".workers.dev") || host === "workers.dev";
   }
 
   function requestId() {
@@ -132,22 +108,26 @@
 
   async function responseError(response) {
     if (response.status === 401 || response.status === 403) {
-      return new Error(`GitHub API 权限不足（HTTP ${response.status}，请检查 PAT 的 Actions 权限）`);
+      return new Error(response.status === 401 ? "Cloudflare Access 登录已过期，请刷新页面" : "当前账号没有扫描权限");
     }
-    if (response.status === 429) return new Error("GitHub API 触发限流，请稍后重试");
-    if (response.status === 404) return new Error("GitHub workflow 或运行记录不存在");
-    return new Error(`GitHub API 请求失败（HTTP ${response.status}）`);
+    if (response.status === 429) return new Error("扫描网关触发限流，请稍后重试");
+    if (response.status === 404) return new Error("扫描任务或结果不存在");
+    try {
+      const payload = await response.clone().json();
+      return new Error(payload.detail || `扫描网关请求失败（HTTP ${response.status}）`);
+    } catch {
+      return new Error(`扫描网关请求失败（HTTP ${response.status}）`);
+    }
   }
 
-  async function githubJson(pat, path, options = {}) {
-    validatePat(pat);
-    const response = await fetch(`${GITHUB_API}${path}`, {
+  async function gatewayJson(scanToken, path, options = {}) {
+    const response = await fetch(path, {
       ...options,
       cache: "no-store",
+      credentials: "same-origin",
       headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": config.apiVersion || "2022-11-28",
-        Authorization: `Bearer ${pat}`,
+        Accept: "application/json",
+        ...(scanToken ? { "X-Best-IP-Scan-Token": scanToken } : {}),
         ...(options.headers || {}),
       },
     });
@@ -156,24 +136,22 @@
     try {
       return await response.json();
     } catch {
-      throw new Error("GitHub API 返回格式无效");
+      throw new Error("扫描网关返回格式无效");
     }
   }
 
-  async function githubArtifactZip(pat, artifactId) {
-    validatePat(pat);
-    if (!Number.isSafeInteger(Number(artifactId)) || Number(artifactId) < 1) {
-      throw new Error("GitHub artifact ID 无效");
+  async function gatewayArtifactZip(scanToken, requestIdValue, runId, runAttempt) {
+    const numericRunId = Number(runId);
+    const numericAttempt = Number(runAttempt);
+    if (!requestIdValue || !Number.isSafeInteger(numericRunId) || numericRunId < 1 || !Number.isSafeInteger(numericAttempt) || numericAttempt < 1) {
+      throw new Error("扫描运行身份无效");
     }
     const response = await fetch(
-      `${GITHUB_API}${repositoryPath()}/actions/artifacts/${Number(artifactId)}/zip`,
+      `/api/scans/${encodeURIComponent(requestIdValue)}/artifact?run_id=${numericRunId}&run_attempt=${numericAttempt}`,
       {
         cache: "no-store",
-        headers: {
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": config.apiVersion || "2022-11-28",
-          Authorization: `Bearer ${pat}`,
-        },
+        credentials: "same-origin",
+        headers: scanToken ? { "X-Best-IP-Scan-Token": scanToken } : {},
       },
     );
     if (!response.ok) throw await responseError(response);
@@ -243,38 +221,6 @@
       current_step_index: displayIndex >= 0 ? displayIndex + 1 : null,
       current_step: displayIndex >= 0 ? steps[displayIndex] : null,
     };
-  }
-
-  async function listRunJobs(pat, run) {
-    const runId = positiveInteger(run?.id);
-    const runAttempt = positiveInteger(run?.run_attempt);
-    if (!runId || !runAttempt) throw new Error("GitHub Actions 运行版本无效");
-
-    const jobs = [];
-    const seen = new Set();
-    let totalCount = null;
-    let warning = null;
-    for (let page = 1; page <= MAX_JOB_PAGES; page += 1) {
-      const payload = await githubJson(
-        pat,
-        `${repositoryPath()}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
-        { cache: "no-store" },
-      );
-      const pageJobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
-      if (Number.isSafeInteger(Number(payload?.total_count)) && Number(payload.total_count) >= 0) {
-        totalCount = Number(payload.total_count);
-      }
-      for (const job of pageJobs) {
-        const jobAttempt = job?.run_attempt == null ? runAttempt : Number(job.run_attempt);
-        const jobId = positiveInteger(job?.id);
-        if (jobAttempt !== runAttempt || !jobId || seen.has(jobId)) continue;
-        seen.add(jobId);
-        jobs.push(job);
-      }
-      if (!pageJobs.length || pageJobs.length < 100 || (totalCount !== null && jobs.length >= totalCount)) break;
-      if (page === MAX_JOB_PAGES) warning = "Actions job 分页达到安全上限，进度可能不完整";
-    }
-    return { available: true, jobs, totalCount, warning };
   }
 
   function normalizedRunStatus(run) {
@@ -357,101 +303,64 @@
     };
   }
 
-  async function dispatch(pat, subscriptionUrl) {
+  async function dispatch(subscriptionUrl) {
     const id = requestId();
     const dispatchedAt = Date.now();
     const envelope = await encryptSubscriptionUrl(subscriptionUrl, id);
-    const payload = await githubJson(pat, `${workflowPath()}/dispatches`, {
+    const payload = await gatewayJson("", "/api/scans", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ref: String(config.defaultBranch || "main"),
-        inputs: {
-          request_id: id,
-          key_id: String(config.keyId),
-          encrypted_subscription_url: JSON.stringify(envelope),
-        },
-      }),
+      body: JSON.stringify({ request_id: id, key_id: String(config.keyId), envelope }),
     });
-    const runId = payload && (payload.workflow_run_id || payload.run_id || payload.id);
-    const numericRunId = Number(runId);
+    const runId = Number(payload?.run_id || payload?.workflow_run_id || payload?.id);
+    const scanToken = String(payload?.scan_token || "");
+    if (!scanToken) throw new Error("扫描网关未返回有效任务 token");
     return {
-      requestId: id,
-      runId: Number.isSafeInteger(numericRunId) && numericRunId > 0 ? numericRunId : null,
-      dispatchedAt,
+      requestId: String(payload?.request_id || id),
+      runId: Number.isSafeInteger(runId) && runId > 0 ? runId : null,
+      dispatchedAt: Number.isSafeInteger(Number(payload?.dispatched_at)) ? Number(payload.dispatched_at) : dispatchedAt,
+      scanToken,
     };
   }
 
-  function expectedRunTitle(id) {
-    return `Best IP scan ${id}`;
+  function dispatchingProgress(requestIdValue) {
+    return {
+      source: "github-actions",
+      request_id: requestIdValue,
+      run_id: null,
+      run_attempt: null,
+      run_status: "dispatching",
+      raw_run_status: "dispatching",
+      conclusion: null,
+      jobs_state: "waiting",
+      jobs_total: null,
+      jobs_completed: 0,
+      current_job_index: null,
+      current_job: null,
+      current_step_index: null,
+      steps_total: null,
+      steps_completed: 0,
+      current_step: null,
+      jobs: [],
+      elapsed_ms: null,
+      updated_at: new Date().toISOString(),
+      warning: null,
+      run_url: null,
+    };
   }
 
-  function isExactRun(run, requestIdValue, dispatchedAt) {
-    if (!run || (run.display_title !== expectedRunTitle(requestIdValue) && run.name !== expectedRunTitle(requestIdValue))) {
-      return false;
-    }
-    const created = Date.parse(run.created_at || "");
-    const earliest = (dispatchedAt || Date.now()) - 60_000;
-    return (
-      run.event === "workflow_dispatch" &&
-      run.head_branch === String(config.defaultBranch || "main") &&
-      Number.isSafeInteger(Number(run.id)) &&
-      Number.isFinite(created) &&
-      created >= earliest
-    );
-  }
-
-  async function resolveRun(pat, requestIdValue, runId, dispatchedAt) {
-    if (runId) {
-      const run = await githubJson(pat, `${repositoryPath()}/actions/runs/${runId}`);
-      if (!isExactRun(run, requestIdValue, dispatchedAt)) {
-        throw new Error("GitHub Actions 运行与本次请求无法精确关联");
-      }
-      return run;
-    }
-    const query = new URLSearchParams({
-      event: "workflow_dispatch",
-      branch: String(config.defaultBranch || "main"),
-      per_page: "20",
-    });
-    const data = await githubJson(pat, `${workflowPath()}/runs?${query}`);
-    const matches = (data?.workflow_runs || []).filter((run) =>
-      isExactRun(run, requestIdValue, dispatchedAt)
-    );
-    if (matches.length > 1) throw new Error("无法唯一关联本次 GitHub Actions 运行");
-    return matches[0] || null;
-  }
-
-  async function poll(pat, requestIdValue, runId, dispatchedAt) {
-    const run = await resolveRun(pat, requestIdValue, runId, dispatchedAt);
+  async function poll(scanToken, requestIdValue, runId) {
+    const query = new URLSearchParams();
+    if (runId) query.set("run_id", String(runId));
+    const suffix = query.size ? `?${query.toString()}` : "";
+    const remote = await gatewayJson(scanToken, `/api/scans/${encodeURIComponent(requestIdValue)}${suffix}`);
+    const run = remote?.run || null;
     if (!run) {
       return {
         status: "dispatching",
         requestId: requestIdValue,
         runId: null,
-        action_progress: {
-          source: "github-actions",
-          request_id: requestIdValue,
-          run_id: null,
-          run_attempt: null,
-          run_status: "dispatching",
-          raw_run_status: "dispatching",
-          conclusion: null,
-          jobs_state: "waiting",
-          jobs_total: null,
-          jobs_completed: 0,
-          current_job_index: null,
-          current_job: null,
-          current_step_index: null,
-          steps_total: null,
-          steps_completed: 0,
-          current_step: null,
-          jobs: [],
-          elapsed_ms: null,
-          updated_at: new Date().toISOString(),
-          warning: null,
-          run_url: null,
-        },
+        action_progress: dispatchingProgress(requestIdValue),
         node_progress: waitingNodeProgress(),
         total: null,
         completed: null,
@@ -460,57 +369,16 @@
       };
     }
 
-    let jobsResult;
-    try {
-      jobsResult = await listRunJobs(pat, run);
-    } catch (error) {
-      jobsResult = { available: false, jobs: [], totalCount: null, warning: error.message };
-    }
+    const jobsResult = {
+      available: remote?.jobs_available !== false,
+      jobs: Array.isArray(remote?.jobs) ? remote.jobs : [],
+      totalCount: Number.isSafeInteger(Number(remote?.jobs_total_count)) ? Number(remote.jobs_total_count) : null,
+      warning: remote?.jobs_warning || null,
+    };
     const actionProgress = buildActionProgress(run, jobsResult);
     actionProgress.request_id = requestIdValue;
 
-    if (run.status !== "completed") {
-      return {
-        status: normalizedRunStatus(run),
-        requestId: requestIdValue,
-        runId: run.id,
-        run,
-        action_progress: actionProgress,
-        node_progress: waitingNodeProgress(),
-        total: null,
-        completed: null,
-        results: [],
-        manifest_ready: false,
-        error: actionProgress.warning || null,
-      };
-    }
-    if (run.conclusion !== "success") {
-      return {
-        status: normalizedRunStatus(run),
-        requestId: requestIdValue,
-        runId: run.id,
-        run,
-        action_progress: actionProgress,
-        node_progress: waitingNodeProgress("unavailable"),
-        total: null,
-        completed: null,
-        results: [],
-        manifest_ready: false,
-        error: `GitHub Actions 运行结束：${run.conclusion || "unknown"}`,
-      };
-    }
-
-    let artifacts;
-    try {
-      artifacts = await githubJson(pat, `${repositoryPath()}/actions/runs/${run.id}/artifacts?per_page=100`);
-    } catch (error) {
-      error.actionProgress = actionProgress;
-      error.nodeProgress = waitingNodeProgress();
-      throw error;
-    }
-    const prefix = `${String(config.artifactPrefix || "best-ip-result")}-${requestIdValue}-${run.id}-${run.run_attempt}`;
-    const matches = (artifacts?.artifacts || []).filter((artifact) => artifact.name === prefix && !artifact.expired);
-    if (matches.length !== 1) {
+    if (remote?.status === "artifact_pending" || (run.status === "completed" && run.conclusion === "success" && !remote?.artifact_ready)) {
       return {
         status: "artifact_pending",
         requestId: requestIdValue,
@@ -525,11 +393,41 @@
         error: "Actions 已完成，正在等待扫描结果 artifact 发布",
       };
     }
+    if (run.status !== "completed") {
+      return {
+        status: remote?.status || normalizedRunStatus(run),
+        requestId: requestIdValue,
+        runId: run.id,
+        run,
+        action_progress: actionProgress,
+        node_progress: waitingNodeProgress(),
+        total: null,
+        completed: null,
+        results: [],
+        manifest_ready: false,
+        error: actionProgress.warning || null,
+      };
+    }
+    if (run.conclusion !== "success") {
+      return {
+        status: remote?.status || normalizedRunStatus(run),
+        requestId: requestIdValue,
+        runId: run.id,
+        run,
+        action_progress: actionProgress,
+        node_progress: waitingNodeProgress("unavailable"),
+        total: null,
+        completed: null,
+        results: [],
+        manifest_ready: false,
+        error: `GitHub Actions 运行结束：${run.conclusion || "unknown"}`,
+      };
+    }
 
     let archive;
     let payload;
     try {
-      archive = await githubArtifactZip(pat, matches[0].id);
+      archive = await gatewayArtifactZip(scanToken, requestIdValue, run.id, run.run_attempt);
       payload = await window.BestIpZip.readArtifact(archive, {
         requestId: requestIdValue,
         runId: run.id,
@@ -554,14 +452,18 @@
     };
   }
 
-  async function cancel(pat, runId) {
+  async function cancel(scanToken, requestIdValue, runId) {
     if (!runId) throw new Error("GitHub Actions 运行尚未建立");
-    await githubJson(pat, `${repositoryPath()}/actions/runs/${runId}/cancel`, { method: "POST" });
+    await gatewayJson(
+      scanToken,
+      `/api/scans/${encodeURIComponent(requestIdValue)}?run_id=${Number(runId)}`,
+      { method: "DELETE" },
+    );
   }
 
   window.BestIpAction = Object.freeze({
     MAX_POLL_DELAY_MS,
-    isPagesMode,
+    isGatewayMode,
     dispatch,
     poll,
     cancel,
