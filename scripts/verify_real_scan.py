@@ -406,6 +406,9 @@ async def verify() -> None:
             or job.get("manifest_ready") is not True
             or job.get("cleanup_confirmed") is not True
         ):
+            safe_error = job.get("error")
+            if isinstance(safe_error, str) and safe_error.strip():
+                print(f"任务安全错误：{' '.join(safe_error.split())[:500]}")
             raise RuntimeError(
                 f"正式扫描未完成（状态：{job.get('status') or 'unknown'}）"
             )
