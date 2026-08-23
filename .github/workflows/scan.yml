@@ -92,18 +92,25 @@ jobs:
           --key-id "$KEY_ID"
 
       - name: Start local API
+        env:
+          BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
         shell: bash
         run: |
+          test -x "$BEST_IP_MIHOMO_PATH"
           uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
           printf '%s' "$!" > "$RUNNER_TEMP/uvicorn.pid"
           for attempt in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:8000/api/health > /dev/null; then exit 0; fi
+            health=$(curl --fail --silent --show-error http://127.0.0.1:8000/api/health || true)
+            if [[ "$health" == *'"mihomo_ready":true'* ]]; then exit 0; fi
             sleep 1
           done
+          printf 'Mihomo readiness check failed for %s\n' "$BEST_IP_MIHOMO_PATH" >&2
+          cat "$RUNNER_TEMP/uvicorn.log" >&2 || true
           exit 1
 
       - name: Run strict structural scan verifier
         env:
+          BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
           REQUEST_ID: ${{ inputs.request_id }}
           BEST_IP_API_BASE: http://127.0.0.1:8000
           BEST_IP_REAL_SCAN_TIMEOUT_SECONDS: "1500"
