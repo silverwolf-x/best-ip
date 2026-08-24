@@ -6,10 +6,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from .config import FRONTEND_DIR, settings
+from .config import settings
 from .jobs import (
     JobAlreadyExistsError,
     JobNotFoundError,
@@ -31,13 +29,6 @@ app = FastAPI(
     version="0.1.0",
     description="经 Mihomo 本地端口逐节点查询 ip.net.coffee",
     lifespan=lifespan,
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type"],
 )
 
 
@@ -97,6 +88,3 @@ async def cancel_scan(job_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="扫描任务不存在") from exc
     except JobNotReadyError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

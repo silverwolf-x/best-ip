@@ -590,6 +590,25 @@ async function findArtifact(env, run, requestId) {
   return matches[0] || null;
 }
 
+function limitStream(stream, maxBytes = MAX_ARTIFACT_BYTES) {
+  let received = 0;
+  return stream.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      const length = chunk?.byteLength;
+      if (!Number.isSafeInteger(length) || length < 0) {
+        controller.error(new Error("扫描 artifact 响应块无效"));
+        return;
+      }
+      received += length;
+      if (received > maxBytes) {
+        controller.error(new Error("扫描 artifact 超出安全上限"));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+}
+
 function runStatus(run) {
   const status = String(run?.status || "unknown");
   if (status === "completed") {
@@ -715,12 +734,9 @@ async function downloadArtifact(request, env, requestId) {
     throw new HttpError(409, "扫描结果 artifact 尚未发布", "artifact_pending");
   }
   const archive = await githubRawArtifact(env, artifact.id);
-  const bytes = await archive.arrayBuffer();
-  if (bytes.byteLength > MAX_ARTIFACT_BYTES) {
-    throw new HttpError(413, "扫描 artifact 超出安全上限", "artifact_too_large");
-  }
+  if (!archive.body) throw new GitHubError(502, "GitHub artifact 响应为空");
   return secureResponse(
-    new Response(bytes, {
+    new Response(limitStream(archive.body), {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
@@ -777,11 +793,8 @@ async function fetchHandler(request, env, ctx) {
     return secureResponse(
       new Response(
         `window.BEST_IP_CONFIG = Object.freeze(${JSON.stringify({
-          mode: "gateway",
           publicKeyPath: "./scan-public.pem",
           keyId: String(env.SCAN_KEY_ID).trim().toLowerCase(),
-          artifactPrefix: ARTIFACT_PREFIX,
-          apiVersion: "2022-11-28",
         })});`,
         { headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" } },
       ),
@@ -809,6 +822,7 @@ export const internals = {
   authenticate,
   exactRun,
   findArtifact,
+  limitStream,
   listRunJobs,
   signScanToken,
   verifyScanToken,

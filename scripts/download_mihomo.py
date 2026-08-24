@@ -74,7 +74,8 @@ def download(url: str, destination: Path) -> None:
 
 
 def verify_digest(path: Path, digest: str | None) -> str:
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as archive:
+        actual = hashlib.file_digest(archive, "sha256").hexdigest()
     if digest:
         expected = digest.removeprefix("sha256:").lower()
         if actual != expected:
@@ -99,6 +100,18 @@ def extract(archive: Path, destination: Path) -> None:
         destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def cached_archive(cache_dir: Path | None, digest: str | None) -> Path | None:
+    if cache_dir is None or not digest:
+        return None
+    _, suffix, _ = platform_asset()
+    normalized = digest.removeprefix("sha256:").lower()
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise RuntimeError("Mihomo 归档 SHA-256 格式无效")
+    return cache_dir.resolve() / f"{normalized}{suffix}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="下载并校验 Mihomo 核心")
     parser.add_argument(
@@ -117,7 +130,27 @@ def main() -> None:
         default=os.getenv("BEST_IP_MIHOMO_ARCHIVE_SHA256"),
         help="固定下载归档 SHA-256；生产 workflow 必须提供",
     )
+    parser.add_argument(
+        "--archive-cache-dir",
+        type=Path,
+        help="可选的已校验归档缓存目录；缓存命中时跳过 GitHub release 请求和下载",
+    )
     args = parser.parse_args()
+
+    _, _, executable_name = platform_asset()
+    destination = args.output_dir.resolve() / executable_name
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cached_archive(args.archive_cache_dir, args.archive_sha256)
+    if cache_path is not None and cache_path.is_file():
+        digest = verify_digest(cache_path, args.archive_sha256)
+        extract(cache_path, destination)
+        (args.output_dir / "version.txt").write_text(
+            f"{args.tag or 'cached'}\nsha256:{digest}\n{cache_path.name}\n",
+            encoding="utf-8",
+        )
+        print(f"使用已校验缓存：{cache_path}")
+        print(f"已安装：{destination}")
+        return
 
     release_url = (
         f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{args.tag}"
@@ -126,9 +159,6 @@ def main() -> None:
     )
     release = github_json(release_url)
     asset = select_asset(release)
-    _, _, executable_name = platform_asset()
-    destination = args.output_dir.resolve() / executable_name
-    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     file_descriptor, temporary_name = tempfile.mkstemp(suffix=Path(asset["name"]).suffix)
     os.close(file_descriptor)
@@ -138,6 +168,16 @@ def main() -> None:
         download(asset["browser_download_url"], archive)
         expected_digest = args.archive_sha256 or asset.get("digest")
         digest = verify_digest(archive, expected_digest)
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_cache = cache_path.with_name(
+                f".{cache_path.name}.{os.getpid()}.tmp"
+            )
+            try:
+                shutil.copyfile(archive, temporary_cache)
+                os.replace(temporary_cache, cache_path)
+            finally:
+                temporary_cache.unlink(missing_ok=True)
         extract(archive, destination)
     finally:
         archive.unlink(missing_ok=True)

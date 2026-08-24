@@ -85,7 +85,7 @@ test("ZIP reader rejects digest mismatches and path traversal", async () => {
 function gatewayWindow(fetch, extra = {}) {
   return loadScript("frontend/action-client.js", {
     crypto: webcrypto,
-    BEST_IP_CONFIG: { mode: "gateway", publicKeyPath: "./scan-public.pem", keyId: extra.keyId || "a".repeat(64) },
+    BEST_IP_CONFIG: { publicKeyPath: "./scan-public.pem", keyId: extra.keyId || "a".repeat(64) },
     location: { hostname: "best-ip.example.workers.dev" },
     BestIpZip: extra.BestIpZip,
   }, { fetch, document: { baseURI: "https://best-ip.example.workers.dev/" } });
@@ -106,7 +106,6 @@ test("gateway dispatch encrypts the URL and sends no browser credential", async 
   const window = gatewayWindow(fakeFetch, { keyId });
   const subscriptionUrl = "https://subscription.example/config?token=secret-value";
   const dispatched = await window.BestIpAction.dispatch(subscriptionUrl);
-  assert.equal(window.BestIpAction.isGatewayMode(), true);
   assert.equal(dispatched.scanToken, "signed-token");
   const request = requests.find(({ url }) => url === "/api/scans");
   const body = JSON.parse(request.options.body);

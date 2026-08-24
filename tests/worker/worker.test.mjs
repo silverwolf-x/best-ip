@@ -171,3 +171,12 @@ test("artifact matching rejects ambiguous names and accepts one exact artifact",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("artifact streaming enforces the byte cap without buffering the whole archive", async () => {
+  const allowed = internals.limitStream(new Response(new Uint8Array([1, 2, 3])).body, 3);
+  const allowedBytes = new Uint8Array(await new Response(allowed).arrayBuffer());
+  assert.deepEqual([...allowedBytes], [1, 2, 3]);
+
+  const oversized = internals.limitStream(new Response(new Uint8Array([1, 2, 3])).body, 2);
+  await assert.rejects(new Response(oversized).arrayBuffer(), /安全上限/);
+});

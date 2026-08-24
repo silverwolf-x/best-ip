@@ -1,7 +1,6 @@
-const configuredApiBase = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, "") || "";
-const gatewayMode = Boolean(window.BestIpAction?.isGatewayMode?.());
 const ACTION_QUEUE_DEADLINE_MS = 13 * 60 * 1000;
 const ACTION_RUN_DEADLINE_MS = 31 * 60 * 1000;
+const resultSearchIndex = new WeakMap();
 
 const state = {
   job: null,
@@ -129,7 +128,7 @@ function actionStatusLabel(progress) {
 }
 
 function renderActionProgress(progress) {
-  if (!gatewayMode || !elements.actionProgressPanel) return;
+  if (!elements.actionProgressPanel) return;
   elements.actionProgressPanel.hidden = !progress;
   if (!progress) {
     elements.scanProgressCount.textContent = "—";
@@ -162,8 +161,8 @@ function renderActionProgress(progress) {
 }
 
 function renderNodeProgress(progress, job) {
-  const isGatewayProgress = gatewayMode && progress?.source === "artifact";
-  if (isGatewayProgress && progress.phase !== "terminal") {
+  const isArtifactProgress = progress?.source === "artifact";
+  if (isArtifactProgress && progress.phase !== "terminal") {
     elements.totalStat.textContent = "—";
     elements.completedStat.textContent = "—";
     elements.successStat.textContent = "—";
@@ -174,24 +173,20 @@ function renderNodeProgress(progress, job) {
       : "节点统计：等待终态 artifact（Actions 只提供步骤进度）";
     return;
   }
-  const source = isGatewayProgress ? progress : job;
-  const total = isGatewayProgress ? source?.total : Number(source?.total || 0);
-  const completed = isGatewayProgress ? source?.completed : Number(source?.completed || 0);
-  const success = isGatewayProgress ? source?.success_count : Number(source?.success_count || 0);
-  const partial = isGatewayProgress ? source?.partial_count : Number(source?.partial_count || 0);
-  const failed = isGatewayProgress ? source?.failed_count : Number(source?.failed_count || 0);
+  const source = progress?.phase === "terminal" ? progress : job;
+  const total = Number.isInteger(source?.total) ? source.total : null;
+  const completed = Number.isInteger(source?.completed) ? source.completed : null;
+  const success = Number.isInteger(source?.success_count) ? source.success_count : null;
+  const partial = Number.isInteger(source?.partial_count) ? source.partial_count : null;
+  const failed = Number.isInteger(source?.failed_count) ? source.failed_count : null;
   elements.totalStat.textContent = formatCount(total);
   elements.completedStat.textContent = formatCount(completed);
   elements.successStat.textContent = formatCount(success);
   elements.issueStat.textContent = Number.isInteger(partial) && Number.isInteger(failed) ? String(partial + failed) : "—";
-  elements.nodeProgressHint.hidden = !(isGatewayProgress && source?.usable === false);
-  if (isGatewayProgress && source?.usable === false) {
+  elements.nodeProgressHint.hidden = source?.usable !== false;
+  if (source?.usable === false) {
     elements.nodeProgressHint.textContent = "节点统计：artifact 已完成，但包含部分/失败节点";
   }
-}
-
-function apiUrl(path) {
-  return `${configuredApiBase}${path}`;
 }
 
 function applyTheme(theme) {
@@ -205,11 +200,9 @@ elements.themeButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
-if (gatewayMode) {
-  elements.modeHint.hidden = false;
-  elements.healthStatus.textContent = "个人 Actions 网关模式";
-  elements.healthStatus.className = "health ready";
-}
+elements.modeHint.hidden = false;
+elements.healthStatus.textContent = "个人 Actions 网关模式";
+elements.healthStatus.className = "health ready";
 
 elements.revealButton.addEventListener("click", () => {
   const revealing = elements.subscriptionUrl.type === "password";
@@ -223,21 +216,17 @@ elements.form.addEventListener("submit", async (event) => {
   if (!subscriptionUrl) return;
   clearTimeout(state.pollTimer);
   const generation = ++state.pollGeneration;
+  clearScanToken();
   state.job = null;
   state.results = [];
   state.imported = false;
   state.importSource = "";
   state.actionProgress = null;
-  state.nodeProgress = gatewayMode ? waitingNodeProgress() : {
-    source: "none",
-    phase: "idle",
-    total: null,
-    completed: null,
-    success_count: null,
-    partial_count: null,
-    failed_count: null,
-    usable: null,
-  };
+  state.actionRequestId = null;
+  state.actionRunId = null;
+  state.actionDispatchedAt = 0;
+  state.actionPollDelay = 2000;
+  state.nodeProgress = waitingNodeProgress();
   state.activeDetailResult = null;
   state.detailGeneration += 1;
   if (elements.detailDialog.open) elements.detailDialog.close();
@@ -245,46 +234,33 @@ elements.form.addEventListener("submit", async (event) => {
   showError("");
   elements.scanStatusBadge.hidden = false;
   elements.scanStatusText.textContent = "创建任务";
-  elements.scanProgressCount.textContent = gatewayMode ? "步骤 —/—" : "0/0";
+  elements.scanProgressCount.textContent = "步骤 —/—";
   renderRows();
-  if (gatewayMode) {
-    renderActionProgress(null);
-    renderNodeProgress(state.nodeProgress, null);
-  }
+  renderActionProgress(null);
+  renderNodeProgress(state.nodeProgress, null);
 
   try {
-    if (gatewayMode) {
-      const dispatched = await window.BestIpAction.dispatch(subscriptionUrl);
-      state.scanToken = dispatched.scanToken;
-      state.actionRequestId = dispatched.requestId;
-      state.actionRunId = dispatched.runId;
-      state.actionDispatchedAt = dispatched.dispatchedAt || Date.now();
-      state.actionPollDelay = 2000;
-      elements.subscriptionUrl.value = "";
-      state.job = {
-        id: state.actionRequestId,
-        status: "dispatching",
-        total: null,
-        completed: null,
-        success_count: null,
-        partial_count: null,
-        failed_count: null,
-        results: [],
-        action_progress: null,
-        node_progress: waitingNodeProgress(),
-        manifest_ready: false,
-      };
-      await pollAction(generation);
-    } else {
-      const response = await fetch(apiUrl("/api/scans"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_url: subscriptionUrl }),
-      });
-      const created = await readResponse(response);
-      state.job = created;
-      await pollJob(created.id, generation);
-    }
+    const dispatched = await window.BestIpAction.dispatch(subscriptionUrl);
+    state.scanToken = dispatched.scanToken;
+    state.actionRequestId = dispatched.requestId;
+    state.actionRunId = dispatched.runId;
+    state.actionDispatchedAt = dispatched.dispatchedAt || Date.now();
+    state.actionPollDelay = 2000;
+    elements.subscriptionUrl.value = "";
+    state.job = {
+      id: state.actionRequestId,
+      status: "dispatching",
+      total: null,
+      completed: null,
+      success_count: null,
+      partial_count: null,
+      failed_count: null,
+      results: [],
+      action_progress: null,
+      node_progress: waitingNodeProgress(),
+      manifest_ready: false,
+    };
+    await pollAction(generation);
   } catch (error) {
     if (generation === state.pollGeneration) showFatalError(error.message);
   }
@@ -297,35 +273,24 @@ elements.cancelButton.addEventListener("click", async () => {
   state.pollTimer = null;
   elements.cancelButton.disabled = true;
   try {
-    if (gatewayMode) {
-      await window.BestIpAction.cancel(state.scanToken, state.actionRequestId, state.actionRunId);
-      state.pollGeneration += 1;
-      state.actionProgress = state.actionProgress
-        ? { ...state.actionProgress, run_status: "cancelled", raw_run_status: "cancelled", conclusion: "cancelled" }
-        : state.actionProgress;
-      state.job = {
-        ...state.job,
-        status: "cancelled",
-        error: "已请求取消 GitHub Actions 扫描",
-        action_progress: state.actionProgress,
-      };
-      renderProgress(state.job);
-      setScanning(false);
-      clearScanToken();
-    } else {
-      const response = await fetch(apiUrl(`/api/scans/${state.job.id}`), { method: "DELETE" });
-      state.pollGeneration += 1;
-      state.job = await readResponse(response);
-      renderProgress(state.job);
-      setScanning(false);
-    }
+    await window.BestIpAction.cancel(state.scanToken, state.actionRequestId, state.actionRunId);
+    state.pollGeneration += 1;
+    state.actionProgress = state.actionProgress
+      ? { ...state.actionProgress, run_status: "cancelled", raw_run_status: "cancelled", conclusion: "cancelled" }
+      : state.actionProgress;
+    state.job = {
+      ...state.job,
+      status: "cancelled",
+      error: "已请求取消 GitHub Actions 扫描",
+      action_progress: state.actionProgress,
+    };
+    renderProgress(state.job);
+    setScanning(false);
+    clearScanToken();
   } catch (error) {
     elements.cancelButton.disabled = false;
     if (generation === state.pollGeneration && !state.pollTimer && state.job?.id) {
-      state.pollTimer = setTimeout(
-        () => (gatewayMode ? pollAction(generation) : pollJob(state.job.id, generation)),
-        gatewayMode ? state.actionPollDelay : 1000,
-      );
+      state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
     }
     showInlineError(`停止失败：${error.message}`);
   }
@@ -423,30 +388,16 @@ elements.exportCsvBtn.addEventListener("click", () => {
   downloadBlob("﻿" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n"), `best-ip-results-${dateStamp()}.csv`, "text/csv;charset=utf-8;");
 });
 
-elements.exportJsonBtn.addEventListener("click", async () => {
+elements.exportJsonBtn.addEventListener("click", () => {
   if (!canExportResults()) return;
-  if (state.imported) {
-    try {
-      downloadBlob(
-        JSON.stringify(buildImportedJsonExport(), null, 2),
-        `best-ip-results-${dateStamp()}.json`,
-        "application/json;charset=utf-8;",
-      );
-    } catch (error) {
-      showInlineError(`导出 JSON 失败：${error.message}`);
-    }
-    return;
-  }
-
-  elements.exportJsonBtn.disabled = true;
   try {
-    const response = await fetch(apiUrl(`/api/scans/${state.job.id}/export`), { cache: "no-store" });
-    const data = await readResponse(response);
-    downloadBlob(JSON.stringify(data, null, 2), `best-ip-results-${dateStamp()}.json`, "application/json");
+    downloadBlob(
+      JSON.stringify(buildImportedJsonExport(), null, 2),
+      `best-ip-results-${dateStamp()}.json`,
+      "application/json;charset=utf-8;",
+    );
   } catch (error) {
     showInlineError(`导出 JSON 失败：${error.message}`);
-  } finally {
-    setScanning(false);
   }
 });
 
@@ -1025,48 +976,40 @@ function applyActionResults(payload) {
   renderRows();
 }
 
-async function pollJob(jobId, generation) {
-  if (!jobId || generation !== state.pollGeneration) return;
-  try {
-    const response = await fetch(apiUrl(`/api/scans/${jobId}`), { cache: "no-store" });
-    const job = await readResponse(response);
-    if (generation !== state.pollGeneration) return;
-    state.job = job;
-    renderProgress(job);
-    state.results = Array.isArray(job.results)
-      ? job.results.map((item, index) => ({ ...item, _index: item.node_index ?? index }))
-      : [];
-    renderRows();
-    if (job.status === "completed" && job.manifest_ready) {
-      setScanning(false);
-      return;
-    }
-    if (["failed", "cancelled"].includes(job.status)) {
-      setScanning(false);
-      return;
-    }
-    state.pollTimer = setTimeout(() => pollJob(jobId, generation), 1000);
-  } catch (error) {
-    if (generation !== state.pollGeneration) return;
-    showInlineError(`读取进度失败，重试中：${error.message}`);
-    state.pollTimer = setTimeout(() => pollJob(jobId, generation), 2000);
-  }
+function renderProgress(job) {
+  const actionProgress = job?.action_progress || state.actionProgress;
+  renderActionProgress(actionProgress);
+  renderNodeProgress(job?.node_progress || state.nodeProgress, job);
+  showError(job?.error || "");
 }
 
-function renderProgress(job) {
-  const actionJob = gatewayMode && (job?.action_progress || state.actionProgress || state.importSource === "github-actions");
-  if (actionJob) {
-    renderActionProgress(job?.action_progress || state.actionProgress);
-    renderNodeProgress(job?.node_progress || state.nodeProgress, job);
-  } else {
-    if (elements.actionProgressPanel) elements.actionProgressPanel.hidden = true;
-    renderNodeProgress(null, job);
-    elements.scanProgressCount.textContent = `${Number(job?.completed || 0)}/${Number(job?.total || 0)}`;
-    elements.scanStatusText.textContent = job?.status === "running" && job.current_node
-      ? `检测中 · ${job.current_node}`
-      : jobTitle(job?.status);
-  }
-  showError(job?.error || "");
+function searchableResultText(result) {
+  const cached = resultSearchIndex.get(result);
+  if (cached) return cached;
+  const text = [
+    result.node,
+    result.type,
+    result.exit_ip,
+    result.location,
+    result.isp,
+    result.as_org,
+    result.error,
+    result.security_status,
+    result.rpki_status,
+    result.rdns,
+    result.bogon_status,
+    result.company_type,
+    result.traffic_profile,
+    result.abuse_level,
+    result.honeypot_status,
+    result.gpt_check?.map((item) => `${item.name || ""} ${item.text || ""} ${item.elapsed_ms ?? ""}ms`).join(" "),
+    result.global_ping?.map((item) => `${item.name || ""} ${item.code || ""} ${item.elapsed_ms ?? ""} ${item.status || ""}`).join(" "),
+    result.asn ? `AS${result.asn}` : "",
+    result.asn_kind_display,
+    result.native_status,
+  ].map((value) => String(value || "")).join("\n").toLocaleLowerCase("zh-CN");
+  resultSearchIndex.set(result, text);
+  return text;
 }
 
 function renderRows() {
@@ -1078,32 +1021,7 @@ function renderRows() {
     .filter((result) => globalStatus === "all" || result.status === globalStatus)
     .filter((result) => {
       // 顶部全局搜索框
-      if (query) {
-        const matchesGlobal = [
-          result.node,
-          result.type,
-          result.exit_ip,
-          result.location,
-          result.isp,
-          result.as_org,
-          result.error,
-          result.security_status,
-          result.rpki_status,
-          result.rdns,
-          result.bogon_status,
-          result.company_type,
-          result.traffic_profile,
-          result.abuse_level,
-          result.honeypot_status,
-          result.gpt_check?.map((g) => `${g.name || ""} ${g.text || ""} ${g.elapsed_ms ?? ""}ms`).join(" "),
-          result.global_ping?.map((ping) => `${ping.name || ""} ${ping.code || ""} ${ping.elapsed_ms ?? ""} ${ping.status || ""}`).join(" "),
-          result.asn ? `AS${result.asn}` : "",
-          result.asn_kind_display,
-          result.native_status,
-          result._importedFields ? Object.values(result._importedFields).join(" ") : "",
-        ].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query));
-        if (!matchesGlobal) return false;
-      }
+      if (query && !searchableResultText(result).includes(query)) return false;
 
       // 列筛选 1: 节点名称
       if (cf.node && !String(result.node || "").toLocaleLowerCase("zh-CN").includes(cf.node.toLocaleLowerCase("zh-CN"))) {
@@ -1486,34 +1404,13 @@ document.querySelectorAll(".sort-btn").forEach((button) => {
   });
 });
 
-async function openDetails(summary) {
-  if (state.imported) {
-    state.detailGeneration += 1;
-    state.activeDetailResult = summary;
-    elements.detailTitle.textContent = `${summary.node || "节点"} (${summary.type || "未知"})`;
-    elements.detailSubtitle.textContent = `已导入 ${state.importSource.toUpperCase()} · 出口：${summary.exit_ip || "未知"} · ${summary.location || "位置未知"}`;
-    renderDetails(summary);
-    elements.detailDialog.showModal();
-    return;
-  }
-  if (state.job?.status !== "completed" || !state.job.manifest_ready) {
-    showInlineError("完整 manifest 生成后才能读取节点详情");
-    return;
-  }
-  const generation = ++state.detailGeneration;
+function openDetails(summary) {
+  state.detailGeneration += 1;
+  state.activeDetailResult = summary;
   elements.detailTitle.textContent = `${summary.node || "节点"} (${summary.type || "未知"})`;
-  elements.detailSubtitle.textContent = `出口：${summary.exit_ip || "未知"} · ${summary.location || "位置未知"}`;
-  elements.detailContent.innerHTML = '<p class="text-muted">正在读取已暂存的完整 Coffee 结果...</p>';
+  elements.detailSubtitle.textContent = `${state.importSource || "artifact"} · 出口：${summary.exit_ip || "未知"} · ${summary.location || "位置未知"}`;
+  renderDetails(summary);
   elements.detailDialog.showModal();
-  try {
-    const response = await fetch(apiUrl(`/api/scans/${state.job.id}/results/${summary._index}`), { cache: "no-store" });
-    const result = await readResponse(response);
-    if (generation !== state.detailGeneration) return;
-    state.activeDetailResult = result;
-    renderDetails(result);
-  } catch (error) {
-    if (generation === state.detailGeneration) elements.detailContent.innerHTML = `<p class="error-box">读取详情失败：${escapeHtml(error.message)}</p>`;
-  }
 }
 
 function renderDetails(result) {
@@ -1730,8 +1627,6 @@ function showFatalError(message) {
   elements.scanStatusBadge.hidden = true;
   showError(message);
 }
-function jobTitle(status) { return ({ dispatching: "等待 Actions", queued: "Actions 排队中", preparing: "准备中", running: "扫描中", completed: "已完成", failed: "失败", cancelled: "已停止" }[status] || status || "准备中"); }
-
 async function readResponse(response) {
   let data;
   try { data = await response.json(); }
@@ -1741,21 +1636,9 @@ async function readResponse(response) {
 }
 
 async function checkHealth() {
-  if (gatewayMode) {
-    try {
-      const data = await readResponse(await fetch(apiUrl("/api/health"), { cache: "no-store", credentials: "same-origin" }));
-      elements.healthStatus.textContent = data.mode === "github-actions-gateway" ? "个人网关就绪" : "网关就绪";
-      elements.healthStatus.className = "health ready";
-    } catch (error) {
-      elements.healthStatus.textContent = error.message;
-      elements.healthStatus.className = "health error";
-    }
-    return;
-  }
   try {
-    const data = await readResponse(await fetch(apiUrl("/api/health"), { cache: "no-store" }));
-    if (!data.mihomo_ready) throw new Error("Mihomo 未就绪");
-    elements.healthStatus.textContent = "后端就绪";
+    const data = await readResponse(await fetch("/api/health", { cache: "no-store", credentials: "same-origin" }));
+    elements.healthStatus.textContent = data.mode === "github-actions-gateway" ? "个人网关就绪" : "网关就绪";
     elements.healthStatus.className = "health ready";
   } catch (error) {
     elements.healthStatus.textContent = error.message;

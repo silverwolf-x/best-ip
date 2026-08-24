@@ -5,6 +5,14 @@
   const MAX_COMPRESSED = 50 * 1024 * 1024;
   const MAX_UNCOMPRESSED = 100 * 1024 * 1024;
   const ALLOWED_FILES = new Set(["status.json", "result.json"]);
+  const TEXT_DECODER = new TextDecoder();
+  const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+    }
+    return value >>> 0;
+  });
   const SUMMARY_KEYS = [
     "node_index", "node", "type", "selected_proxy", "status", "error",
     "transport_error", "attempt_count", "retry_count", "attempt_errors", "exit_ip",
@@ -42,10 +50,7 @@
   function crc32(bytes) {
     let crc = 0xffffffff;
     for (const byte of bytes) {
-      crc ^= byte;
-      for (let bit = 0; bit < 8; bit += 1) {
-        crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-      }
+      crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
     }
     return (crc ^ 0xffffffff) >>> 0;
   }
@@ -87,7 +92,7 @@
       const commentLength = u16(view, offset + 32);
       const localOffset = u32(view, offset + 42);
       const nameBytes = new Uint8Array(buffer, offset + 46, nameLength);
-      const name = new TextDecoder().decode(nameBytes);
+      const name = TEXT_DECODER.decode(nameBytes);
       if (!safeName(name) || files.has(name) || (flags & 1) !== 0) {
         throw new Error("artifact ZIP 含有不允许的文件");
       }
@@ -122,24 +127,23 @@
     const bytes = files.get(name);
     if (!bytes) throw new Error(`artifact 缺少 ${name}`);
     try {
-      return JSON.parse(new TextDecoder().decode(bytes));
+      return JSON.parse(TEXT_DECODER.decode(bytes));
     } catch {
       throw new Error(`${name} 不是有效 JSON`);
     }
   }
 
-  function stableValue(value) {
-    if (Array.isArray(value)) return value.map(stableValue);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(
-        Object.keys(value).sort().map((key) => [key, stableValue(value[key])]),
-      );
-    }
-    return value;
-  }
-
   function sameJson(left, right) {
-    return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+    if (Object.is(left, right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return Array.isArray(left) && Array.isArray(right) &&
+        left.length === right.length && left.every((value, index) => sameJson(value, right[index]));
+    }
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]));
   }
 
   function summary(record) {

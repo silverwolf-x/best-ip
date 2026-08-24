@@ -59,13 +59,20 @@ jobs:
         run: uv python install 3.13
 
       - name: Sync locked dependencies
-        run: uv sync --frozen --dev
+        run: uv sync --frozen --no-dev
+
+      - name: Restore pinned Mihomo archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/best-ip-mihomo
+          key: mihomo-${{ runner.os }}-v1.19.30-cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
 
       - name: Download pinned Mihomo
         run: >-
-          uv run python scripts/download_mihomo.py
+          uv run --no-sync python scripts/download_mihomo.py
           --tag v1.19.30
           --archive-sha256 cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
+          --archive-cache-dir "${RUNNER_TOOL_CACHE}/best-ip-mihomo"
 
       - name: Materialize private key in runner temp
         env:
@@ -97,7 +104,7 @@ jobs:
         shell: bash
         run: |
           test -x "$BEST_IP_MIHOMO_PATH"
-          uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          uv run --no-sync uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
           printf '%s' "$!" > "$RUNNER_TEMP/uvicorn.pid"
           for attempt in $(seq 1 60); do
             health=$(curl --fail --silent --show-error http://127.0.0.1:8000/api/health || true)
@@ -119,7 +126,7 @@ jobs:
         run: |
           export BEST_IP_REQUEST_ID="$REQUEST_ID"
           export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
-          uv run python scripts/verify_real_scan.py
+          uv run --no-sync python scripts/verify_real_scan.py
 
       - name: Build sanitized result artifact
         env:
@@ -129,7 +136,7 @@ jobs:
         shell: bash
         run: |
           export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
-          uv run python scripts/sanitize_action_artifact.py \
+          uv run --no-sync python scripts/sanitize_action_artifact.py \
             --job-id "$REQUEST_ID" \
             --request-id "$REQUEST_ID" \
             --run-id "$RUN_ID" \

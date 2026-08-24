@@ -70,7 +70,7 @@ class FakeElement {
   }
 }
 
-function createFixture({ includeError = true, dispatch, poll, cancel, gatewayMode = true, fetchImpl } = {}) {
+function createFixture({ includeError = true, dispatch, poll, cancel, fetchImpl } = {}) {
   const ids = [...new Set(
     [...indexSource.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => id),
   )].filter((id) => includeError || id !== "errorMessage");
@@ -97,7 +97,6 @@ function createFixture({ includeError = true, dispatch, poll, cancel, gatewayMod
   const logs = [];
   const action = {
     MAX_POLL_DELAY_MS: 10_000,
-    isGatewayMode: () => gatewayMode,
     dispatch: dispatch || (async (...args) => {
       calls.push(args);
       throw new Error("网关请求失败");
@@ -140,6 +139,11 @@ test("gateway page has no browser GitHub credential surface", () => {
   assert.doesNotMatch(indexSource, /githubPat|Fine-grained|Pages 模式/iu);
   assert.doesNotMatch(actionSource, /api\.github\.com|Authorization|github_pat|Fine-grained/iu);
   assert.doesNotMatch(frontendAssetSource, /github[-_]?pat|api\.github\.com|Authorization|github_pat|Fine-grained/iu);
+  for (const forbidden of ["chatgpt.com", "claude.ai", "api.openai.com", "anthropic.com", "gpt_access", "claude_access"]) {
+    assert.doesNotMatch(indexSource, new RegExp(forbidden.replaceAll(".", "\\."), "iu"));
+  }
+  assert.match(indexSource, /manifest/u);
+  assert.match(indexSource, /data-sort="score"/u);
 });
 
 test("the real page includes the error node and failed gateway submit is recoverable", async () => {
@@ -312,36 +316,6 @@ test("gateway switches to verified terminal artifact node counts", async () => {
   assert.match(fixture.nodes.nodeProgressHint.textContent, /包含部分\/失败节点/);
   assert.equal(fixture.nodes.startButton.disabled, false);
   assert.equal(fixture.nodes.cancelButton.hidden, true);
-});
-
-test("local mode keeps node progress counters and hides Actions panel", async () => {
-  const job = {
-    id: "local-1",
-    status: "running",
-    total: 5,
-    completed: 2,
-    success_count: 1,
-    partial_count: 1,
-    failed_count: 0,
-    current_node: "node-c",
-    results: [],
-    manifest_ready: false,
-  };
-  const fixture = createFixture({
-    gatewayMode: false,
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => job }),
-  });
-  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
-  await submit(fixture);
-
-  assert.equal(fixture.nodes.actionProgressPanel.hidden, true);
-  assert.equal(fixture.nodes.scanProgressCount.textContent, "2/5");
-  assert.equal(fixture.nodes.totalStat.textContent, "5");
-  assert.equal(fixture.nodes.completedStat.textContent, "2");
-  assert.equal(fixture.nodes.successStat.textContent, "1");
-  assert.equal(fixture.nodes.issueStat.textContent, "1");
-  assert.match(fixture.nodes.scanStatusText.textContent, /node-c/);
 });
 
 test("failed gateway cancellation restores polling and controls", async () => {

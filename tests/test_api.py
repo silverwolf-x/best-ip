@@ -159,27 +159,8 @@ def test_completed_api_reads_manifest_and_node_store(tmp_path, monkeypatch) -> N
         job_manager.jobs.pop(job_id, None)
 
 
-def test_frontend_is_coffee_only_and_has_no_default_credential() -> None:
+def test_actions_api_does_not_serve_a_second_frontend() -> None:
     with TestClient(app) as client:
         response = client.get("/")
         app_script = client.get("/app.js")
-    assert response.status_code == app_script.status_code == 200
-    assert "Coffee" in response.text
-    assert (
-        "Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果"
-        in response.text
-    )
-    assert "state.results = Array.isArray(job.results)" in app_script.text
-    assert 'value="https://' not in response.text
-    forbidden_terms = (
-        "chatgpt.com",
-        "claude.ai",
-        "api.openai.com",
-        "anthropic.com",
-        "gpt_access",
-        "claude_access",
-    )
-    for forbidden in forbidden_terms:
-        assert forbidden not in response.text
-    assert "manifest" in response.text
-    assert 'data-sort="score"' in response.text
+    assert response.status_code == app_script.status_code == 404

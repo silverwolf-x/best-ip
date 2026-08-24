@@ -59,14 +59,11 @@ def _walk_forbidden(value: Any, forbidden: set[str], path: str = "$") -> None:
 
 
 def _read_export(job_id: str) -> dict[str, Any]:
-    manifest = result_store.read_manifest(job_id)
     progress = result_store.read_progress(job_id)
     job = {
         "id": job_id,
         "status": "completed",
         "message": progress.get("phase"),
-        "created_at": manifest.get("created_at"),
-        "finished_at": manifest.get("finished_at"),
         "cleanup_confirmed": progress.get("cleanup_confirmed") is True,
     }
     return result_store.export(job_id, job)
@@ -95,17 +92,15 @@ def main() -> None:
         raise SystemExit("结果 manifest 校验失败") from exc
     forbidden = {source_url, *_subscription_url_values(source_url)}
     _walk_forbidden(exported, forbidden)
-    serialized = json.dumps(exported, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    if "subscription_url" in serialized or _contains_forbidden_value(exported, forbidden):
+    result_text = json.dumps(exported, ensure_ascii=False, indent=2) + "\n"
+    if "subscription_url" in result_text or _contains_forbidden_value(exported, forbidden):
         raise SystemExit("结果包含订阅凭据")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
     result_path = output_dir / "result.json"
     status_path = output_dir / "status.json"
-    result_bytes = (
-        json.dumps(exported, ensure_ascii=False, indent=2) + "\n"
-    ).encode("utf-8")
+    result_bytes = result_text.encode("utf-8")
     result_path.write_bytes(result_bytes)
     digest = hashlib.sha256(result_bytes).hexdigest()
     counts = exported.get("manifest", {}).get("counts", {})

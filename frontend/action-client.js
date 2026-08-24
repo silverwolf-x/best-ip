@@ -2,13 +2,7 @@
   const config = window.BEST_IP_CONFIG || {};
   const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
   const MAX_POLL_DELAY_MS = 10_000;
-
-  function isGatewayMode() {
-    if (config.mode === "local") return false;
-    if (config.mode === "gateway") return true;
-    const host = window.location.hostname.toLowerCase();
-    return host.endsWith(".workers.dev") || host === "workers.dev";
-  }
+  const TEXT_ENCODER = new TextEncoder();
 
   function requestId() {
     if (window.crypto?.randomUUID) return `req-${window.crypto.randomUUID()}`;
@@ -79,8 +73,8 @@
     );
     const rawAes = await window.crypto.subtle.exportKey("raw", aes);
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const plaintext = new TextEncoder().encode(subscriptionUrl);
-    const additionalData = new TextEncoder().encode(`${id}:${config.keyId}:${expires}`);
+    const plaintext = TEXT_ENCODER.encode(subscriptionUrl);
+    const additionalData = TEXT_ENCODER.encode(`${id}:${config.keyId}:${expires}`);
     const ciphertext = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData },
       aes,
@@ -463,7 +457,6 @@
 
   window.BestIpAction = Object.freeze({
     MAX_POLL_DELAY_MS,
-    isGatewayMode,
     dispatch,
     poll,
     cancel,
