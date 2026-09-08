@@ -17,6 +17,8 @@ Python FastAPI 在生产中仅是 `scan.yml` 临时 runner 内的 loopback 扫�
 
 ## 本地调试
 
+结果默认采用 Coffee 风格的双列节点卡片，小屏幕自动切换为单列；可切换到表格进行逐列筛选和排序。两种视图使用相同结果，点击节点名称查看完整详情，导入、导出与完整性校验保持不变。
+
 本地调试模式复用同一套 Mihomo、扫描器、结果存储和前端，只替换任务传输层；启动器分别运行前端静态服务与 FastAPI API。生产环境仍使用 Cloudflare Worker → GitHub Actions，不会降级 Access、密文订阅或 artifact 校验。
 
 安装 [uv](https://docs.astral.sh/uv/) 后，在仓库根目录运行：

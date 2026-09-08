@@ -29,6 +29,14 @@ class FakeElement {
     };
   }
 
+  get childNodes() {
+    return this.children.length ? this.children : [Object.assign(new FakeElement('text'), { textContent: this.textContent, innerHTML: this.innerHTML })];
+  }
+
+  setAttribute(name, value) {
+    this[name] = value;
+  }
+
   addEventListener(name, listener) {
     const listeners = this.listeners.get(name) || [];
     listeners.push(listener);
@@ -96,6 +104,30 @@ function createFixture({ start, poll, cancel, health, includeError = true } = {}
 async function submit(fixture) {
  return fixture.nodes.scanForm.listeners.get('submit')[0]({ preventDefault() {} });
 }
+
+test("card and table views share records and retain view switching", async () => {
+  const fixture = createFixture();
+  await fixture.ready;
+  const result = normalizeImportedResult({ ...resultFixture('req-cards', 'partial').results[0], error: '<script>unavailable</script>' }, 0);
+  fixture.state.results = [result];
+  fixture.renderRows();
+  const card = fixture.nodes.resultCards.children[0].children[0];
+  assert.equal(card._bestIpResult, result);
+  assert.equal(card.className, 'node-card card');
+  assert.equal(card.children.at(-1).textContent, '<script>unavailable</script>');
+  assert.equal(card.children[2].children.length, 14);
+  fixture.nodes.tableViewButton.click();
+  assert.equal(fixture.nodes.resultCards.hidden, true);
+  assert.equal(fixture.nodes.resultTable.hidden, false);
+  assert.equal(fixture.nodes.tableViewButton['aria-pressed'], 'true');
+  fixture.nodes.cardViewButton.click();
+  assert.equal(fixture.nodes.resultCards.hidden, false);
+  assert.equal(fixture.nodes.resultTable.hidden, true);
+  fixture.nodes.resultSearch.value = 'no-such-node';
+  fixture.renderRows();
+  assert.equal(fixture.nodes.resultCards.children[0].children.length, 0);
+  assert.equal(fixture.nodes.emptyResults.hidden, false);
+});
 
 test("native module page has no browser credentials or legacy global assembly", () => {
   assert.match(indexSource, /type="module" src="\.\/src\/main\.js"/);

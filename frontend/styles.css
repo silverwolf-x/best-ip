@@ -90,7 +90,7 @@ body {
   background: var(--bg) !important;
   color: var(--text) !important;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -101,7 +101,7 @@ a:hover { text-decoration: underline; }
 
 /* ── Net.Coffee 经典居中容器 ── */
 .container {
-  max-width: 1380px;
+  max-width: 1040px;
   margin: 0 auto;
   padding: 24px 20px;
 }
@@ -115,8 +115,7 @@ a:hover { text-decoration: underline; }
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 12px;
+  padding-bottom: 4px;
 }
 
 .nav-scroll {
@@ -296,14 +295,9 @@ h1 {
 }
 
 .btn-primary {
-  background: #1a1a1a;
-  color: #ffffff;
+  background: var(--text);
+  color: var(--bg);
   border: none;
-}
-:root[data-theme="dark"] .btn-primary,
-:root:where(:not([data-theme="light"])) .btn-primary {
-  background: #e6edf3;
-  color: #0d1117;
 }
 .btn-primary:hover { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: wait; }
@@ -1119,4 +1113,40 @@ pre {
   .gp-grid { grid-template-columns: 1fr; }
 }
 
+.source-label { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.results-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 14px; }
+.results-heading h2 { margin: 0; font-size: 17px; }
+.view-switch { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); }
+.view-switch button { border: 0; border-radius: 5px; padding: 5px 10px; background: transparent; color: var(--text-soft); font-size: 12px; }
+.view-switch button[aria-pressed="true"] { color: var(--text); background: var(--bg-card); box-shadow: 0 1px 3px #0001; font-weight: 600; }
+.result-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.node-card { margin: 0; padding: 16px; }
+.node-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.node-card-header .node-name-btn { white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
+.node-card-hero { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 0; min-width: 0; }
+.node-card-hero .ip-cell { min-width: 0; flex-wrap: wrap; }
+.node-card-hero code { font-size: 18px; white-space: normal; overflow-wrap: anywhere; }
+.node-card-score { display: grid; gap: 4px; justify-items: center; flex-shrink: 0; }
+.node-card-score > span:first-child { font-size: 10px; color: var(--text-soft); }
+.node-card-score .score-pill { font-size: 20px; height: 34px; min-width: 48px; border-radius: 8px; }
+.node-card-details { margin: 0; display: grid; grid-template-columns: 76px minmax(0, 1fr); font-size: 12px; }
+.node-card-details dt, .node-card-details dd { margin: 0; padding: 9px 0; border-top: 1px solid var(--border); }
+.node-card-details dt { color: var(--text-soft); }
+.node-card-details dd { text-align: right; overflow-wrap: anywhere; }
+.node-card .tag-chips, .node-card .mini-ping-bar, .node-card .mini-gpt-bar { flex-wrap: wrap; justify-content: flex-end; white-space: normal; }
+.node-card .chip-isp { max-width: 100%; white-space: normal; text-align: right; }
+.node-card .failure-reason { white-space: normal; overflow-wrap: anywhere; }
+.node-card-error { border-top: 1px solid var(--border); padding-top: 10px; margin: 8px 0 0; color: var(--danger); font-size: 11px; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }
+@media (max-width: 720px) {
+  .result-cards { grid-template-columns: 1fr; }
+  .source-label { display: none; }
+  .nav-tools { flex-wrap: wrap; }
+  .search-box { min-width: 0; }
+  .search-box input { min-width: 0; }
+  .dialog-header { gap: 10px; flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 [hidden] { display: none !important; }

@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee 网络画像与 IPure 场景评分">
   <title>Best IP · 节点质量检测</title>
-  <link rel="stylesheet" href="./styles.css?v=20260908-2">
+  <link rel="stylesheet" href="./styles.css?v=20260909-1">
   <script src="./site-config.js?v=20260908-2"></script>
   <script type="module" src="./src/main.js"></script>
 </head>
 <body>
   <div class="container">
     <nav class="nav">
-      <div class="nav-scroll"><a href="./" class="active" aria-current="page">IP 节点质量检测</a></div>
+      <div class="nav-scroll"><a href="./" class="active" aria-current="page">Best IP</a><a href="#resultsToolbar">节点结果</a><a href="https://ip.net.coffee/" target="_blank" rel="noopener noreferrer">Coffee ↗</a><a href="https://ipure.dev/" target="_blank" rel="noopener noreferrer">IPure ↗</a></div>
       <div class="nav-tools">
         <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">—/—</strong></div>
         <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
@@ -21,12 +21,13 @@
     </nav>
 
     <header class="page-header">
-      <div class="ip-section-header"><h1>Coffee 网络画像 · IPure 场景评分</h1></div>
-      <p class="desc">所有节点经独立工作区 Mihomo 并发检测并采集 Coffee 网络画像；IPure 总分与四项场景评分通过官方查询接口获取，缺失时节点会标记为“部分”。</p>
+      <div class="ip-section-header"><h1>IP 节点质量检测</h1><span class="source-label">Coffee × IPure</span></div>
+      <p class="desc">一份订阅，查看每个节点的出口 IP、网络画像与场景评分。独立代理实测，缺失数据如实标记。</p>
     </header>
 
     <form id="scanForm" class="search-bar">
       <div class="input-wrap">
+        <label class="sr-only" for="subscriptionUrl">Mihomo YAML 订阅链接</label>
         <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴 Mihomo YAML 订阅链接 (https://...)" required>
         <button id="revealButton" class="reveal-btn" type="button" aria-label="切换显示">👁️</button>
       </div>
@@ -55,8 +56,8 @@
       <p id="nodeProgressHint" class="progress-hint" hidden>节点统计：等待终态 artifact</p>
       <div class="filter-controls">
         <div class="search-box">
-          <input id="resultSearch" type="search" placeholder="搜索节点、IP、ASN、国家、ISP、错误原因...">
-          <select id="statusFilter" class="status-select">
+          <input id="resultSearch" type="search" aria-label="搜索节点结果" placeholder="搜索节点、IP、ASN、国家...">
+          <select id="statusFilter" class="status-select" aria-label="筛选节点状态">
             <option value="all">全部状态</option>
             <option value="success">完整</option>
             <option value="partial">部分</option>
@@ -73,7 +74,9 @@
       <p class="import-hint">可点击“导入结果”选择文件，也可将之前导出的 .json / .csv 拖拽到此处</p>
     </section>
 
-    <section class="card table-container">
+    <div class="results-heading"><h2>节点网络画像</h2><div class="view-switch" role="group" aria-label="结果展示方式"><button id="cardViewButton" type="button" aria-pressed="true">卡片</button><button id="tableViewButton" type="button" aria-pressed="false">表格 / 筛选</button></div></div>
+    <section id="resultCards" class="result-cards" aria-label="节点卡片"></section>
+    <section id="resultTable" class="card table-container" hidden aria-label="节点对比表格" tabindex="0">
       <table class="main-table">
         <thead>
           <tr class="header-titles">
@@ -136,8 +139,8 @@
         </thead>
         <tbody id="resultBody"></tbody>
       </table>
-      <div id="emptyResults" class="empty-state"><p class="empty-title">等待终态 artifact</p><p class="empty-desc">Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。</p></div>
     </section>
+    <div id="emptyResults" class="empty-state card"><p class="empty-title">等待扫描结果</p><p class="empty-desc">粘贴订阅开始检测，或导入之前的结果。结果通过完整性校验后展示。</p></div>
 
     <footer class="footer">Best IP · Coffee 网络画像与 IPure 场景评分</footer>
   </div>
