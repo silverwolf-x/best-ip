@@ -146,6 +146,19 @@ test("gateway page has no browser GitHub credential surface", () => {
   assert.match(indexSource, /data-sort="score"/u);
 });
 
+test("IPure total and four scenario scores stay aligned across table and CSV", () => {
+  const titleRow = indexSource.match(/<tr class="header-titles">([\s\S]*?)<\/tr>/u)?.[1] || "";
+  const filterRow = indexSource.match(/<tr class="header-filters">([\s\S]*?)<\/tr>/u)?.[1] || "";
+  assert.equal((titleRow.match(/<th\b/gu) || []).length, 11);
+  assert.equal((filterRow.match(/<th\b/gu) || []).length, 11);
+  assert.match(titleRow, /IPure 总分/u);
+  assert.match(titleRow, /IPure 四项评分/u);
+  assert.match(appSource, /"IPure总分", "IPure四项评分", "Coffee评分"/u);
+  for (const label of ["AI", "流媒体", "电商", "邮件"]) {
+    assert.match(appSource, new RegExp(`\\["[a-z]+", "${label}"\\]`, "u"));
+  }
+});
+
 test("the real page includes the error node and failed gateway submit is recoverable", async () => {
   assert.equal((indexSource.match(/id="errorMessage"/g) || []).length, 1);
   const fixture = createFixture();

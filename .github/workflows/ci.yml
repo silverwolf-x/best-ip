@@ -9,9 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
+          cache-python: true
+          python-version: "3.13"
       - name: Install Python
         run: uv python install 3.13
       - name: Sync dependencies
@@ -25,7 +27,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit
       - name: Check and test JavaScript/Worker
         run: npm test
       - name: Wrangler dry-run

@@ -109,6 +109,8 @@ _NODE_FIELDS = {
     "location",
     "isp",
     "score",
+    "coffee_score",
+    "ipure_scores",
     "is_residential",
     "is_datacenter",
     "is_native",

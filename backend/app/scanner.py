@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import re
 from datetime import UTC, datetime
+from html import unescape
 from math import isfinite
 from time import perf_counter
 from typing import Any
@@ -16,6 +17,16 @@ COFFEE_HOST = "ip.net.coffee"
 COFFEE_ORIGIN = f"https://{COFFEE_HOST}"
 COFFEE_PAGE_URL = f"{COFFEE_ORIGIN}/ip/"
 COFFEE_TRACE_URL = f"{COFFEE_ORIGIN}/cdn-cgi/trace"
+IPURE_HOST = "ipure.dev"
+IPURE_ORIGIN = f"https://{IPURE_HOST}"
+IPURE_TIMEOUT_SECONDS = 30.0
+IPURE_MAX_RESPONSE_BYTES = 1_000_000
+IPURE_SCORE_LABELS = {
+    "ai": "AI 服务",
+    "streaming": "流媒体 / 短视频",
+    "ecommerce": "跨境电商",
+    "email": "邮件发送",
+}
 GPT_PROBE_TARGETS = [
     {"name": "chatgpt.com", "url": "https://chatgpt.com/cdn-cgi/trace"},
     {"name": "api.openai.com", "url": "https://api.openai.com/"},
@@ -53,7 +64,7 @@ GLOBAL_PING_NODES = [
 
 
 class CoffeeCollector:
-    """Collect the Coffee IP page through one workspace Mihomo mixed-port."""
+    """Collect Coffee profile data and IPure scores through one Mihomo mixed-port."""
 
     def __init__(self, proxy_url: str, *, timeout_ms: int) -> None:
         proxy = httpx.URL(proxy_url)
@@ -63,7 +74,7 @@ class CoffeeCollector:
             or proxy.port is None
             or proxy.path not in {"", "/"}
         ):
-            raise ValueError("Coffee 采集器只接受工作区 Mihomo 的 127.0.0.1 mixed-port")
+            raise ValueError("节点采集器只接受工作区 Mihomo 的 127.0.0.1 mixed-port")
         self.proxy_url = str(proxy.copy_with(path=""))
         self.timeout_seconds = timeout_ms / 1000
 
@@ -97,7 +108,7 @@ class CoffeeCollector:
                 keepalive_expiry=5,
             ),
             headers={
-                "User-Agent": "Mozilla/5.0 best-ip/0.2 (Coffee-only; workspace Mihomo)"
+                "User-Agent": "Mozilla/5.0 best-ip/0.3 (workspace Mihomo)"
             },
         ) as client:
             page, trace = await asyncio.gather(
@@ -156,7 +167,14 @@ class CoffeeCollector:
                         )
                     ),
                 ]
-                all_request_tasks = [gpt_task, lookup_task, *optional_tasks]
+                ipure_task = asyncio.create_task(
+                    self._request_ipure(
+                        client,
+                        _ipure_url(exit_ip),
+                        timeout_seconds=self._deadline(IPURE_TIMEOUT_SECONDS),
+                    )
+                )
+                all_request_tasks = [gpt_task, lookup_task, *optional_tasks, ipure_task]
                 try:
                     lookup = await lookup_task
                     lookup_data = (
@@ -172,6 +190,7 @@ class CoffeeCollector:
                     related = await self._related_result(client, exit_ip, lookup_data)
                     global_ping, port_scan, ping_check = await asyncio.gather(*optional_tasks)
                     gpt_requests = await gpt_task
+                    ipure = await ipure_task
                 finally:
                     for task in all_request_tasks:
                         if not task.done():
@@ -185,7 +204,7 @@ class CoffeeCollector:
                 port_scan = _missing_result("", reason, skipped=True)
                 ping_check = _missing_result("", reason, skipped=True)
                 related = _missing_result("", reason, skipped=True)
-                gpt_requests = await self._gpt_requests(client)
+                ipure = _missing_result("", reason, skipped=True)
 
         status = _node_status(
             page,
@@ -196,6 +215,7 @@ class CoffeeCollector:
                 "global_ping": global_ping,
                 "port_scan": port_scan,
                 "ping_check": ping_check,
+                "ipure": ipure,
                 **(
                     {"related": related}
                     if lookup_data.get("related_pending")
@@ -205,7 +225,9 @@ class CoffeeCollector:
             },
         )
         final_exit_ip = exit_ip if status != "failed" else None
-        error = _combined_error(page, trace, lookup, global_ping, port_scan, ping_check, related)
+        error = _combined_error(
+            page, trace, lookup, global_ping, port_scan, ping_check, related, ipure
+        )
         request_results = {
             "page": page,
             "trace": trace,
@@ -214,11 +236,17 @@ class CoffeeCollector:
             "port_scan": port_scan,
             "ping_check": ping_check,
             "related": related,
+            "ipure": ipure,
         }
         completeness = _completeness(request_results, exit_ip, lookup_data)
         gpt_check = _gpt_check_summary(gpt_requests, lookup_data)
+        coffee_summary = _profile_summary(lookup_data)
+        ipure_scores = _ipure_scores(ipure)
         summary = {
-            **_profile_summary(lookup_data),
+            **coffee_summary,
+            "coffee_score": coffee_summary["score"],
+            "score": ipure_scores["total"],
+            "ipure_scores": ipure_scores,
             "gpt_check": gpt_check,
         }
         finished_at = _now()
@@ -251,6 +279,7 @@ class CoffeeCollector:
                 "selected_proxy": selected_proxy,
                 "selection_confirmed": selected_proxy == node_name,
                 "target_origin": COFFEE_ORIGIN,
+                "enrichment_origin": IPURE_ORIGIN,
                 "trust_env": False,
                 "direct_fallback": False,
             },
@@ -275,7 +304,7 @@ class CoffeeCollector:
                     "url": COFFEE_PAGE_URL,
                     "status": status,
                     "exit_ip": final_exit_ip,
-                    "score": summary["score"],
+                    "score": summary["coffee_score"],
                     "page_request": _without_data(page),
                     "trace": trace,
                     "lookup_request": _without_data(lookup),
@@ -453,6 +482,65 @@ class CoffeeCollector:
             for target, response in zip(GPT_PROBE_TARGETS, responses, strict=True)
         }
 
+    async def _request_ipure(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        _validate_ipure_url(url)
+        started = perf_counter()
+        try:
+            response = await client.get(url, timeout=timeout_seconds)
+            if 300 <= response.status_code < 400:
+                return _ipure_request_result(
+                    self.proxy_url,
+                    url,
+                    started,
+                    status_code=response.status_code,
+                    error="redirect_rejected",
+                    error_type="RedirectRejected",
+                    location=response.headers.get("location"),
+                )
+            body = response.content
+            if len(body) > IPURE_MAX_RESPONSE_BYTES:
+                return _ipure_request_result(
+                    self.proxy_url,
+                    url,
+                    started,
+                    status_code=response.status_code,
+                    error="IPure 响应超过大小限制",
+                    error_type="ResponseTooLarge",
+                )
+            scores = _parse_ipure_scores(body) if response.is_success else None
+            error = None
+            error_type = None
+            if not response.is_success:
+                error = f"HTTP {response.status_code}"
+                error_type = "HTTPStatusError"
+            elif scores is None:
+                error = "IPure 响应缺少完整评分"
+                error_type = "ResponseParseError"
+            return _ipure_request_result(
+                self.proxy_url,
+                url,
+                started,
+                status_code=response.status_code,
+                data=scores,
+                error=error,
+                error_type=error_type,
+                location=response.headers.get("location"),
+            )
+        except Exception as exc:
+            return _ipure_request_result(
+                self.proxy_url,
+                url,
+                started,
+                error=exc.__class__.__name__,
+                error_type=exc.__class__.__name__,
+            )
+
     async def _probe_gpt_endpoint(
         self,
         client: httpx.AsyncClient,
@@ -601,6 +689,92 @@ def _validate_gpt_url(url: str, target_name: str | None = None) -> None:
         or parsed.path != urlsplit(expected["url"]).path
     ):
         raise ValueError(f"拒绝未允许的 GPT 探测 URL：{url}")
+
+
+def _ipure_url(exit_ip: str) -> str:
+    normalized = str(ipaddress.ip_address(exit_ip))
+    return f"{IPURE_ORIGIN}/ip/{quote(normalized, safe='')}"
+
+
+def _validate_ipure_url(url: str) -> None:
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"IPure 请求端口无效：{url}") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != IPURE_HOST
+        or parsed.username
+        or parsed.password
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.startswith("/ip/")
+    ):
+        raise ValueError(f"拒绝未允许的 IPure 请求：{url}")
+    value = unquote(parsed.path.removeprefix("/ip/"))
+    try:
+        ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ValueError(f"IPure IP 参数无效：{url}") from exc
+
+
+def _parse_ipure_scores(body: bytes) -> dict[str, int] | None:
+    text = unescape(body.decode("utf-8", errors="replace"))
+    total_match = re.search(
+        r"<title[^>]*>.*?纯净度\s*(\d{1,3})/100\b",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    total = _numeric_score(int(total_match.group(1))) if total_match else None
+    scores: dict[str, int | None] = {"total": total}
+    for key, label in IPURE_SCORE_LABELS.items():
+        match = re.search(
+            rf">\s*{re.escape(label)}\s*</p>.{{0,900}}?"
+            rf"<span[^>]*class=\"[^\"]*\btnum\b[^\"]*\"[^>]*>\s*(\d{{1,3}})\s*</span>",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        scores[key] = _numeric_score(int(match.group(1))) if match else None
+    if any(value is None for value in scores.values()):
+        return None
+    return {key: int(value) for key, value in scores.items() if value is not None}
+
+
+def _ipure_scores(result: dict[str, Any]) -> dict[str, int | None]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return {
+        key: _numeric_score(data.get(key))
+        for key in ("total", *IPURE_SCORE_LABELS)
+    }
+
+
+def _ipure_request_result(
+    proxy_url: str,
+    url: str,
+    started: float,
+    *,
+    status_code: int | None = None,
+    data: dict[str, int] | None = None,
+    error: str | None = None,
+    error_type: str | None = None,
+    location: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "url": url,
+        "attempted": True,
+        "via_mihomo": True,
+        "proxy_url": proxy_url,
+        "target_host": IPURE_HOST,
+        "ok": status_code is not None and 200 <= status_code < 300 and error is None,
+        "status_code": status_code,
+        "elapsed_ms": round((perf_counter() - started) * 1000),
+        "data": data,
+        "error": error,
+        "error_type": error_type,
+        "location": location,
+    }
 
 
 def _global_ping_url(exit_ip: str) -> str:
@@ -1084,6 +1258,7 @@ def _completeness(
         "global_ping_recorded": _request_recorded(requests["global_ping"]),
         "port_scan_recorded": _request_recorded(requests["port_scan"]),
         "ping_check_recorded": _request_recorded(requests["ping_check"]),
+        "ipure_recorded": _request_recorded(requests["ipure"]),
         "related_recorded": (
             _request_recorded(requests["related"])
             if lookup_data.get("related_pending") or lookup_data.get("related_domains_pending")

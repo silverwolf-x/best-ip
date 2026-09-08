@@ -1,6 +1,13 @@
 const ACTION_QUEUE_DEADLINE_MS = 13 * 60 * 1000;
 const ACTION_RUN_DEADLINE_MS = 31 * 60 * 1000;
 const resultSearchIndex = new WeakMap();
+const IPURE_SCORE_LABELS = [
+  ["ai", "AI"],
+  ["streaming", "流媒体"],
+  ["ecommerce", "电商"],
+  ["email", "邮件"],
+];
+let renderFrame = null;
 
 const state = {
   job: null,
@@ -322,7 +329,7 @@ elements.resultsToolbar?.addEventListener("drop", async (event) => {
   if (file) await importResultsFile(file);
 });
 
-elements.resultSearch.addEventListener("input", renderRows);
+elements.resultSearch.addEventListener("input", scheduleRenderRows);
 elements.statusFilter.addEventListener("change", renderRows);
 
 document.querySelectorAll(".th-filter").forEach((input) => {
@@ -331,8 +338,30 @@ document.querySelectorAll(".th-filter").forEach((input) => {
   const eventName = input.tagName === "SELECT" ? "change" : "input";
   input.addEventListener(eventName, (e) => {
     state.columnFilters[col] = e.target.value.trim();
-    renderRows();
+    if (eventName === "input") scheduleRenderRows();
+    else renderRows();
   });
+});
+
+elements.resultBody.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!target?.closest) return;
+  const result = target.closest("tr")?._bestIpResult;
+  if (!result) return;
+  if (target.closest(".node-name-btn")) {
+    openDetails(result);
+    return;
+  }
+  const copyButton = target.closest(".mini-copy");
+  if (!copyButton || !result.exit_ip) return;
+  event.stopPropagation();
+  try {
+    await navigator.clipboard.writeText(result.exit_ip);
+    copyButton.textContent = "已复制";
+    setTimeout(() => { copyButton.textContent = "复制"; }, 1500);
+  } catch {
+    alert("复制失败");
+  }
 });
 
 elements.closeDialog.addEventListener("click", () => elements.detailDialog.close());
@@ -356,7 +385,7 @@ elements.copyJsonBtn.addEventListener("click", async () => {
 
 elements.exportCsvBtn.addEventListener("click", () => {
   if (!canExportResults()) return;
-  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "GPT_ChatGPT", "GPT_Codex", "评分", "耗时(ms)"];
+  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "GPT_ChatGPT", "GPT_Codex", "IPure总分", "IPure四项评分", "Coffee评分", "耗时(ms)"];
   const rows = state.results.map((result) => {
     const gptList = result.gpt_check || [];
     const chatgptItem = gptList.find((g) => g.name === "chatgpt.com");
@@ -382,6 +411,8 @@ elements.exportCsvBtn.addEventListener("click", () => {
       csv(chatgptItem ? `${chatgptItem.text || ""}${chatgptItem.elapsed_ms >= 0 ? ` ${chatgptItem.elapsed_ms}ms` : ""}` : ""),
       csv(codexItem ? `${codexItem.text || ""}${codexItem.elapsed_ms >= 0 ? ` ${codexItem.elapsed_ms}ms` : ""}` : ""),
       result.score ?? "",
+      csv(formatIpureScores(result.ipure_scores)),
+      result.coffee_score ?? "",
       result.elapsed_ms ?? "",
     ];
   });
@@ -595,6 +626,8 @@ function parseImportedCsv(text) {
       abuse_level: value("abuse_level") || "",
       honeypot_status: value("honeypot_status") || "",
       score: parseImportedNumber(value("score")),
+      ipure_scores: parseImportedIpureScores(value("ipure_scores"), value("score")),
+      coffee_score: parseImportedNumber(value("coffee_score")),
       elapsed_ms: parseImportedNumber(value("elapsed_ms")) ?? 0,
       is_vpn: /vpn/i.test(securityStatus),
       is_proxy: /proxy|代理/i.test(securityStatus),
@@ -687,7 +720,9 @@ function mapCsvColumns(headers) {
     honeypot_status: ["蜜罐状态", "honeypot_status"],
     gpt_chatgpt: ["gpt_chatgpt", "chatgpt", "chatgpt.com"],
     gpt_codex: ["gpt_codex", "codex", "api.openai.com"],
-    score: ["评分", "trustscore", "score", "trust_score"],
+    score: ["ipure总分", "总分", "评分", "score"],
+    ipure_scores: ["ipure四项评分", "四项评分", "ipure_scores"],
+    coffee_score: ["coffee评分", "coffee_score", "trustscore", "trust_score"],
     elapsed_ms: ["耗时(ms)", "耗时", "elapsed_ms", "duration"],
   };
 
@@ -717,6 +752,10 @@ function normalizeImportedResult(raw, index, source) {
   result._source = source;
   if (result.score !== null && result.score !== undefined && result.score !== "") {
     result.score = parseImportedNumber(result.score);
+  }
+  result.ipure_scores = normalizeIpureScores(result.ipure_scores, result.score);
+  if (result.coffee_score !== null && result.coffee_score !== undefined && result.coffee_score !== "") {
+    result.coffee_score = parseImportedNumber(result.coffee_score);
   }
   if (result.elapsed_ms !== null && result.elapsed_ms !== undefined && result.elapsed_ms !== "") {
     result.elapsed_ms = parseImportedNumber(result.elapsed_ms) ?? 0;
@@ -752,6 +791,32 @@ function parseImportedNumber(value) {
   if (value === null || value === undefined || String(value).trim() === "") return null;
   const number = Number(String(value).replace(/,/g, "").trim());
   return Number.isFinite(number) ? number : null;
+}
+
+function parseImportedIpureScores(value, total) {
+  const scores = { total: parseImportedNumber(total) };
+  const text = String(value || "");
+  IPURE_SCORE_LABELS.forEach(([key, label]) => {
+    const match = text.match(new RegExp(`${label}\\s*[:：]\\s*(\\d+(?:\\.\\d+)?)`, "u"));
+    scores[key] = match ? parseImportedNumber(match[1]) : null;
+  });
+  return scores;
+}
+
+function normalizeIpureScores(value, total) {
+  const source = isRecord(value) ? value : {};
+  return {
+    total: parseImportedNumber(source.total ?? total),
+    ...Object.fromEntries(IPURE_SCORE_LABELS.map(([key]) => [key, parseImportedNumber(source[key])])),
+  };
+}
+
+function formatIpureScores(value) {
+  const scores = normalizeIpureScores(value, null);
+  return IPURE_SCORE_LABELS
+    .filter(([key]) => scores[key] != null)
+    .map(([key, label]) => `${label}:${scores[key]}`)
+    .join(" | ");
 }
 
 function firstImportedValue(...values) {
@@ -1007,6 +1072,7 @@ function searchableResultText(result) {
     result.asn ? `AS${result.asn}` : "",
     result.asn_kind_display,
     result.native_status,
+    formatIpureScores(result.ipure_scores),
   ].map((value) => String(value || "")).join("\n").toLocaleLowerCase("zh-CN");
   resultSearchIndex.set(result, text);
   return text;
@@ -1118,8 +1184,20 @@ function renderRows() {
   }
 }
 
+function scheduleRenderRows() {
+  if (renderFrame !== null) return;
+  const schedule = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (callback) => setTimeout(callback, 0);
+  renderFrame = schedule(() => {
+    renderFrame = null;
+    renderRows();
+  });
+}
+
 function createResultRow(result) {
   const row = document.createElement("tr");
+  row._bestIpResult = result;
 
   // 1. 节点名称（自适应宽度）
   appendTextCell(row, "", (cell) => {
@@ -1128,11 +1206,10 @@ function createResultRow(result) {
     button.className = "node-name-btn";
     button.textContent = result.node || "未命名";
     button.title = `${result.node || "未命名"} (${result.type || "未知"}) - 点击查看完整画像`;
-    button.addEventListener("click", () => openDetails(result));
     cell.replaceChildren(button);
   });
 
-  // 2. 评分 (第2列，默认降序排)
+  // 2. IPure 总分 (第2列，默认降序排)
   appendTextCell(row, "", (cell) => {
     if (result.score == null) {
       cell.innerHTML = '<span class="score-pill score-none">—</span>';
@@ -1143,7 +1220,23 @@ function createResultRow(result) {
     }
   });
 
-  // 3. 状态
+  // 3. IPure 四项场景评分
+  appendTextCell(row, "", (cell) => {
+    const scores = normalizeIpureScores(result.ipure_scores, result.score);
+    const container = document.createElement("div");
+    container.className = "tag-chips";
+    IPURE_SCORE_LABELS.forEach(([key, label]) => {
+      if (scores[key] == null) return;
+      const chip = document.createElement("span");
+      const scoreClass = scores[key] >= 75 ? "chip-ok" : scores[key] >= 45 ? "chip-info" : "chip-warn";
+      chip.className = `chip ${scoreClass}`;
+      chip.textContent = `${label} ${scores[key]}`;
+      container.append(chip);
+    });
+    cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
+  });
+
+  // 4. 状态
   appendTextCell(row, "", (cell) => {
     const badge = document.createElement("span");
     badge.className = `status-badge ${result.status || "failed"}`;
@@ -1154,7 +1247,7 @@ function createResultRow(result) {
     cell.replaceChildren(badge);
   });
 
-  // 4. 出口 IP
+  // 5. 出口 IP
   appendTextCell(row, "", (cell) => {
     if (result.exit_ip) {
       const ipWrap = document.createElement("div");
@@ -1166,16 +1259,6 @@ function createResultRow(result) {
       copyBtn.className = "mini-copy";
       copyBtn.textContent = "复制";
       copyBtn.title = "复制出口 IP";
-      copyBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(result.exit_ip);
-          copyBtn.textContent = "已复制";
-          setTimeout(() => { copyBtn.textContent = "复制"; }, 1500);
-        } catch {
-          alert("复制失败");
-        }
-      });
       ipWrap.append(code, copyBtn);
       cell.replaceChildren(ipWrap);
     } else {
@@ -1183,7 +1266,7 @@ function createResultRow(result) {
     }
   });
 
-  // 5. 服务商 / ISP（药丸胶囊风格，严格左对齐并展示完整信息）
+  // 6. 服务商 / ISP（药丸胶囊风格，严格左对齐并展示完整信息）
   appendTextCell(row, "", (cell) => {
     const ispText = result.isp || result.as_org || "";
     if (ispText) {
@@ -1197,7 +1280,7 @@ function createResultRow(result) {
     }
   });
 
-  // 6. ASN / 原生性 / 运营商类型 / 人机流量（全部药丸形状）
+  // 7. ASN / 原生性 / 运营商类型 / 人机流量（全部药丸形状）
   appendTextCell(row, "", (cell) => {
     if (result.status === "failed" && !result.asn && !result.is_native && !result.company_type) {
       cell.textContent = "—";
@@ -1250,7 +1333,7 @@ function createResultRow(result) {
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
   });
 
-  // 7. 安全 / 威胁指标（药丸）
+  // 8. 安全 / 威胁指标（药丸）
   appendTextCell(row, "", (cell) => {
     if (result.status === "failed") {
       cell.textContent = "—";
@@ -1290,17 +1373,17 @@ function createResultRow(result) {
     cell.replaceChildren(container);
   });
 
-  // 8. GPT · Codex 延迟检测 (与 Coffee 全球 Ping 微型条完全一致的高审美延迟条)
+  // 9. GPT · Codex 延迟检测 (与 Coffee 全球 Ping 微型条完全一致的高审美延迟条)
   appendTextCell(row, "", (cell) => {
     cell.replaceChildren(createMiniGptBar(result.gpt_check));
   });
 
-  // 9. Coffee 全球 Ping
+  // 10. Coffee 全球 Ping
   appendTextCell(row, "", (cell) => {
     cell.replaceChildren(createMiniPingBar(result.global_ping));
   });
 
-  // 10. 耗时
+  // 11. 耗时
   appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
 
   return row;
@@ -1427,6 +1510,11 @@ function renderDetails(result) {
   headSection.className = "merged-card-section";
   const scoreVal = result.score != null ? Number(result.score) : null;
   const scoreBadgeCls = scoreVal == null ? "score-none" : scoreVal >= 75 ? "score-great" : scoreVal >= 45 ? "score-good" : "score-bad";
+  const ipureScores = normalizeIpureScores(result.ipure_scores, result.score);
+  const ipureScoreChips = IPURE_SCORE_LABELS
+    .filter(([key]) => ipureScores[key] != null)
+    .map(([key, label]) => `<span class="chip chip-info">${label} ${ipureScores[key]}</span>`)
+    .join("");
 
   headSection.innerHTML = `
     <div class="modal-hero">
@@ -1442,9 +1530,10 @@ function renderDetails(result) {
           <span class="chip ${result.is_bogon ? "chip-bad" : "chip-ok"}">${result.is_bogon ? "Bogon 广播" : "公网可达"}</span>
           <span class="chip ${String(result.rpki_status || "").includes("Valid") ? "chip-ok" : "chip-bad"}">RPKI: ${escapeHtml(result.rpki_status || "未知")}</span>
         </div>
+        ${ipureScoreChips ? `<div class="modal-tag-row">${ipureScoreChips}</div>` : ""}
       </div>
       <div class="modal-score-box ${scoreBadgeCls}">
-        <span class="modal-score-lbl">IP 评分</span>
+        <span class="modal-score-lbl">IPure 总分</span>
         <strong class="modal-score-num">${scoreVal != null ? scoreVal : "—"}</strong>
       </div>
     </div>

@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee IP 页面结构化结果">
-  <title>Best IP · Coffee 节点检测</title>
-  <link rel="stylesheet" href="./styles.css?v=20260824-1">
-  <script src="./site-config.js?v=20260824-1" defer></script>
-  <script src="./action-client.js?v=20260824-1" defer></script>
+  <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee 网络画像与 IPure 场景评分">
+  <title>Best IP · 节点质量检测</title>
+  <link rel="stylesheet" href="./styles.css?v=20260908-1">
+  <script src="./site-config.js?v=20260908-1" defer></script>
+  <script src="./action-client.js?v=20260908-1" defer></script>
 
-  <script src="./zip-reader.js?v=20260824-1" defer></script>
-  <script src="./app.js?v=20260824-1" defer></script>
+  <script src="./zip-reader.js?v=20260908-1" defer></script>
+  <script src="./app.js?v=20260908-1" defer></script>
 </head>
 <body>
   <div class="container">
     <nav class="nav">
-      <div class="nav-scroll"><a href="./" class="active" aria-current="page">Coffee IP 节点检测</a></div>
+      <div class="nav-scroll"><a href="./" class="active" aria-current="page">IP 节点质量检测</a></div>
       <div class="nav-tools">
         <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">0/0</strong></div>
         <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
@@ -24,8 +24,8 @@
     </nav>
 
     <header class="page-header">
-      <div class="ip-section-header"><h1>Coffee IP 评分 · 订阅节点检测</h1></div>
-      <p class="desc">所有节点按顺序经工作区 Mihomo 切换，仅采集 Coffee IP 页面及其明确的同源结构化接口；扫描期间展示 Actions Job/Step 进度，全部结束并校验终态 artifact 后统一展示节点结果与最终 manifest。</p>
+      <div class="ip-section-header"><h1>Coffee 网络画像 · IPure 场景评分</h1></div>
+      <p class="desc">所有节点经独立工作区 Mihomo 并发检测，采集 Coffee 网络画像并查询 IPure 总分及四项场景评分；扫描期间展示 Actions Job/Step 进度，全部结束并校验终态 artifact 后统一展示。</p>
     </header>
 
     <form id="scanForm" class="search-bar">
@@ -81,7 +81,8 @@
         <thead>
           <tr class="header-titles">
             <th scope="col"><button class="sort-btn" data-sort="node">节点名称</button></th>
-            <th scope="col"><button class="sort-btn active" data-sort="score">评分</button></th>
+            <th scope="col"><button class="sort-btn active" data-sort="score">IPure 总分</button></th>
+            <th scope="col">IPure 四项评分</th>
             <th scope="col"><button class="sort-btn" data-sort="status">状态</button></th>
             <th scope="col"><button class="sort-btn" data-sort="exit_ip">出口 IP</button></th>
             <th scope="col"><button class="sort-btn" data-sort="isp">服务商 / ISP</button></th>
@@ -101,6 +102,7 @@
                 <option value="low">低分 (&lt;45)</option>
               </select>
             </th>
+            <th></th>
             <th>
               <select class="th-filter" data-col="status">
                 <option value="">全部</option>
@@ -140,7 +142,7 @@
       <div id="emptyResults" class="empty-state"><p class="empty-title">等待终态 artifact</p><p class="empty-desc">Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。</p></div>
     </section>
 
-    <footer class="footer">Best IP · Coffee IP 页面结构化节点检测</footer>
+    <footer class="footer">Best IP · Coffee 网络画像与 IPure 场景评分</footer>
   </div>
 
   <dialog id="detailDialog" class="detail-dialog">

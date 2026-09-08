@@ -10,12 +10,16 @@ from backend.app.scanner import (
     GLOBAL_PING_NODES,
     GPT_PROBE_TARGETS,
     GPT_RESTRICTED_COUNTRIES,
+    IPURE_HOST,
     CoffeeCollector,
     _global_ping_url,
     _gpt_check_summary,
+    _ipure_url,
+    _parse_ipure_scores,
     _request_recorded,
     _trace_ip,
     _validate_coffee_url,
+    _validate_ipure_url,
 )
 
 
@@ -47,6 +51,37 @@ def test_global_ping_uses_exact_fixed_node_set() -> None:
     url = _global_ping_url("2001:db8::10")
     assert "host=2001%3Adb8%3A%3A10" in url
     assert url.count("node=") == len(GLOBAL_PING_NODES)
+
+
+def test_ipure_allowlist_and_score_parser_support_ipv4_and_ipv6() -> None:
+    ipv4_url = _ipure_url("203.0.113.10")
+    ipv6_url = _ipure_url("2001:db8::10")
+    _validate_ipure_url(ipv4_url)
+    _validate_ipure_url(ipv6_url)
+    assert ipv4_url == "https://ipure.dev/ip/203.0.113.10"
+    assert ipv6_url == "https://ipure.dev/ip/2001%3Adb8%3A%3A10"
+
+    body = """<title>1.1.1.1 纯净度 62/100</title>
+    <p>AI 服务</p><span class="tnum">51</span>
+    <p>流媒体 / 短视频</p><span class="tnum">68</span>
+    <p>跨境电商</p><span class="tnum">53</span>
+    <p>邮件发送</p><span class="tnum">57</span>""".encode()
+    assert _parse_ipure_scores(body) == {
+        "total": 62,
+        "ai": 51,
+        "streaming": 68,
+        "ecommerce": 53,
+        "email": 57,
+    }
+
+    for url in (
+        "http://ipure.dev/ip/203.0.113.10",
+        "https://example.com/ip/203.0.113.10",
+        "https://ipure.dev/api/ip/203.0.113.10",
+        "https://ipure.dev/ip/203.0.113.10?next=example.com",
+    ):
+        with pytest.raises(ValueError):
+            _validate_ipure_url(url)
 
 
 def test_gpt_check_summary_classifies_latency_and_http_failures() -> None:
@@ -122,7 +157,7 @@ async def test_probe_gpt_endpoint_uses_proxy_timeout_and_accepts_redirect() -> N
 
 
 @pytest.mark.asyncio
-async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(monkeypatch) -> None:
+async def test_collect_uses_allowlisted_sources(monkeypatch) -> None:
     requested: list[str] = []
 
     async def fake_request(self, _client, url, *, payload, timeout_seconds):
@@ -189,8 +224,32 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
             for target in GPT_PROBE_TARGETS
         }
 
+    async def fake_ipure(self, _client, url, *, timeout_seconds):
+        requested.append(url)
+        return {
+            "url": url,
+            "attempted": True,
+            "via_mihomo": True,
+            "proxy_url": self.proxy_url,
+            "target_host": IPURE_HOST,
+            "ok": True,
+            "status_code": 200,
+            "elapsed_ms": 2,
+            "data": {
+                "total": 88,
+                "ai": 81,
+                "streaming": 92,
+                "ecommerce": 84,
+                "email": 90,
+            },
+            "error": None,
+            "error_type": None,
+            "location": None,
+        }
+
     monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
     monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
+    monkeypatch.setattr(CoffeeCollector, "_request_ipure", fake_ipure)
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
     result = await collector.collect(
         job_id="job",
@@ -208,13 +267,20 @@ async def test_collect_uses_only_coffee_urls_and_preserves_structured_payload(mo
     assert result["requests"]["gpt_check"] == result["gpt_check"]
     assert result["coffee"]["gpt_check"] == result["gpt_check"]
     assert result["coffee"]["lookup"]["trust_score"] == 91
+    assert result["score"] == 88
+    assert result["coffee_score"] == 91
+    assert result["ipure_scores"]["streaming"] == 92
     assert result["bogon_status"] == "否（公网可达）"
     assert result["rdns"] == "-"
     assert result["rpki_status"] == "未知"
     assert result["asn_kind_display"] == "未知"
     assert result["security_status"] == "🛡️ 纯净 (未发现明显威胁)"
     assert result["proxy_evidence"]["direct_fallback"] is False
-    assert all(url.startswith("https://ip.net.coffee/") for url in requested)
+    assert all(
+        url.startswith("https://ip.net.coffee/")
+        or url.startswith("https://ipure.dev/ip/")
+        for url in requested
+    )
     forbidden_hosts = ("chatgpt", "claude", "openai", "anthropic")
     assert not any(host in " ".join(requested).lower() for host in forbidden_hosts)
 
@@ -265,8 +331,38 @@ async def test_collect_overlaps_independent_coffee_requests(monkeypatch) -> None
             for target in GPT_PROBE_TARGETS
         }
 
+    async def fake_ipure(self, _client, url, *, timeout_seconds):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.01)
+            return {
+                "url": url,
+                "attempted": True,
+                "via_mihomo": True,
+                "proxy_url": self.proxy_url,
+                "target_host": IPURE_HOST,
+                "ok": True,
+                "status_code": 200,
+                "elapsed_ms": 2,
+                "data": {
+                    "total": 80,
+                    "ai": 80,
+                    "streaming": 80,
+                    "ecommerce": 80,
+                    "email": 80,
+                },
+                "error": None,
+                "error_type": None,
+                "location": None,
+            }
+        finally:
+            active -= 1
+
     monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
     monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
+    monkeypatch.setattr(CoffeeCollector, "_request_ipure", fake_ipure)
     result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
         job_id="job",
         node_index=0,
@@ -298,7 +394,12 @@ async def test_collect_failure_has_null_exit_ip(monkeypatch) -> None:
             "location": None,
         }
 
+    async def unexpected_request(*_args, **_kwargs):
+        raise AssertionError("出口 IP 缺失时不应继续请求 GPT 或 IPure")
+
     monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", unexpected_request)
+    monkeypatch.setattr(CoffeeCollector, "_request_ipure", unexpected_request)
     result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
         job_id="job",
         node_index=0,
@@ -309,6 +410,7 @@ async def test_collect_failure_has_null_exit_ip(monkeypatch) -> None:
     )
     assert result["status"] == "failed"
     assert result["exit_ip"] is None
+    assert result["gpt_check"] == []
     assert result["completeness"]["complete"] is False
 
 

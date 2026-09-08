@@ -4,5 +4,6 @@
       "Skill(pua)",
       "Skill(pua:*)"
     ]
-  }
+  },
+  "enabledPlugins": {}
 }
