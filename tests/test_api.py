@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
-from backend.app.jobs import job_manager
-from backend.app.main import app, create_app
+from backend.app.main import create_app
 from backend.app.mihomo import MIHOMO_NOT_READY_MESSAGE
-from backend.app.result_store import result_store
+from backend.app.results.store import ResultStore
+from backend.app.scan.jobs import ScanJobManager
+
+
+@pytest.fixture
+def result_store(tmp_path):
+    return ResultStore(tmp_path / "results")
+
+
+@pytest.fixture
+def job_manager(tmp_path, result_store):
+    return ScanJobManager(Settings(), result_store, tmp_path / "jobs")
+
+
+@pytest.fixture
+def app(job_manager):
+    return create_app(scan_service=job_manager)
 
 
 def _record(job_id: str, index: int) -> dict:
@@ -31,7 +49,7 @@ def _record(job_id: str, index: int) -> dict:
     }
 
 
-def test_health_reports_application_and_core_state() -> None:
+def test_health_reports_application_and_core_state(app) -> None:
     with TestClient(app) as client:
         response = client.get("/api/health")
     assert response.status_code == 200
@@ -40,7 +58,7 @@ def test_health_reports_application_and_core_state() -> None:
     assert isinstance(response.json()["mihomo_ready"], bool)
 
 
-def test_scan_request_rejects_missing_mihomo_core(tmp_path, monkeypatch) -> None:
+def test_scan_request_rejects_missing_mihomo_core(app, job_manager, tmp_path, monkeypatch) -> None:
     request_id = "req-" + "b" * 32
     monkeypatch.setattr(
         job_manager,
@@ -62,7 +80,7 @@ def test_scan_request_rejects_missing_mihomo_core(tmp_path, monkeypatch) -> None
     assert request_id not in job_manager.jobs
 
 
-def test_scan_request_rejects_invalid_subscription_snapshot_hash() -> None:
+def test_scan_request_rejects_invalid_subscription_snapshot_hash(app) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/api/scans",
@@ -74,7 +92,7 @@ def test_scan_request_rejects_invalid_subscription_snapshot_hash() -> None:
     assert response.status_code == 422
 
 
-def test_scan_request_id_conflict_returns_409(tmp_path, monkeypatch) -> None:
+def test_scan_request_id_conflict_returns_409(app, job_manager, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         job_manager,
         "settings",
@@ -96,14 +114,16 @@ def test_scan_request_id_conflict_returns_409(tmp_path, monkeypatch) -> None:
         job_manager.jobs.pop(request_id, None)
 
 
-def test_unknown_job_returns_not_found() -> None:
+def test_unknown_job_returns_not_found(app) -> None:
     with TestClient(app) as client:
         response = client.get("/api/scans/not-found")
     assert response.status_code == 404
     assert response.json()["detail"] == "扫描任务不存在"
 
 
-def test_result_and_export_are_blocked_before_manifest(tmp_path, monkeypatch) -> None:
+def test_result_and_export_are_blocked_before_manifest(
+    app, job_manager, result_store, tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(result_store, "root", tmp_path / "results")
     job_id = "api-running"
     job_manager.jobs[job_id] = {
@@ -126,7 +146,9 @@ def test_result_and_export_are_blocked_before_manifest(tmp_path, monkeypatch) ->
         job_manager.jobs.pop(job_id, None)
 
 
-def test_completed_api_reads_manifest_and_node_store(tmp_path, monkeypatch) -> None:
+def test_completed_api_reads_manifest_and_node_store(
+    app, job_manager, result_store, tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(result_store, "root", tmp_path / "results")
     job_id = "api-completed"
     job = {
@@ -160,7 +182,7 @@ def test_completed_api_reads_manifest_and_node_store(tmp_path, monkeypatch) -> N
         job_manager.jobs.pop(job_id, None)
 
 
-def test_actions_api_does_not_serve_a_second_frontend() -> None:
+def test_actions_api_does_not_serve_a_second_frontend(app) -> None:
     with TestClient(app) as client:
         response = client.get("/")
         app_script = client.get("/app.js")
@@ -181,9 +203,7 @@ def test_local_dev_app_only_serves_api() -> None:
 
 def test_local_dev_cors_allows_only_configured_frontend_origin() -> None:
     frontend_origin = "http://127.0.0.1:5173"
-    with TestClient(
-        create_app(local_dev=True, local_frontend_origin=frontend_origin)
-    ) as client:
+    with TestClient(create_app(local_dev=True, local_frontend_origin=frontend_origin)) as client:
         allowed = client.options(
             "/api/scans",
             headers={
@@ -219,3 +239,32 @@ def test_validation_error_does_not_echo_subscription_secret() -> None:
     assert response.status_code == 422
     assert response.json() == {"detail": "请求参数无效"}
     assert secret not in response.text
+
+
+def test_application_instances_isolate_configuration_and_jobs(tmp_path) -> None:
+    first = create_app(
+        app_settings=Settings(mihomo_path=tmp_path / "missing"),
+        result_store=ResultStore(tmp_path / "first-results"),
+        workspace=tmp_path / "first-jobs",
+        local_dev=True,
+    )
+    second = create_app(
+        app_settings=Settings(mihomo_path=Path(__file__)),
+        result_store=ResultStore(tmp_path / "second-results"),
+        workspace=tmp_path / "second-jobs",
+        local_dev=False,
+    )
+    first.state.scan_service.jobs["private-job"] = {
+        "id": "private-job",
+        "status": "cancelled",
+        "cleanup_confirmed": True,
+    }
+    with TestClient(first) as first_client, TestClient(second) as second_client:
+        assert first_client.get("/api/health").json()["mihomo_ready"] is False
+        assert second_client.get("/api/health").json()["mihomo_ready"] is True
+        assert first_client.get("/api/scans/private-job").status_code == 200
+        assert second_client.get("/api/scans/private-job").status_code == 404
+        assert first_client.get("/api/health").json()["mode"] == "local"
+        assert second_client.get("/api/health").json()["mode"] == "runner-api"
+    assert first.state.scan_service.result_store.root != second.state.scan_service.result_store.root
+    assert first.state.scan_service.workspace != second.state.scan_service.workspace

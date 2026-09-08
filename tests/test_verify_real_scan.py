@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from backend.app.results.artifact import (
+    contains_forbidden_value as _contains_forbidden_value,
+)
+from backend.app.results.artifact import (
+    credential_values as _credential_values,
+)
+from backend.app.results.artifact import (
+    subscription_url_values as _subscription_url_values,
+)
 from scripts.verify_real_scan import (
     _cancel_scan,
-    _contains_forbidden_value,
-    _credential_values,
     _require_no_failed_nodes,
-    _subscription_url_values,
     _validate_local_api_base,
 )
 
@@ -65,34 +71,29 @@ def test_subscription_url_values_extracts_query_and_opaque_path_tokens() -> None
     assert _subscription_url_values(
         "https://example.com/api/subscription/abcdefghijklmnop?token=secret-value"
     ) == {"abcdefghijklmnop", "secret-value"}
-    assert _subscription_url_values(
-        "https://example.com/x/a1Bc2DeF?t=auto"
-    ) == {"a1Bc2DeF"}
+    assert _subscription_url_values("https://example.com/x/a1Bc2DeF?t=auto") == {"a1Bc2DeF"}
 
 
 def test_subscription_url_values_ignores_non_secret_mode_values() -> None:
-    assert not _subscription_url_values(
-        "https://example.com/api/subscription?format=clash&t=auto"
-    )
+    assert not _subscription_url_values("https://example.com/api/subscription?format=clash&t=auto")
+
 
 def test_subscription_url_values_keeps_short_explicit_tokens() -> None:
-    assert _subscription_url_values(
-        "https://example.com/api/subscription?access_token=abc"
-    ) == {"abc"}
+    assert _subscription_url_values("https://example.com/api/subscription?access_token=abc") == {
+        "abc"
+    }
 
 
 @pytest.mark.parametrize("token", ["abcdef", "123456", "abc-def"])
 def test_subscription_url_values_keeps_short_query_token_shapes(token: str) -> None:
-    assert _subscription_url_values(
-        f"https://example.com/api/subscription?t={token}"
-    ) == {token}
+    assert _subscription_url_values(f"https://example.com/api/subscription?t={token}") == {token}
 
 
 @pytest.mark.parametrize("token", ["abcdef", "123456", "abc-def"])
 def test_subscription_url_values_keeps_short_path_token_shapes(token: str) -> None:
-    assert _subscription_url_values(
-        f"https://example.com/api/subscription/{token}?t=auto"
-    ) == {token}
+    assert _subscription_url_values(f"https://example.com/api/subscription/{token}?t=auto") == {
+        token
+    }
 
 
 def test_formal_scan_requires_every_node_to_be_usable() -> None:

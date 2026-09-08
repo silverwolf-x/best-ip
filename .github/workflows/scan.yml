@@ -99,50 +99,16 @@ jobs:
           --request-id "$REQUEST_ID"
           --key-id "$KEY_ID"
 
-      - name: Start local API
-        env:
-          BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
-        shell: bash
-        run: |
-          test -x "$BEST_IP_MIHOMO_PATH"
-          uv run --no-sync uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
-          printf '%s' "$!" > "$RUNNER_TEMP/uvicorn.pid"
-          for attempt in $(seq 1 60); do
-            health=$(curl --fail --silent --show-error http://127.0.0.1:8000/api/health || true)
-            if [[ "$health" == *'"mihomo_ready":true'* ]]; then exit 0; fi
-            sleep 1
-          done
-          printf 'Mihomo readiness check failed for %s\n' "$BEST_IP_MIHOMO_PATH" >&2
-          cat "$RUNNER_TEMP/uvicorn.log" >&2 || true
-          exit 1
-
-      - name: Run strict structural scan verifier
+      - name: Run production scan
         env:
           BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
           REQUEST_ID: ${{ inputs.request_id }}
-          BEST_IP_API_BASE: http://127.0.0.1:8000
-          BEST_IP_REAL_SCAN_TIMEOUT_SECONDS: "1500"
-          BEST_IP_ALLOW_PARTIAL: "1"
         shell: bash
-        run: |
-          export BEST_IP_REQUEST_ID="$REQUEST_ID"
-          export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
-          uv run --no-sync python scripts/verify_real_scan.py
-
-      - name: Build sanitized result artifact
-        env:
-          REQUEST_ID: ${{ inputs.request_id }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        shell: bash
-        run: |
-          export BEST_IP_TEST_SUBSCRIPTION_URL="$(<"$RUNNER_TEMP/subscription-url")"
-          uv run --no-sync python scripts/sanitize_action_artifact.py \
-            --job-id "$REQUEST_ID" \
-            --request-id "$REQUEST_ID" \
-            --run-id "$RUN_ID" \
-            --run-attempt "$RUN_ATTEMPT" \
-            --output-dir "$RUNNER_TEMP/action-artifact"
+        run: >-
+          uv run --no-sync python scripts/run_scan.py
+          --request-id "$REQUEST_ID"
+          --subscription-file "$RUNNER_TEMP/subscription-url"
+          --output-dir "$RUNNER_TEMP/action-artifact"
 
       - name: Upload sanitized result artifact
         uses: actions/upload-artifact@v4
@@ -156,6 +122,5 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [[ -f "$RUNNER_TEMP/uvicorn.pid" ]]; then kill "$(<"$RUNNER_TEMP/uvicorn.pid")" 2>/dev/null || true; fi
-          rm -f "$RUNNER_TEMP/scan-private.pem" "$RUNNER_TEMP/subscription-url" "$RUNNER_TEMP/uvicorn.pid" "$RUNNER_TEMP/uvicorn.log"
-          rm -rf runtime/jobs runtime/results runtime/mihomo
+          rm -f "$RUNNER_TEMP/scan-private.pem" "$RUNNER_TEMP/subscription-url"
+          rm -rf runtime/mihomo

@@ -7,19 +7,25 @@ from typing import Any
 import pytest
 
 from backend.app.config import Settings
-from backend.app.jobs import (
-    ScanJobManager,
-    _attach_mihomo_error,
-    _failed_node,
-    _safe_job_error,
-    _summarize_mihomo_error,
-)
 from backend.app.mihomo import (
     MIHOMO_NOT_READY_MESSAGE,
     MihomoError,
     MihomoNotReadyError,
 )
-from backend.app.result_store import result_store
+from backend.app.results.store import ResultStore
+from backend.app.scan.errors import (
+    _attach_mihomo_error,
+    _failed_node,
+    _safe_job_error,
+    _summarize_mihomo_error,
+)
+from backend.app.scan.jobs import ScanJobManager
+from backend.app.scan.node_runner import NodeRunner
+
+
+@pytest.fixture
+def result_store(tmp_path):
+    return ResultStore(tmp_path / "results")
 
 
 class FakeMihomo:
@@ -45,9 +51,7 @@ def _collector_result(error_type: str) -> dict:
 
 def test_attach_mihomo_error_uses_safe_summary() -> None:
     result = _collector_result("ConnectError")
-    mihomo = FakeMihomo(
-        'node.example:443 connect error: dns resolve failed: credential="secret"'
-    )
+    mihomo = FakeMihomo('node.example:443 connect error: dns resolve failed: credential="secret"')
 
     _attach_mihomo_error(result, mihomo, 0)  # type: ignore[arg-type]
 
@@ -133,9 +137,7 @@ def test_job_error_preserves_safe_missing_core_action() -> None:
 
 
 def test_job_error_does_not_persist_unexpected_exception_text() -> None:
-    error = _safe_job_error(
-        RuntimeError("https://subscription.example/?token=secret-value")
-    )
+    error = _safe_job_error(RuntimeError("https://subscription.example/?token=secret-value"))
 
     assert error == "扫描任务失败（RuntimeError）"
     assert "secret-value" not in error
@@ -143,6 +145,7 @@ def test_job_error_does_not_persist_unexpected_exception_text() -> None:
 
 @pytest.mark.asyncio
 async def test_scan_node_contains_constructor_failure_to_one_node(
+    result_store,
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -157,7 +160,6 @@ async def test_scan_node_contains_constructor_failure_to_one_node(
     async def ignore_progress(_job: dict[str, Any]) -> None:
         return None
 
-    monkeypatch.setattr("backend.app.jobs.MihomoProcess", ConstructorFailureMihomo)
     monkeypatch.setattr(
         result_store,
         "write_node",
@@ -169,7 +171,17 @@ async def test_scan_node_contains_constructor_failure_to_one_node(
             mihomo_path=tmp_path / "mihomo.exe",
             max_node_attempts=1,
             node_retry_backoff_ms=0,
-        )
+        ),
+        result_store,
+        tmp_path / "jobs",
+        node_runner=NodeRunner(
+            Settings(
+                mihomo_path=tmp_path / "mihomo.exe",
+                max_node_attempts=1,
+                node_retry_backoff_ms=0,
+            ),
+            mihomo_factory=ConstructorFailureMihomo,
+        ),
     )
     monkeypatch.setattr(manager, "_write_progress", ignore_progress)
     proxy = {
@@ -197,7 +209,9 @@ async def test_scan_node_contains_constructor_failure_to_one_node(
 
 
 @pytest.mark.asyncio
-async def test_job_rejects_subscription_snapshot_mismatch(tmp_path, monkeypatch) -> None:
+async def test_job_rejects_subscription_snapshot_mismatch(
+    result_store, tmp_path, monkeypatch
+) -> None:
     content = b"proxies:\n  - {name: node-a, type: ss}"
 
     async def fake_download(
@@ -210,15 +224,18 @@ async def test_job_rejects_subscription_snapshot_mismatch(tmp_path, monkeypatch)
         assert timeout_seconds > 0
         return content
 
-    monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
-    monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
-    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+    manager = ScanJobManager(
+        Settings(mihomo_path=Path(__file__)),
+        result_store,
+        tmp_path / "jobs",
+        download=fake_download,
+    )
 
     created = manager.create(
         "https://subscription.example/?token=secret-value",
         subscription_sha256="0" * 64,
     )
-    await manager.tasks[created["id"]]
+    await manager.wait(created["id"])
     job = manager.get(created["id"])
 
     assert job["status"] == "failed"
@@ -228,6 +245,7 @@ async def test_job_rejects_subscription_snapshot_mismatch(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_job_fails_as_infrastructure_error_when_core_is_missing(
+    result_store,
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -243,16 +261,16 @@ async def test_job_fails_as_infrastructure_error_when_core_is_missing(
         assert timeout_seconds > 0
         return content
 
-    monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
-    monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(result_store, "root", tmp_path / "results")
     core_path = tmp_path / "mihomo.exe"
     core_path.write_bytes(b"")
-    manager = ScanJobManager(Settings(mihomo_path=core_path))
+    manager = ScanJobManager(
+        Settings(mihomo_path=core_path), result_store, tmp_path / "jobs", download=fake_download
+    )
 
     created = manager.create("https://subscription.example/subscription")
     core_path.unlink()
-    await manager.tasks[created["id"]]
+    await manager.wait(created["id"])
     job = manager.get(created["id"])
 
     assert job["status"] == "failed"
@@ -265,8 +283,8 @@ async def test_job_fails_as_infrastructure_error_when_core_is_missing(
 
 
 @pytest.mark.asyncio
-async def test_cancel_marks_never_started_job_cancelled() -> None:
-    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+async def test_cancel_marks_never_started_job_cancelled(result_store, tmp_path) -> None:
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)), result_store, tmp_path / "jobs")
     created = manager.create("https://subscription.example/subscription")
 
     job = await manager.cancel(created["id"])
@@ -277,8 +295,8 @@ async def test_cancel_marks_never_started_job_cancelled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shutdown_marks_never_started_job_cancelled() -> None:
-    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+async def test_shutdown_marks_never_started_job_cancelled(result_store, tmp_path) -> None:
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)), result_store, tmp_path / "jobs")
     created = manager.create("https://subscription.example/subscription")
 
     await manager.shutdown()
@@ -291,6 +309,7 @@ async def test_shutdown_marks_never_started_job_cancelled() -> None:
 
 @pytest.mark.asyncio
 async def test_scan_node_retries_with_fresh_mihomo_processes(
+    result_store,
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -373,8 +392,6 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
     async def ignore_progress(_job: dict[str, Any]) -> None:
         return None
 
-    monkeypatch.setattr("backend.app.jobs.MihomoProcess", RetryMihomo)
-    monkeypatch.setattr("backend.app.jobs.CoffeeCollector", RetryCollector)
     monkeypatch.setattr(result_store, "write_node", capture_node)
     manager = ScanJobManager(
         Settings(
@@ -382,7 +399,19 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
             max_parallel_nodes=1,
             max_node_attempts=3,
             node_retry_backoff_ms=0,
-        )
+        ),
+        result_store,
+        tmp_path / "jobs",
+        node_runner=NodeRunner(
+            Settings(
+                mihomo_path=tmp_path / "mihomo.exe",
+                max_parallel_nodes=1,
+                max_node_attempts=3,
+                node_retry_backoff_ms=0,
+            ),
+            mihomo_factory=RetryMihomo,
+            collector_factory=RetryCollector,
+        ),
     )
     monkeypatch.setattr(manager, "_write_progress", ignore_progress)
     job = {
@@ -452,6 +481,7 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
 
 @pytest.mark.asyncio
 async def test_worker_pool_caps_single_and_dual_job_concurrency(
+    result_store,
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -486,9 +516,7 @@ async def test_worker_pool_caps_single_and_dual_job_concurrency(
         metrics = job["metrics"]
         active += 1
         metrics["active_nodes"] += 1
-        metrics["peak_active_nodes"] = max(
-            metrics["peak_active_nodes"], metrics["active_nodes"]
-        )
+        metrics["peak_active_nodes"] = max(metrics["peak_active_nodes"], metrics["active_nodes"])
         peak_active = max(peak_active, active)
         try:
             await asyncio.sleep(0.03)
@@ -499,14 +527,7 @@ async def test_worker_pool_caps_single_and_dual_job_concurrency(
             metrics["active_nodes"] -= 1
             active -= 1
 
-    monkeypatch.setattr("backend.app.jobs.JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(result_store, "root", tmp_path / "results")
-    monkeypatch.setattr("backend.app.jobs.download_subscription", fake_download)
-    monkeypatch.setattr("backend.app.jobs.parse_subscription", fake_parse)
-    monkeypatch.setattr(
-        "backend.app.jobs.resolve_outbound_interface",
-        lambda _configured: None,
-    )
     monkeypatch.setattr(result_store, "initialize", lambda *_args: None)
     monkeypatch.setattr(result_store, "finalize", lambda *_args: {})
     core_path = tmp_path / "mihomo.exe"
@@ -517,7 +538,12 @@ async def test_worker_pool_caps_single_and_dual_job_concurrency(
             max_parallel_jobs=2,
             max_parallel_nodes=8,
             max_nodes=20,
-        )
+        ),
+        result_store,
+        tmp_path / "jobs",
+        download=fake_download,
+        parse=fake_parse,
+        resolve_interface=lambda _configured: None,
     )
     monkeypatch.setattr(manager, "_scan_node", fake_scan_node)
 
@@ -529,7 +555,7 @@ async def test_worker_pool_caps_single_and_dual_job_concurrency(
 
     first = manager.create("https://subscription.example/one", request_id="job-one")
     second = manager.create("https://subscription.example/two", request_id="job-two")
-    await asyncio.gather(manager.tasks[first["id"]], manager.tasks[second["id"]])
+    await asyncio.gather(manager.wait(first["id"]), manager.wait(second["id"]))
 
     assert peak_active == 16
     for job_id in (first["id"], second["id"]):
@@ -541,8 +567,8 @@ async def test_worker_pool_caps_single_and_dual_job_concurrency(
         assert len(manager._summaries[job_id]) == 20
 
 
-def test_running_get_uses_memory_summary_cache(monkeypatch) -> None:
-    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+def test_running_get_uses_memory_summary_cache(result_store, tmp_path, monkeypatch) -> None:
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)), result_store, tmp_path / "jobs")
     job_id = "cached-job"
     manager.jobs[job_id] = {
         "id": job_id,
@@ -568,12 +594,14 @@ def test_running_get_uses_memory_summary_cache(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_safe_progress_write_uses_result_store_root(tmp_path, monkeypatch) -> None:
+async def test_safe_progress_write_uses_result_store_root(
+    result_store, tmp_path, monkeypatch
+) -> None:
     root = tmp_path / "results"
     job_id = "job-root"
     (root / job_id).mkdir(parents=True)
     monkeypatch.setattr(result_store, "root", root)
-    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)))
+    manager = ScanJobManager(Settings(mihomo_path=Path(__file__)), result_store, tmp_path / "jobs")
     called = False
     job = {"id": job_id, "status": "failed"}
 

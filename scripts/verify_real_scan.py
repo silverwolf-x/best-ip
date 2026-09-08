@@ -11,166 +11,35 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-import yaml
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.app.config import JOBS_DIR, RESULTS_DIR, settings
-from backend.app.jobs import _TRANSPORT_ERROR_TYPES
-from backend.app.result_store import result_store
-from backend.app.scanner import IPURE_HOST, _ipure_url, _is_same_ip, _trace_ip
+from backend.app.results.artifact import (
+    contains_forbidden_value as _contains_forbidden_value,
+)
+from backend.app.results.artifact import (
+    credential_values as _credential_values,
+)
+from backend.app.results.artifact import (
+    subscription_url_values as _subscription_url_values,
+)
+from backend.app.results.store import result_store
+from backend.app.scan.errors import _TRANSPORT_ERROR_TYPES
+from backend.app.sources.coffee import _is_same_ip, _trace_ip
+from backend.app.sources.http import IPURE_HOST
+from backend.app.sources.ipure import _ipure_url
 from backend.app.subscription import (
     download_subscription,
     is_subscription_metadata,
     parse_subscription,
 )
-
-_CREDENTIAL_KEYS = {
-    "auth",
-    "auth-str",
-    "authorization",
-    "cookie",
-    "obfs-password",
-    "password",
-    "pre-shared-key",
-    "preshared-key",
-    "private-key",
-    "private-key-passphrase",
-    "psk",
-    "secret",
-    "token",
-    "username",
-    "uuid",
-}
-
-
-def _credential_values(content: bytes) -> set[str]:
-    try:
-        document = yaml.safe_load(content.decode("utf-8-sig"))
-    except (UnicodeDecodeError, yaml.YAMLError):
-        return set()
-
-    values: set[str] = set()
-
-    def visit(value: Any, key: str = "") -> None:
-        if isinstance(value, dict):
-            for child_key, child_value in value.items():
-                normalized_key = str(child_key).strip().lower().replace("_", "-")
-                visit(child_value, normalized_key)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child, key)
-        elif key in _CREDENTIAL_KEYS:
-            text = str(value).strip()
-            if text:
-                values.add(text)
-
-    visit(document)
-    return values
-
-
-def _contains_forbidden_value(value: Any, forbidden_values: set[str]) -> bool:
-    if isinstance(value, dict):
-        return any(
-            _contains_forbidden_value(child, forbidden_values)
-            for child in value.values()
-        )
-    if isinstance(value, list):
-        return any(
-            _contains_forbidden_value(child, forbidden_values)
-            for child in value
-        )
-    if isinstance(value, bool) or value is None:
-        return False
-    text = str(value)
-    return any(
-        text == forbidden or (len(forbidden) >= 6 and forbidden in text)
-        for forbidden in forbidden_values
-    )
-
-
-_STATIC_SUBSCRIPTION_PATH_SEGMENTS = {
-    "api",
-    "client",
-    "clients",
-    "clash",
-    "config",
-    "configs",
-    "download",
-    "feed",
-    "feeds",
-    "link",
-    "links",
-    "mihomo",
-    "profile",
-    "profiles",
-    "subscribe",
-    "subscription",
-    "subscriptions",
-    "yaml",
-    "yml",
-}
-
-
-_STATIC_SUBSCRIPTION_QUERY_VALUES = {
-    "auto",
-    "base64",
-    "clash",
-    "false",
-    "mihomo",
-    "plain",
-    "true",
-    "yaml",
-    "yml",
-}
-
-
-def _looks_like_subscription_query_token(value: str) -> bool:
-    return (
-        len(value) >= 6
-        and not any(character.isspace() for character in value)
-        and value.casefold() not in _STATIC_SUBSCRIPTION_QUERY_VALUES
-    )
-
-
-def _looks_like_subscription_path_token(value: str) -> bool:
-    return (
-        len(value) >= 6
-        and not any(character.isspace() for character in value)
-        and value.casefold() not in _STATIC_SUBSCRIPTION_PATH_SEGMENTS
-    )
-
-
-def _subscription_url_values(url: str) -> set[str]:
-    parsed = urlsplit(url)
-    values: set[str] = set()
-    for key, query_values in parse_qs(
-        parsed.query,
-        keep_blank_values=False,
-    ).items():
-        normalized_key = key.strip().lower().replace("_", "-")
-        sensitive_key = any(
-            marker in normalized_key
-            for marker in ("auth", "key", "pass", "secret", "token", "uuid")
-        )
-        for query_value in query_values:
-            value = query_value.strip()
-            if value and (
-                sensitive_key or _looks_like_subscription_query_token(value)
-            ):
-                values.add(value)
-    values.update(
-        segment
-        for segment in (unquote(item).strip() for item in parsed.path.split("/"))
-        if _looks_like_subscription_path_token(segment)
-    )
-    return values
 
 
 def _validate_local_api_base(api_base: str) -> str:
@@ -201,9 +70,7 @@ def _require_no_failed_nodes(job: dict[str, Any]) -> None:
     if isinstance(total, int) and total > 0 and failed_count == total:
         raise RuntimeError("正式订阅可用性验收失败：全部节点均未获得有效结果")
     if failed_count and os.environ.get("BEST_IP_ALLOW_PARTIAL") != "1":
-        raise RuntimeError(
-            f"正式订阅可用性验收失败：{failed_count} 个节点未获得有效结果"
-        )
+        raise RuntimeError(f"正式订阅可用性验收失败：{failed_count} 个节点未获得有效结果")
 
 
 async def _cancel_scan(
@@ -264,9 +131,7 @@ async def verify() -> None:
             "请通过 BEST_IP_TEST_SUBSCRIPTION_URL 注入正式测试订阅；不要把 token 写入仓库"
         )
 
-    api_base = _validate_local_api_base(
-        os.environ.get("BEST_IP_API_BASE", "http://127.0.0.1:8000")
-    )
+    api_base = _validate_local_api_base(os.environ.get("BEST_IP_API_BASE", "http://127.0.0.1:8000"))
     timeout_seconds = float(os.environ.get("BEST_IP_REAL_SCAN_TIMEOUT_SECONDS", "1800"))
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise RuntimeError("BEST_IP_REAL_SCAN_TIMEOUT_SECONDS 必须是大于 0 的有限数")
@@ -291,9 +156,7 @@ async def verify() -> None:
         max_nodes=settings.max_nodes,
     )
     expected_nodes = [
-        str(proxy["name"])
-        for proxy in parsed_proxies
-        if not is_subscription_metadata(proxy)
+        str(proxy["name"]) for proxy in parsed_proxies if not is_subscription_metadata(proxy)
     ]
     expected_skipped = len(parsed_proxies) - len(expected_nodes)
 
@@ -362,15 +225,13 @@ async def verify() -> None:
                 result_indices = sorted(
                     result.get("node_index")
                     for result in results
-                    if isinstance(result, dict)
-                    and isinstance(result.get("node_index"), int)
+                    if isinstance(result, dict) and isinstance(result.get("node_index"), int)
                 )
                 if (
                     len(result_indices) != completed
                     or len(set(result_indices)) != completed
                     or any(
-                        index < 0 or index >= int(job.get("total") or 0)
-                        for index in result_indices
+                        index < 0 or index >= int(job.get("total") or 0) for index in result_indices
                     )
                 ):
                     raise RuntimeError("进行中节点摘要身份或索引无效")
@@ -412,9 +273,7 @@ async def verify() -> None:
             safe_error = job.get("error")
             if isinstance(safe_error, str) and safe_error.strip():
                 print(f"任务安全错误：{' '.join(safe_error.split())[:500]}")
-            raise RuntimeError(
-                f"正式扫描未完成（状态：{job.get('status') or 'unknown'}）"
-            )
+            raise RuntimeError(f"正式扫描未完成（状态：{job.get('status') or 'unknown'}）")
 
         total = job.get("total")
         if not isinstance(total, int) or total < 1:
@@ -423,10 +282,12 @@ async def verify() -> None:
             raise RuntimeError("任务节点数或 metadata 数与订阅快照不一致")
         if job.get("completed") != total:
             raise RuntimeError("完成任务的 completed 与 total 不一致")
-        if sum(
-            int(job.get(key) or 0)
-            for key in ("success_count", "partial_count", "failed_count")
-        ) != total:
+        if (
+            sum(
+                int(job.get(key) or 0) for key in ("success_count", "partial_count", "failed_count")
+            )
+            != total
+        ):
             raise RuntimeError("完成任务的状态计数与 total 不一致")
 
         manifest = job.get("manifest")
@@ -495,8 +356,7 @@ async def verify() -> None:
                     raise RuntimeError(f"节点 {index} 出口 IP 非法") from exc
                 evidence = record.get("proxy_evidence")
                 selection_confirmed = (
-                    isinstance(evidence, dict)
-                    and evidence.get("selection_confirmed") is True
+                    isinstance(evidence, dict) and evidence.get("selection_confirmed") is True
                 )
                 if not selection_confirmed:
                     raise RuntimeError(f"节点 {index} 缺少 selector 身份确认")
@@ -512,9 +372,7 @@ async def verify() -> None:
                 trace = requests.get("trace") if isinstance(requests, dict) else None
                 lookup = requests.get("lookup") if isinstance(requests, dict) else None
                 ipure = requests.get("ipure") if isinstance(requests, dict) else None
-                lookup_data = (
-                    lookup.get("data") if isinstance(lookup, dict) else None
-                )
+                lookup_data = lookup.get("data") if isinstance(lookup, dict) else None
                 if (
                     not isinstance(page, dict)
                     or page.get("ok") is not True
@@ -561,11 +419,7 @@ async def verify() -> None:
                 elif record.get("status") != "partial" or record.get("score") is not None:
                     raise RuntimeError(f"节点 {index} IPure 缺失未标记为部分")
                 completeness = record.get("completeness")
-                checks = (
-                    completeness.get("checks")
-                    if isinstance(completeness, dict)
-                    else None
-                )
+                checks = completeness.get("checks") if isinstance(completeness, dict) else None
                 if (
                     not isinstance(checks, dict)
                     or checks.get("page_received") is not True
@@ -587,9 +441,7 @@ async def verify() -> None:
                     and request.get("error_type") in _TRANSPORT_ERROR_TYPES
                     for request in requests.values()
                 )
-                if has_connect_error and not str(
-                    record.get("transport_error") or ""
-                ).strip():
+                if has_connect_error and not str(record.get("transport_error") or "").strip():
                     raise RuntimeError(f"失败节点 {index} 缺少传输层错误原因")
             else:
                 raise RuntimeError(f"节点 {index} 状态无效：{status}")
@@ -656,10 +508,7 @@ async def verify() -> None:
                 raise RuntimeError(f"暂存文件泄露订阅凭据：{path.name}")
         if asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError("正式扫描验收超过总时间预算")
-        print(
-            f"正式订阅结构闭环通过：{total} 个节点均有终态记录，"
-            "manifest/export 校验通过"
-        )
+        print(f"正式订阅结构闭环通过：{total} 个节点均有终态记录，manifest/export 校验通过")
         _require_no_failed_nodes(job)
         print(
             "正式订阅可用性验收完成："
@@ -676,9 +525,7 @@ def main() -> None:
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
         suffix = f" HTTP {status_code}" if isinstance(status_code, int) else ""
-        raise SystemExit(
-            f"正式订阅闭环失败（{exc.__class__.__name__}{suffix}）"
-        ) from exc
+        raise SystemExit(f"正式订阅闭环失败（{exc.__class__.__name__}{suffix}）") from exc
     except (TimeoutError, RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 

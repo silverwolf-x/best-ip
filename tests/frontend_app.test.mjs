@@ -1,15 +1,12 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
-
-const appSource = readFileSync("frontend/app.js", "utf8");
-const indexSource = readFileSync("frontend/index.html", "utf8");
-const frontendAssetSource = readdirSync("frontend", { withFileTypes: true })
-  .filter((entry) => entry.isFile())
-  .map((entry) => readFileSync(`frontend/${entry.name}`, "utf8"))
-  .join("\n");
-
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { mountApp } from '../frontend/src/ui.js';
+import { normalizeDisplayText, formatAsn, normalizeUnavailableLatencyStatus, filterResults, normalizeImportedResult } from '../frontend/src/results.js';
+import { parseImportedJson, parseImportedCsv, buildCsvExport, buildJsonExport } from '../frontend/src/import-export.js';
+import { snapshot } from '../frontend/src/transport/snapshot.js';
+import { resultFixture } from './frontend-fixtures.mjs';
+const indexSource = readFileSync('frontend/index.html', 'utf8');
 class FakeElement {
   constructor(id) {
     this.id = id;
@@ -28,7 +25,7 @@ class FakeElement {
     this.queryChildren = new Map();
     this.classList = {
       add: (...names) => { names.forEach((name) => { this.className += ` ${name}`; }); },
-      remove: () => {},
+      remove: () => {}, toggle: () => {},
     };
   }
 
@@ -69,413 +66,326 @@ class FakeElement {
     for (const listener of this.listeners.get("click") || []) listener({ target: this, preventDefault() {} });
   }
 }
-
-function createFixture({ includeError = true, mode = "gateway", dispatch, poll, cancel, fetchImpl, apiUrl } = {}) {
-  const ids = [...new Set(
-    [...indexSource.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => id),
-  )].filter((id) => includeError || id !== "errorMessage");
-  const nodes = Object.fromEntries(ids.map((id) => [id, new FakeElement(id)]));
-  const meta = { content: "" };
-  const document = {
-    documentElement: { dataset: {} },
-    querySelector(selector) {
-      if (selector === 'meta[name="api-base"]') return meta;
-      if (selector.startsWith("#")) return nodes[selector.slice(1)] || null;
-      return null;
-    },
-    querySelectorAll() { return []; },
-    createDocumentFragment() { return new FakeElement("fragment"); },
-    createElement(tagName) { return new FakeElement(tagName); },
-    createTextNode(text) {
-      const node = new FakeElement("text");
-      node.textContent = text;
-      return node;
-    },
-  };
-  const timers = [];
-  const calls = [];
-  const logs = [];
-  const action = {
-    MODE: mode,
-    MAX_POLL_DELAY_MS: 10_000,
-    dispatch: dispatch || (async (...args) => {
-      calls.push(args);
-      throw new Error("网关请求失败");
-    }),
-    poll: poll || (async () => ({ status: "dispatching", manifest_ready: false })),
-    cancel: cancel || (async () => {}),
-    apiUrl: apiUrl || ((path) => path),
-  };
-  const window = { BestIpAction: action };
-  const context = {
-    window,
-    document,
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: () => ({ matches: false }),
-    setTimeout: (callback, delay) => {
-      const timer = { callback, delay };
-      timers.push(timer);
-      return timer;
-    },
-    clearTimeout: () => {},
-    console: { error: (...args) => logs.push(args.join(" ")), log: () => {}, warn: () => {} },
-    fetch: fetchImpl || (async () => { throw new Error("unexpected raw fetch"); }),
-    Date,
-    Promise,
-    URL,
-    Blob,
-    navigator: { clipboard: { writeText: async () => {} } },
-  };
-  runInNewContext(appSource, context, { filename: "frontend/app.js" });
-  return { nodes, calls, timers, logs, context };
+function createFixture({ start, poll, cancel, health, includeError = true } = {}) {
+ const ids = [...indexSource.matchAll(/id="([^"]+)"/g)].map(match => match[1]).filter(id => includeError || id !== 'errorMessage');
+ const nodes = Object.fromEntries(ids.map(id => [id, new FakeElement(id)]));
+ nodes.statusFilter.value = 'all';
+ const document = {
+  documentElement: { dataset: {} },
+  querySelector: selector => nodes[selector.slice(1)] || null,
+  querySelectorAll: () => [],
+  createDocumentFragment: () => new FakeElement('fragment'),
+  createElement: name => new FakeElement(name),
+  createTextNode: text => Object.assign(new FakeElement('text'), { textContent: text }),
+ };
+ globalThis.document = document;
+ globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+ globalThis.matchMedia = () => ({ matches: false });
+ globalThis.fetch = async () => { throw new Error('UI must not fetch'); };
+ const calls = [];
+ const timers = [];
+ const transport = {
+  health: health || (async () => ({ ready: true, label: '就绪', hint: '测试适配器' })),
+  start: start || (async url => { calls.push(url); throw new Error('网关请求失败'); }),
+  poll: poll || (async () => snapshot()),
+  cancel: cancel || (async () => ({ requested: true, confirmed: false })),
+ };
+ const app = mountApp({ transport, document, schedule: (callback, delay) => { const timer = { callback, delay }; timers.push(timer); return timer; }, unschedule: timer => { if (timer) timer.cancelled = true; } });
+ return { ...app, nodes, timers, calls };
+}
+async function submit(fixture) {
+ return fixture.nodes.scanForm.listeners.get('submit')[0]({ preventDefault() {} });
 }
 
-function submit(fixture) {
-  const listener = fixture.nodes.scanForm.listeners.get("submit")?.[0];
-  assert.ok(listener, "submit listener must be registered");
-  return listener({ preventDefault() {} });
-}
-
-test("gateway page has no browser GitHub credential surface", () => {
-  const actionSource = readFileSync("frontend/action-client.js", "utf8");
-  assert.doesNotMatch(indexSource, /githubPat|Fine-grained|Pages 模式/iu);
-  assert.doesNotMatch(actionSource, /api\.github\.com|Authorization|github_pat|Fine-grained/iu);
-  assert.doesNotMatch(frontendAssetSource, /github[-_]?pat|api\.github\.com|Authorization|github_pat|Fine-grained/iu);
-  for (const forbidden of ["chatgpt.com", "claude.ai", "api.openai.com", "anthropic.com", "gpt_access", "claude_access"]) {
-    assert.doesNotMatch(indexSource, new RegExp(forbidden.replaceAll(".", "\\."), "iu"));
+test("native module page has no browser credentials or legacy global assembly", () => {
+  assert.match(indexSource, /type="module" src="\.\/src\/main\.js"/);
+  assert.doesNotMatch(indexSource, /githubPat|Fine-grained|action-client\.js|zip-reader\.js|app\.js|0\/0/);
+  const sources = readdirSync("frontend/src", { recursive: true }).filter(path => path.endsWith(".js")).map(path => readFileSync(`frontend/src/${path}`, "utf8")).join("\n");
+  assert.doesNotMatch(sources, /BestIpAction|BestIpZip|api\.github\.com|github_pat/);
+  for (const path of ["ui.js", "main.js", "state.js", "scan-controller.js", "views/scan-view.js", "views/table-view.js", "views/detail-view.js"]) {
+    assert.doesNotMatch(readFileSync(`frontend/src/${path}`, "utf8"), /localMode|credentials|\/api\/|scanToken|run_id|runId|actionRequestId/);
   }
-  assert.match(indexSource, /manifest/u);
-  assert.match(indexSource, /data-sort="score"/u);
+  const headers = indexSource.match(/<tr class="header-titles">([\s\S]*?)<\/tr>/)[1];
+  const filters = indexSource.match(/<tr class="header-filters">([\s\S]*?)<\/tr>/)[1];
+  assert.equal((headers.match(/<th\b/g) || []).length, 11);
+  assert.equal((filters.match(/<th\b/g) || []).length, 11);
 });
 
-test("IPure total and four scenario scores stay aligned across table and CSV", () => {
-  const titleRow = indexSource.match(/<tr class="header-titles">([\s\S]*?)<\/tr>/u)?.[1] || "";
-  const filterRow = indexSource.match(/<tr class="header-filters">([\s\S]*?)<\/tr>/u)?.[1] || "";
-  assert.equal((titleRow.match(/<th\b/gu) || []).length, 11);
-  assert.equal((filterRow.match(/<th\b/gu) || []).length, 11);
-  assert.match(titleRow, /IPure 总分/u);
-  assert.match(titleRow, /IPure 四项评分/u);
-  assert.match(appSource, /"IPure总分", "IPure四项评分", "Coffee评分"/u);
-  for (const label of ["AI", "流媒体", "电商", "邮件"]) {
-    assert.match(appSource, new RegExp(`\\["[a-z]+", "${label}"\\]`, "u"));
-  }
-});
-
-test("imported text, ASN, and missing latency labels are normalized", () => {
+test("pure normalization and views preserve safe text, ASN and missing latency labels", () => {
   const fixture = createFixture();
-
-  assert.equal(fixture.context.normalizeDisplayText("Amazon.com&#x9; Inc."), "Amazon.com Inc.");
-  assert.equal(fixture.context.formatAsn("ASAS16509"), "AS16509");
-  assert.equal(fixture.context.formatAsn("invalid"), "");
-  assert.equal(fixture.context.createMiniGptBar([]).textContent, "未检测");
-  assert.equal(fixture.context.createMiniPingBar([]).textContent, "未检测");
-  assert.equal(fixture.context.normalizeUnavailableLatencyStatus("未返回 (-1ms)", "超时"), "未返回");
-  assert.equal(fixture.context.normalizeUnavailableLatencyStatus("-1ms", "超时"), "超时");
-  assert.match(fixture.context.renderThreatChips({ security_status: "检测数据不足" }, {}), /检测数据不足/u);
-  assert.match(fixture.context.renderOpenPortsHtml({}, null), /未检测/u);
-  assert.doesNotMatch(appSource, /p-timeout">-1ms/u);
-
+  assert.equal(normalizeDisplayText("Amazon.com&#x9; Inc."), "Amazon.com Inc.");
+  assert.equal(formatAsn("ASAS16509"), "AS16509");
+  assert.equal(formatAsn("invalid"), "");
+  assert.equal(normalizeUnavailableLatencyStatus("未返回 (-1ms)", "超时"), "未返回");
+  assert.equal(fixture.createMiniGptBar([]).textContent, "未检测");
+  assert.equal(fixture.createMiniPingBar([]).textContent, "未检测");
+  assert.match(fixture.renderThreatChips({ security_status: "检测数据不足" }, {}), /检测数据不足/);
+  assert.match(fixture.renderOpenPortsHtml({}, null), /未检测/);
   const injected = '" onmouseover="alert(1)';
-  const row = fixture.context.createResultRow({
-    node: "imported-node",
-    score: null,
-    requests: { ipure: { error_type: "EnrichmentUnavailable", error: injected } },
-    ipure_scores: {},
-    gpt_check: [],
-    global_ping: [],
-  });
-  const scoreBadge = row.children[1].children[0];
-  assert.equal(scoreBadge.title, injected);
+  const row = fixture.createResultRow({ node: "node", requests: { ipure: { error_type: "EnrichmentUnavailable", error: injected } }, gpt_check: [], global_ping: [] });
+  assert.equal(row.children[1].children[0].title, injected);
   assert.equal(row.children[1].innerHTML, "");
 });
 
-test("the real page includes the error node and failed gateway submit is recoverable", async () => {
-  assert.equal((indexSource.match(/id="errorMessage"/g) || []).length, 1);
+test("failed submit is recoverable and health uses only the adapter", async () => {
   const fixture = createFixture();
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
+  await fixture.ready;
   await submit(fixture);
-
+  assert.equal(fixture.nodes.healthStatus.textContent, "就绪");
+  assert.equal(fixture.nodes.modeHint.textContent, "测试适配器");
   assert.equal(fixture.calls.length, 1);
-  assert.equal(fixture.nodes.errorMessage.hidden, false);
   assert.equal(fixture.nodes.errorMessage.textContent, "网关请求失败");
   assert.equal(fixture.nodes.startButton.disabled, false);
   assert.equal(fixture.nodes.cancelButton.hidden, true);
-  assert.equal(fixture.logs.length, 0);
 });
 
-test("a transient gateway polling failure keeps the retry timer alive", async () => {
-  const dispatchCalls = [];
-  const fixture = createFixture({
-    dispatch: async (...args) => {
-      dispatchCalls.push(args);
-      return { requestId: "req-test", runId: null, dispatchedAt: Date.now() };
-    },
-    poll: async () => { throw new Error("暂时网络错误"); },
-  });
+test("missing error element does not crash submission failure", async () => {
+  const logs = [];
+  const original = console.error;
+  console.error = (...args) => logs.push(args.join(" "));
+  try {
+    const fixture = createFixture({ includeError: false });
+    fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+    await submit(fixture);
+    assert.equal(fixture.nodes.startButton.disabled, false);
+    assert.match(logs.join(" "), /错误提示区域不可用/);
+  } finally { console.error = original; }
+});
+
+test("transient polling failure retains retry and unknown nodes", async () => {
+  const fixture = createFixture({ start: async () => Object.freeze({}), poll: async () => { throw new Error("暂时网络错误"); } });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
   await submit(fixture);
-
-  assert.equal(dispatchCalls.length, 1);
-  assert.equal(fixture.nodes.errorMessage.textContent, "读取 GitHub Actions 状态失败，重试中：暂时网络错误");
+  assert.equal(fixture.nodes.errorMessage.textContent, "读取扫描状态失败，重试中：暂时网络错误");
   assert.equal(fixture.nodes.startButton.disabled, true);
-  assert.equal(fixture.timers.length, 1);
-  assert.equal(fixture.timers[0].delay, 2000);
-});
-
-test("local mode shows local health and live Mihomo progress", async () => {
-  const healthRequests = [];
-  const fixture = createFixture({
-    mode: "local",
-    dispatch: async () => ({ requestId: "req-local", runId: null, dispatchedAt: Date.now(), scanToken: "" }),
-    poll: async () => ({
-      status: "running",
-      runId: null,
-      manifest_ready: false,
-      action_progress: {
-        source: "local",
-        run_status: "running",
-        raw_run_status: "running",
-        jobs_state: "available",
-        jobs_total: 1,
-        jobs_completed: 0,
-        current_job_index: 1,
-        current_step_index: 1,
-        steps_total: 1,
-        steps_completed: 0,
-        current_step: { name: "正在并行检测 2 个节点", status: "in_progress", state: "running", elapsed_ms: 2000 },
-        elapsed_ms: 2000,
-      },
-      node_progress: { source: "local", phase: "running", total: 2, completed: 1, success_count: 1, partial_count: 0, failed_count: 0, usable: null },
-    }),
-    apiUrl: (path) => `http://127.0.0.1:8000${path}`,
-    fetchImpl: async (url, options) => {
-      healthRequests.push({ url: String(url), options });
-      return { ok: true, status: 200, json: async () => ({ status: "ok", mode: "local", mihomo_ready: true }) };
-    },
-  });
-  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
-  await submit(fixture);
-  await Promise.resolve();
-
-  assert.match(fixture.nodes.modeHint.textContent, /本地调试模式/u);
-  assert.equal(fixture.nodes.healthStatus.textContent, "本地 Mihomo 就绪");
-  assert.equal(fixture.nodes.actionJobProgress.textContent, "任务 1/1 · 已完成 0/1");
-  assert.equal(fixture.nodes.actionStepProgress.textContent, "阶段 1/1 · 已完成 0/1");
-  assert.equal(fixture.nodes.actionProgressStatus.textContent, "本地扫描进行中");
-  assert.equal(fixture.nodes.totalStat.textContent, "2");
-  assert.equal(fixture.nodes.completedStat.textContent, "1");
-  assert.equal(healthRequests[0].url, "http://127.0.0.1:8000/api/health");
-  assert.equal(healthRequests[0].options.credentials, "omit");
-});
-
-test("missing error markup cannot crash terminal error handling", async () => {
-  const fixture = createFixture({ includeError: false });
-  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
-  await submit(fixture);
-
-  assert.equal(fixture.nodes.startButton.disabled, false);
-  assert.equal(fixture.nodes.cancelButton.hidden, true);
-  assert.match(fixture.logs.join("\n"), /错误提示区域不可用/);
-});
-
-test("gateway renders real Actions job and step progress without node 0/0", async () => {
-  const stepName = "<img src=x onerror=alert(1)> verifier";
-  const fixture = createFixture({
-    dispatch: async () => ({ requestId: "req-progress", runId: 42, dispatchedAt: Date.now() }),
-    poll: async () => ({
-      status: "running",
-      runId: 42,
-      manifest_ready: false,
-      action_progress: {
-        source: "github-actions",
-        run_id: 42,
-        run_attempt: 2,
-        run_status: "running",
-        raw_run_status: "in_progress",
-        conclusion: null,
-        jobs_state: "available",
-        jobs_total: 1,
-        jobs_completed: 0,
-        current_job_index: 1,
-        current_step_index: 3,
-        steps_total: 4,
-        steps_completed: 2,
-        current_step: {
-          name: stepName,
-          status: "in_progress",
-          state: "running",
-          conclusion: null,
-          elapsed_ms: 5000,
-        },
-        elapsed_ms: 65000,
-      },
-      node_progress: {
-        source: "artifact",
-        phase: "waiting_artifact",
-        total: null,
-        completed: null,
-        success_count: null,
-        partial_count: null,
-        failed_count: null,
-        usable: null,
-      },
-    }),
-  });
-  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
-  await submit(fixture);
-
-  assert.equal(fixture.nodes.actionProgressPanel.hidden, false);
-  assert.equal(fixture.nodes.actionJobProgress.textContent, "Job 1/1 · 已完成 0/1");
-  assert.equal(fixture.nodes.actionStepProgress.textContent, "Step 3/4 · 已完成 2/4");
-  assert.equal(fixture.nodes.actionProgressStatus.textContent, "步骤进行中");
-  assert.equal(fixture.nodes.actionCurrentStep.textContent, `当前步骤：${stepName}（in_progress）`);
-  assert.equal(fixture.nodes.actionCurrentStep.innerHTML, "");
-  assert.equal(fixture.nodes.actionProgressElapsed.textContent, "已用时：本步骤 5秒 · 运行 1分5秒 · Attempt 2");
-  assert.equal(fixture.nodes.scanProgressCount.textContent, "步骤 3/4");
-  assert.notEqual(fixture.nodes.scanProgressCount.textContent, "0/0");
+  assert.equal(fixture.timers.at(-1).delay, 2000);
   assert.equal(fixture.nodes.totalStat.textContent, "—");
-  assert.equal(fixture.nodes.completedStat.textContent, "—");
-  assert.equal(fixture.nodes.nodeProgressHint.hidden, false);
+});
+
+test("step progress is real text and never invents node counts", async () => {
+  const name = "<img src=x onerror=alert(1)> verifier";
+  const fixture = createFixture({ start: async () => ({}), poll: async () => snapshot({ execution: "running", progress: { source: "steps", label: "步骤进行中", currentStep: name, jobs: { total: 1, current: 1, completed: 0 }, steps: { total: 4, current: 3, completed: 2 }, elapsedMs: 65000, stepElapsedMs: 5000 } }) });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+  await submit(fixture);
+  assert.equal(fixture.nodes.actionJobProgress.textContent, "任务 1/1 · 已完成 0/1");
+  assert.equal(fixture.nodes.actionStepProgress.textContent, "步骤 3/4 · 已完成 2/4");
+  assert.equal(fixture.nodes.actionCurrentStep.textContent, `当前步骤：${name}`);
+  assert.equal(fixture.nodes.actionCurrentStep.innerHTML, "");
+  assert.equal(fixture.nodes.scanProgressCount.textContent, "步骤 3/4");
+  assert.equal(fixture.nodes.totalStat.textContent, "—");
   assert.match(fixture.nodes.nodeProgressHint.textContent, /等待终态 artifact/);
 });
 
-test("gateway switches to verified terminal artifact node counts", async () => {
-  const fixture = createFixture({
-    dispatch: async () => ({ requestId: "req-terminal", runId: 43, dispatchedAt: Date.now() }),
-    poll: async () => ({
-      status: "completed",
-      runId: 43,
-      manifest_ready: true,
-      action_progress: {
-        source: "github-actions",
-        run_id: 43,
-        run_attempt: 1,
-        run_status: "completed",
-        raw_run_status: "completed",
-        conclusion: "success",
-        jobs_state: "available",
-        jobs_total: 1,
-        jobs_completed: 1,
-        current_job_index: 1,
-        current_step_index: 2,
-        steps_total: 2,
-        steps_completed: 2,
-        current_step: { name: "Upload sanitized result artifact", status: "completed", state: "completed", conclusion: "success", elapsed_ms: 1000 },
-        elapsed_ms: 7000,
-      },
-      node_progress: {
-        source: "artifact",
-        phase: "terminal",
-        total: 2,
-        completed: 2,
-        success_count: 1,
-        partial_count: 1,
-        failed_count: 0,
-        usable: false,
-      },
-      action_status: { usable: false },
-      action_result: {
-        results: [
-          { node: "node-a", status: "success", score: 80, global_ping: [], gpt_check: [] },
-          { node: "node-b", status: "partial", score: 40, global_ping: [], gpt_check: [] },
-        ],
-        total: 2,
-        completed: 2,
-        success_count: 1,
-        partial_count: 1,
-        failed_count: 0,
-        manifest_ready: true,
-      },
-    }),
-  });
-  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
-
-  await submit(fixture);
-
-  assert.equal(fixture.nodes.actionProgressPanel.hidden, false);
-  assert.equal(fixture.nodes.totalStat.textContent, "2");
-  assert.equal(fixture.nodes.completedStat.textContent, "2");
-  assert.equal(fixture.nodes.successStat.textContent, "1");
-  assert.equal(fixture.nodes.issueStat.textContent, "1");
-  assert.equal(fixture.nodes.nodeProgressHint.hidden, false);
-  assert.match(fixture.nodes.nodeProgressHint.textContent, /包含部分\/失败节点/);
-  assert.equal(fixture.nodes.startButton.disabled, false);
-  assert.equal(fixture.nodes.cancelButton.hidden, true);
+test("verified partial retains exit data and export; invalid results are never rendered", async () => {
+  for (const invalid of [false, true]) {
+    const fixture = createFixture({ start: async () => ({}), poll: async () => snapshot({ execution: "completed", done: true, invalid, result: invalid ? null : resultFixture("partial", "partial") }) });
+    fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+    await submit(fixture);
+    assert.equal(fixture.nodes.startButton.disabled, false);
+    assert.equal(fixture.nodes.exportJsonBtn.disabled, invalid);
+    assert.equal(fixture.state.results.length, invalid ? 0 : 1);
+    if (!invalid) {
+      assert.equal(fixture.nodes.issueStat.textContent, "1");
+      assert.match(fixture.nodes.nodeProgressHint.textContent, /包含部分\/失败节点/);
+      assert.equal(fixture.state.results[0].exit_ip, "203.0.113.10");
+    }
+  }
 });
 
-test("failed gateway cancellation restores polling and controls", async () => {
+test("failed cancellation resumes polling; accepted request stays cancelling until terminal", async () => {
+  let shouldFail = true;
+  let completed = false;
+  const fixture = createFixture({ start: async () => ({}), poll: async () => snapshot({ execution: completed ? "cancelled" : "running", done: completed, cleanupConfirmed: completed }), cancel: async () => { if (shouldFail) throw new Error("取消接口暂时不可用"); return { requested: true, confirmed: false }; } });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+  await submit(fixture);
+  await fixture.controller.cancel();
+  assert.equal(fixture.nodes.cancelButton.disabled, false);
+  assert.equal(fixture.timers.at(-1).delay, 3000);
+  assert.match(fixture.nodes.errorMessage.textContent, /停止失败/);
+  shouldFail = false;
+  await fixture.controller.cancel();
+  assert.equal(fixture.nodes.startButton.disabled, true);
+  assert.equal(fixture.nodes.actionProgressStatus.textContent, "取消中，等待确认");
+  completed = true;
+  await fixture.timers.at(-1).callback();
+  assert.equal(fixture.nodes.actionProgressStatus.textContent, "扫描已取消");
+  assert.equal(fixture.nodes.startButton.disabled, false);
+  completed = false;
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/new";
+  await submit(fixture);
+  assert.equal(fixture.state.scanning, true);
+});
+
+test("stale poll cannot overwrite cancellation or a subsequent scan", async () => {
+  let finish;
+  let count = 0;
+  const fixture = createFixture({ start: async () => ({}), poll: async () => ++count === 1 ? new Promise(resolve => { finish = resolve; }) : snapshot({ execution: "running" }), cancel: async () => ({ requested: true, confirmed: true }) });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+  const started = submit(fixture);
+  await Promise.resolve();
+  await fixture.controller.cancel();
+  finish(snapshot({ execution: "completed", result: resultFixture("stale", "success"), done: true }));
+  await started;
+  assert.equal(fixture.state.results.length, 0);
+  assert.equal(fixture.state.snapshot.execution, "cancelled");
+});
+
+test("cancel during deferred creation returns promptly and cancels before the first poll", async () => {
+  let finishStart;
+  const session = Object.freeze({});
+  const calls = [];
   const fixture = createFixture({
-    dispatch: async () => ({ requestId: "req-cancel-failure", runId: 44, dispatchedAt: Date.now() }),
-    poll: async () => ({
-      status: "running",
-      runId: 44,
-      manifest_ready: false,
-      action_progress: {
-        source: "github-actions",
-        run_status: "running",
-        raw_run_status: "in_progress",
-        jobs_state: "available",
-        jobs_total: 1,
-        jobs_completed: 0,
-        current_job_index: 1,
-        current_step_index: 1,
-        steps_total: 1,
-        steps_completed: 0,
-        current_step: { name: "scan", status: "in_progress", state: "running", conclusion: null },
-      },
-      node_progress: { source: "artifact", phase: "waiting_artifact", total: null, completed: null },
-    }),
-    cancel: async () => { throw new Error("取消接口暂时不可用"); },
+    start: () => new Promise(resolve => { finishStart = resolve; }),
+    cancel: async received => { assert.equal(received, session); calls.push("cancel"); return { requested: true, confirmed: false }; },
+    poll: async received => { assert.equal(received, session); calls.push("poll"); return snapshot({ execution: "cancelled", done: true, cleanupConfirmed: true }); },
+  });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+  const started = submit(fixture);
+  await fixture.controller.cancel();
+  assert.equal(fixture.nodes.startButton.disabled, true);
+  assert.equal(fixture.nodes.cancelButton.disabled, true);
+  assert.deepEqual(calls, []);
+  finishStart(session);
+  await started;
+  assert.deepEqual(calls, ["cancel", "poll"]);
+  assert.equal(fixture.nodes.actionProgressStatus.textContent, "扫描已取消");
+  assert.equal(fixture.nodes.startButton.disabled, false);
+  await fixture.controller.cancel();
+  assert.deepEqual(calls, ["cancel", "poll"]);
+});
+
+test("deferred creation failure clears cancellation and permits another submission", async () => {
+  let rejectStart;
+  const fixture = createFixture({ start: () => new Promise((_resolve, reject) => { rejectStart = reject; }) });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+  const started = submit(fixture);
+  await fixture.controller.cancel();
+  rejectStart(new Error("创建失败"));
+  await started;
+  assert.equal(fixture.nodes.startButton.disabled, false);
+  assert.equal(fixture.nodes.cancelButton.hidden, true);
+  assert.equal(fixture.nodes.cancelButton.disabled, false);
+  assert.equal(fixture.nodes.errorMessage.textContent, "创建失败");
+});
+
+test("permanent poll failure pauses requests but retains cancellation and blocks duplicate scans", async () => {
+  const session = Object.freeze({});
+  let starts = 0;
+  let cancellationFails = true;
+  const fixture = createFixture({
+    start: async () => { starts += 1; return session; },
+    poll: async () => { throw Object.assign(new Error("<img src=x>状态不可读"), { retryable: false }); },
+    cancel: async received => {
+      assert.equal(received, session);
+      if (cancellationFails) throw Object.assign(new Error("停止暂不可用"), { retryable: false });
+      return { requested: true, confirmed: true };
+    },
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
   await submit(fixture);
-
-  const cancelListener = fixture.nodes.cancelButton.listeners.get("click")?.[0];
-  assert.ok(cancelListener);
-  await cancelListener({ target: fixture.nodes.cancelButton });
-
   assert.equal(fixture.nodes.startButton.disabled, true);
   assert.equal(fixture.nodes.cancelButton.hidden, false);
   assert.equal(fixture.nodes.cancelButton.disabled, false);
-  assert.equal(fixture.timers.at(-1).delay, 3000);
-  assert.match(fixture.nodes.errorMessage.textContent, /停止失败：取消接口暂时不可用/);
+  assert.equal(fixture.nodes.importResultsBtn.disabled, true);
+  assert.equal(fixture.timers.filter(timer => !timer.cancelled).length, 0);
+  assert.match(fixture.nodes.errorMessage.textContent, /<img src=x>状态不可读/);
+  assert.equal(fixture.nodes.errorMessage.innerHTML, "");
+  await fixture.controller.start("https://subscription.example/duplicate");
+  assert.equal(starts, 1);
+  assert.throws(() => fixture.controller.importResults({ results: [] }, "json", "import.json"), /请先停止/);
+  await fixture.controller.cancel();
+  assert.equal(fixture.nodes.startButton.disabled, true);
+  assert.equal(fixture.nodes.cancelButton.disabled, false);
+  assert.equal(fixture.timers.filter(timer => !timer.cancelled).length, 0);
+  cancellationFails = false;
+  await fixture.controller.cancel();
+  assert.equal(fixture.nodes.startButton.disabled, false);
+  assert.equal(fixture.nodes.cancelButton.hidden, true);
+  await fixture.controller.start("https://subscription.example/next");
+  assert.equal(starts, 2);
 });
 
-test("successful gateway cancellation marks the visible Actions state cancelled", async () => {
+test("permanent poll failure during unconfirmed cancellation leaves a usable stop button", async () => {
+  let broken = false;
   const fixture = createFixture({
-    dispatch: async () => ({ requestId: "req-cancel-success", runId: 45, dispatchedAt: Date.now() }),
-    poll: async () => ({
-      status: "running",
-      runId: 45,
-      manifest_ready: false,
-      action_progress: {
-        source: "github-actions",
-        run_status: "running",
-        raw_run_status: "in_progress",
-        jobs_state: "available",
-        jobs_total: 1,
-        jobs_completed: 0,
-        current_job_index: 1,
-        current_step_index: 1,
-        steps_total: 1,
-        steps_completed: 0,
-        current_step: { name: "scan", status: "in_progress", state: "running", conclusion: null },
-      },
-      node_progress: { source: "artifact", phase: "waiting_artifact", total: null, completed: null },
-    }),
+    start: async () => ({}),
+    poll: async () => {
+      if (broken) throw Object.assign(new Error("状态授权失效"), { retryable: false });
+      return snapshot({ execution: "running" });
+    },
   });
   fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
   await submit(fixture);
+  await fixture.controller.cancel();
+  broken = true;
+  await fixture.timers.at(-1).callback();
+  assert.equal(fixture.nodes.startButton.disabled, true);
+  assert.equal(fixture.nodes.cancelButton.hidden, false);
+  assert.equal(fixture.nodes.cancelButton.disabled, false);
+  assert.notEqual(fixture.state.snapshot.cleanupConfirmed, true);
+});
 
-  const cancelListener = fixture.nodes.cancelButton.listeners.get("click")?.[0];
-  await cancelListener({ target: fixture.nodes.cancelButton });
+test("malformed imported probe entries normalize before filtering, table, detail and export", () => {
+  const invalid = [null, 7, false, [], { name: 42 }, { name: null }, { name: { host: "unknown" } }];
+  const parsed = parseImportedJson(JSON.stringify([{ node: "mixed", exit_ip: "203.0.113.1",
+    gpt_check: [...invalid, { name: "api.openai.com", text: "正常", ok: true, elapsed_ms: 25 }],
+    global_ping: [...invalid, { name: "Tokyo", code: "JP", status: "正常", ok: true, elapsed_ms: 12 }],
+  }]));
+  const fixture = createFixture();
+  fixture.controller.importResults(parsed, "json", "mixed.json");
+  assert.equal(fixture.nodes.resultBody.children[0].children.length, 1);
+  assert.equal(fixture.nodes.emptyResults.hidden, true);
+  assert.equal(filterResults(parsed.results, { query: "Tokyo", columnFilters: { gpt: "api.openai", ping: "JP" } }).length, 1);
+  assert.equal(filterResults(parsed.results, { query: "missing" }).length, 0);
+  fixture.openDetails(parsed.results[0]);
+  assert.equal(fixture.nodes.detailDialog.open, true);
+  const detailCards = fixture.nodes.detailContent.children[0].children;
+  assert.ok(detailCards.some(card => card.innerHTML.includes("api.openai.com")));
+  assert.ok(detailCards.some(card => card.innerHTML.includes("Tokyo")));
+  const exported = buildJsonExport(fixture.state);
+  assert.equal(exported.results[0].gpt_check.at(-1).name, "api.openai.com");
+  assert.match(buildCsvExport(parsed.results), /正常 25ms/);
+  const empty = normalizeImportedResult({ node: "empty", gpt_check: [null, 3], global_ping: [null, false] }, 0, "json");
+  assert.equal(fixture.createMiniGptBar(empty.gpt_check).textContent, "未检测");
+  assert.equal(fixture.createMiniPingBar(empty.global_ping).textContent, "未检测");
+  fixture.openDetails(empty);
+  assert.equal(fixture.nodes.detailDialog.open, true);
+});
 
-  assert.equal(fixture.nodes.actionProgressStatus.textContent, "Actions 已取消");
-  assert.equal(fixture.nodes.cancelButton.hidden, true);
-  assert.equal(fixture.nodes.startButton.disabled, false);
+test("JSON/CSV round trip retains scores, full details, quotes and imported trust boundary", () => {
+  const result = { ...resultFixture("imported", "partial").results[0], node: 'node, "quoted"', score: 80, ipure_scores: { total: 80, ai: 90, streaming: 70, ecommerce: 60, email: 50 }, coffee_score: 75, gpt_check: [{ name: "chatgpt.com", elapsed_ms: 100, ok: true, text: "正常" }], asn: "ASAS16509" };
+  const parsed = parseImportedJson(JSON.stringify({ results: [result] }));
+  const csv = buildCsvExport(parsed.results);
+  assert.match(csv, /IPure总分,IPure四项评分,Coffee评分/);
+  const roundTrip = parseImportedCsv(csv);
+  assert.equal(roundTrip.results[0].node, result.node);
+  assert.equal(roundTrip.results[0].score, 80);
+  assert.equal(roundTrip.results[0].ipure_scores.ai, 90);
+  assert.equal(roundTrip.results[0].asn, 16509);
+  const fixture = createFixture();
+  fixture.controller.importResults(parsed, "json", "fixture.json");
+  assert.equal(fixture.nodes.exportJsonBtn.disabled, false);
+  assert.match(fixture.nodes.nodeProgressHint.textContent, /用户导入/);
+  fixture.openDetails(fixture.state.results[0]);
+  assert.equal(fixture.nodes.detailDialog.open, true);
+  assert.equal(fixture.state.activeDetailResult.node, result.node);
+  const exported = buildJsonExport(fixture.state);
+  assert.equal(exported.results[0]._source, undefined);
+  assert.equal(exported.cleanup_confirmed, false);
+  assert.deepEqual(exported.results[0].coffee, result.coffee);
+  fixture.nodes.detailDialog.close();
+  assert.equal(fixture.state.activeDetailResult, null);
+  assert.throws(() => parseImportedJson("{}"), /没有可导入/);
+  assert.throws(() => parseImportedCsv("unknown\nnode"), /表头/);
+});
+
+test("pure filtering and sorting preserves all table filter responsibilities", () => {
+  const first = normalizeImportedResult({ node: "alpha", status: "success", score: 90, exit_ip: "203.0.113.1", isp: "Example ISP", is_native: true, is_residential: true, security_status: "纯净", gpt_check: [{ name: "chatgpt.com", text: "正常", elapsed_ms: 100 }], global_ping: [{ name: "Tokyo", code: "JP", elapsed_ms: 25 }] }, 0, "json");
+  const second = normalizeImportedResult({ node: "beta", status: "partial", score: 40, exit_ip: "203.0.113.2", is_vpn: true, security_status: "VPN" }, 1, "json");
+  assert.deepEqual(filterResults([second, first]).map(item => item.node), ["alpha", "beta"]);
+  assert.deepEqual(filterResults([second, first], { sortKey: "node", sortDirection: "desc" }).map(item => item.node), ["beta", "alpha"]);
+  assert.deepEqual(filterResults([first, second], { query: "Tokyo", status: "success", columnFilters: { node: "ALP", score: "high", status: "success", exit_ip: ".1", isp: "example", native: "residential", security: "clean", gpt: "100", ping: "JP" } }), [first]);
+  assert.deepEqual(filterResults([first, second], { columnFilters: { score: "low", security: "vpn" } }), [second]);
+  assert.equal(filterResults([first], { columnFilters: { native: "broadcast" } }).length, 0);
 });

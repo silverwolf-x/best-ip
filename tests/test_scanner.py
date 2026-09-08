@@ -1,29 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 
-from backend.app.scanner import (
+from backend.app.sources import coffee, gpt_checks, ipure
+from backend.app.sources.coffee import (
+    _global_ping_url,
+    _normalize_asn,
+    _profile_summary,
+    _trace_ip,
+)
+from backend.app.sources.collector import CoffeeCollector, _completeness, _request_recorded
+from backend.app.sources.gpt_checks import GPT_RESTRICTED_COUNTRIES, _gpt_check_summary
+from backend.app.sources.http import (
     COFFEE_HOST,
     GLOBAL_PING_NODES,
     GPT_PROBE_TARGETS,
-    GPT_RESTRICTED_COUNTRIES,
     IPURE_HOST,
-    CoffeeCollector,
-    _completeness,
-    _global_ping_url,
-    _gpt_check_summary,
-    _ipure_url,
-    _normalize_asn,
-    _parse_ipure_scores,
-    _profile_summary,
-    _request_recorded,
-    _trace_ip,
     _validate_coffee_url,
     _validate_ipure_url,
 )
+from backend.app.sources.ipure import _ipure_url, _parse_ipure_scores
+
+
+class StubClient:
+    @asynccontextmanager
+    async def stream(self, method, url, *, timeout):
+        assert method == "GET"
+        response = await self.get(url, timeout=timeout)
+        response.request = httpx.Request(method, url)
+        yield response
 
 
 def test_trace_ip_supports_ipv4_and_ipv6() -> None:
@@ -49,6 +58,7 @@ def test_coffee_allowlist_rejects_unapproved_paths_and_queries() -> None:
     ):
         with pytest.raises(ValueError):
             _validate_coffee_url(url)
+
 
 def test_global_ping_uses_exact_fixed_node_set() -> None:
     url = _global_ping_url("2001:db8::10")
@@ -124,7 +134,7 @@ def test_gpt_check_summary_classifies_latency_and_http_failures() -> None:
 def test_gpt_check_summary_marks_restricted_country_after_connection() -> None:
     responses = {
         target["name"]: {
-            "status_code": 301,
+            "status_code": 200,
             "elapsed_ms": 20,
             "ok": True,
         }
@@ -191,13 +201,14 @@ def test_profile_summary_normalizes_asn_aliases_and_encoded_whitespace() -> None
 
 @pytest.mark.asyncio
 async def test_ipure_http_verification_is_non_blocking_enrichment() -> None:
-    class VerificationClient:
+    class VerificationClient(StubClient):
         async def get(self, _url, *, timeout):
             assert timeout > 0
             return httpx.Response(403, json={"code": "verification_required"})
 
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
-    result = await collector._request_ipure(
+    result = await ipure.request(
+        collector.transport,
         VerificationClient(),
         _ipure_url("203.0.113.10"),
         timeout_seconds=1,
@@ -210,7 +221,7 @@ async def test_ipure_http_verification_is_non_blocking_enrichment() -> None:
 
 @pytest.mark.asyncio
 async def test_ipure_request_parses_official_lookup_response() -> None:
-    class LookupClient:
+    class LookupClient(StubClient):
         async def get(self, url, *, timeout):
             assert url == "https://ipure.dev/api/lookup?ip=8.8.8.8"
             assert timeout > 0
@@ -230,7 +241,8 @@ async def test_ipure_request_parses_official_lookup_response() -> None:
             )
 
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
-    result = await collector._request_ipure(
+    result = await ipure.request(
+        collector.transport,
         LookupClient(),
         _ipure_url("8.8.8.8"),
         timeout_seconds=1,
@@ -274,26 +286,27 @@ def test_ipure_unavailability_marks_result_incomplete() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_gpt_endpoint_uses_proxy_timeout_and_accepts_redirect() -> None:
-    class Response:
-        status_code = 302
-        headers = {"location": "https://example.invalid/"}
+async def test_probe_gpt_endpoint_rejects_redirect() -> None:
+    Response = httpx.Response
 
-    class Client:
+    class Client(StubClient):
         def __init__(self) -> None:
             self.calls: list[tuple[str, httpx.Timeout]] = []
 
         async def get(self, url: str, *, timeout: httpx.Timeout) -> Response:
             self.calls.append((url, timeout))
-            return Response()
+            return Response(302, headers={"location": "https://example.invalid/"})
 
     client = Client()
-    result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)._probe_gpt_endpoint(
-        client, GPT_PROBE_TARGETS[0]  # type: ignore[arg-type]
+    result = await gpt_checks.probe_endpoint(
+        CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).transport,
+        client,
+        GPT_PROBE_TARGETS[0],  # type: ignore[arg-type]
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert result["status_code"] == 302
+    assert result["error_type"] == "RedirectRejected"
     assert result["elapsed_ms"] >= 0
     assert client.calls[0][0] == GPT_PROBE_TARGETS[0]["url"]
     assert client.calls[0][1].connect == 5
@@ -390,9 +403,9 @@ async def test_collect_uses_allowlisted_sources(monkeypatch) -> None:
             "location": None,
         }
 
-    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
-    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
-    monkeypatch.setattr(CoffeeCollector, "_request_ipure", fake_ipure)
+    monkeypatch.setattr(coffee, "request", fake_request)
+    monkeypatch.setattr(gpt_checks, "requests", fake_gpt)
+    monkeypatch.setattr(ipure, "request", fake_ipure)
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
     result = await collector.collect(
         job_id="job",
@@ -503,9 +516,9 @@ async def test_collect_overlaps_independent_coffee_requests(monkeypatch) -> None
         finally:
             active -= 1
 
-    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
-    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", fake_gpt)
-    monkeypatch.setattr(CoffeeCollector, "_request_ipure", fake_ipure)
+    monkeypatch.setattr(coffee, "request", fake_request)
+    monkeypatch.setattr(gpt_checks, "requests", fake_gpt)
+    monkeypatch.setattr(ipure, "request", fake_ipure)
     result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
         job_id="job",
         node_index=0,
@@ -540,9 +553,9 @@ async def test_collect_failure_has_null_exit_ip(monkeypatch) -> None:
     async def unexpected_request(*_args, **_kwargs):
         raise AssertionError("出口 IP 缺失时不应继续请求 GPT 或 IPure")
 
-    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
-    monkeypatch.setattr(CoffeeCollector, "_gpt_requests", unexpected_request)
-    monkeypatch.setattr(CoffeeCollector, "_request_ipure", unexpected_request)
+    monkeypatch.setattr(coffee, "request", fake_request)
+    monkeypatch.setattr(gpt_checks, "requests", unexpected_request)
+    monkeypatch.setattr(ipure, "request", unexpected_request)
     result = await CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000).collect(
         job_id="job",
         node_index=0,
@@ -566,12 +579,13 @@ def test_collector_rejects_non_mihomo_proxy() -> None:
 
 @pytest.mark.asyncio
 async def test_request_does_not_persist_raw_connection_error() -> None:
-    class FailingClient:
+    class FailingClient(StubClient):
         async def get(self, _url, *, timeout):
             raise httpx.ConnectError("https://user:secret@node.example:443")
 
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
-    result = await collector._request(
+    result = await coffee.request(
+        collector.transport,
         FailingClient(),
         "https://ip.net.coffee/ip/",
         payload="html",
@@ -597,11 +611,12 @@ async def test_related_polling_stops_at_hard_time_budget(monkeypatch) -> None:
             raise
         raise AssertionError("request should have been cancelled at the related budget")
 
-    monkeypatch.setattr(CoffeeCollector, "_request", fake_request)
+    monkeypatch.setattr(coffee, "request", fake_request)
     collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=100)
     loop = asyncio.get_running_loop()
     started = loop.time()
-    result = await collector._related_result(
+    result = await coffee.related_result(
+        collector.transport,
         object(),
         "203.0.113.10",
         {"related_domains_pending": True},
@@ -616,6 +631,4 @@ async def test_related_polling_stops_at_hard_time_budget(monkeypatch) -> None:
 
 def test_request_recorded_requires_successful_response() -> None:
     assert _request_recorded({"attempted": True, "status_code": 200, "ok": True})
-    assert not _request_recorded(
-        {"attempted": True, "status_code": 500, "ok": False}
-    )
+    assert not _request_recorded({"attempted": True, "status_code": 500, "ok": False})

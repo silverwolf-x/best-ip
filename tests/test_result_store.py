@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from backend.app.result_store import ResultStore, ResultStoreError
+from backend.app.results.store import ResultStore, ResultStoreError
 
 
 def make_record(job_id: str, index: int, *, status: str = "failed", exit_ip=None) -> dict:

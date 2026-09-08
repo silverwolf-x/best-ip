@@ -6,18 +6,15 @@
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee 网络画像与 IPure 场景评分">
   <title>Best IP · 节点质量检测</title>
   <link rel="stylesheet" href="./styles.css?v=20260908-2">
-  <script src="./site-config.js?v=20260908-2" defer></script>
-  <script src="./action-client.js?v=20260908-3" defer></script>
-
-  <script src="./zip-reader.js?v=20260908-2" defer></script>
-  <script src="./app.js?v=20260908-4" defer></script>
+  <script src="./site-config.js?v=20260908-2"></script>
+  <script type="module" src="./src/main.js"></script>
 </head>
 <body>
   <div class="container">
     <nav class="nav">
       <div class="nav-scroll"><a href="./" class="active" aria-current="page">IP 节点质量检测</a></div>
       <div class="nav-tools">
-        <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">0/0</strong></div>
+        <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">—/—</strong></div>
         <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
         <button id="themeButton" class="icon-btn" type="button" aria-label="切换主题" title="切换主题">◐</button>
       </div>

@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "uv run python scripts/dev.py",
     "dev:no-reload": "uv run python scripts/dev.py --no-reload",
-    "check": "node --check worker/index.js && node --check frontend/app.js && node --check frontend/action-client.js && node --check frontend/zip-reader.js && node --check scripts/decrypt_subscription.mjs",
+    "check": "node scripts/check_js.mjs",
     "test:frontend": "node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs",
     "test:worker": "node --test tests/worker/*.test.mjs",
-    "test": "npm run check && npm run test:frontend && npm run test:worker",
+    "test:contracts": "node --test tests/contracts.test.mjs",
+    "test": "npm run check && npm run test:frontend && npm run test:worker && npm run test:contracts",
     "deploy": "wrangler deploy",
     "dry-run": "wrangler deploy --dry-run"
   },
