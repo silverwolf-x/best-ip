@@ -70,7 +70,7 @@ class FakeElement {
   }
 }
 
-function createFixture({ includeError = true, dispatch, poll, cancel, fetchImpl } = {}) {
+function createFixture({ includeError = true, mode = "gateway", dispatch, poll, cancel, fetchImpl, apiUrl } = {}) {
   const ids = [...new Set(
     [...indexSource.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => id),
   )].filter((id) => includeError || id !== "errorMessage");
@@ -96,6 +96,7 @@ function createFixture({ includeError = true, dispatch, poll, cancel, fetchImpl 
   const calls = [];
   const logs = [];
   const action = {
+    MODE: mode,
     MAX_POLL_DELAY_MS: 10_000,
     dispatch: dispatch || (async (...args) => {
       calls.push(args);
@@ -103,6 +104,7 @@ function createFixture({ includeError = true, dispatch, poll, cancel, fetchImpl 
     }),
     poll: poll || (async () => ({ status: "dispatching", manifest_ready: false })),
     cancel: cancel || (async () => {}),
+    apiUrl: apiUrl || ((path) => path),
   };
   const window = { BestIpAction: action };
   const context = {
@@ -125,7 +127,7 @@ function createFixture({ includeError = true, dispatch, poll, cancel, fetchImpl 
     navigator: { clipboard: { writeText: async () => {} } },
   };
   runInNewContext(appSource, context, { filename: "frontend/app.js" });
-  return { nodes, calls, timers, logs };
+  return { nodes, calls, timers, logs, context };
 }
 
 function submit(fixture) {
@@ -157,6 +159,34 @@ test("IPure total and four scenario scores stay aligned across table and CSV", (
   for (const label of ["AI", "流媒体", "电商", "邮件"]) {
     assert.match(appSource, new RegExp(`\\["[a-z]+", "${label}"\\]`, "u"));
   }
+});
+
+test("imported text, ASN, and missing latency labels are normalized", () => {
+  const fixture = createFixture();
+
+  assert.equal(fixture.context.normalizeDisplayText("Amazon.com&#x9; Inc."), "Amazon.com Inc.");
+  assert.equal(fixture.context.formatAsn("ASAS16509"), "AS16509");
+  assert.equal(fixture.context.formatAsn("invalid"), "");
+  assert.equal(fixture.context.createMiniGptBar([]).textContent, "未检测");
+  assert.equal(fixture.context.createMiniPingBar([]).textContent, "未检测");
+  assert.equal(fixture.context.normalizeUnavailableLatencyStatus("未返回 (-1ms)", "超时"), "未返回");
+  assert.equal(fixture.context.normalizeUnavailableLatencyStatus("-1ms", "超时"), "超时");
+  assert.match(fixture.context.renderThreatChips({ security_status: "检测数据不足" }, {}), /检测数据不足/u);
+  assert.match(fixture.context.renderOpenPortsHtml({}, null), /未检测/u);
+  assert.doesNotMatch(appSource, /p-timeout">-1ms/u);
+
+  const injected = '" onmouseover="alert(1)';
+  const row = fixture.context.createResultRow({
+    node: "imported-node",
+    score: null,
+    requests: { ipure: { error_type: "EnrichmentUnavailable", error: injected } },
+    ipure_scores: {},
+    gpt_check: [],
+    global_ping: [],
+  });
+  const scoreBadge = row.children[1].children[0];
+  assert.equal(scoreBadge.title, injected);
+  assert.equal(row.children[1].innerHTML, "");
 });
 
 test("the real page includes the error node and failed gateway submit is recoverable", async () => {
@@ -192,6 +222,53 @@ test("a transient gateway polling failure keeps the retry timer alive", async ()
   assert.equal(fixture.nodes.startButton.disabled, true);
   assert.equal(fixture.timers.length, 1);
   assert.equal(fixture.timers[0].delay, 2000);
+});
+
+test("local mode shows local health and live Mihomo progress", async () => {
+  const healthRequests = [];
+  const fixture = createFixture({
+    mode: "local",
+    dispatch: async () => ({ requestId: "req-local", runId: null, dispatchedAt: Date.now(), scanToken: "" }),
+    poll: async () => ({
+      status: "running",
+      runId: null,
+      manifest_ready: false,
+      action_progress: {
+        source: "local",
+        run_status: "running",
+        raw_run_status: "running",
+        jobs_state: "available",
+        jobs_total: 1,
+        jobs_completed: 0,
+        current_job_index: 1,
+        current_step_index: 1,
+        steps_total: 1,
+        steps_completed: 0,
+        current_step: { name: "正在并行检测 2 个节点", status: "in_progress", state: "running", elapsed_ms: 2000 },
+        elapsed_ms: 2000,
+      },
+      node_progress: { source: "local", phase: "running", total: 2, completed: 1, success_count: 1, partial_count: 0, failed_count: 0, usable: null },
+    }),
+    apiUrl: (path) => `http://127.0.0.1:8000${path}`,
+    fetchImpl: async (url, options) => {
+      healthRequests.push({ url: String(url), options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", mode: "local", mihomo_ready: true }) };
+    },
+  });
+  fixture.nodes.subscriptionUrl.value = "https://subscription.example/config";
+
+  await submit(fixture);
+  await Promise.resolve();
+
+  assert.match(fixture.nodes.modeHint.textContent, /本地调试模式/u);
+  assert.equal(fixture.nodes.healthStatus.textContent, "本地 Mihomo 就绪");
+  assert.equal(fixture.nodes.actionJobProgress.textContent, "任务 1/1 · 已完成 0/1");
+  assert.equal(fixture.nodes.actionStepProgress.textContent, "阶段 1/1 · 已完成 0/1");
+  assert.equal(fixture.nodes.actionProgressStatus.textContent, "本地扫描进行中");
+  assert.equal(fixture.nodes.totalStat.textContent, "2");
+  assert.equal(fixture.nodes.completedStat.textContent, "1");
+  assert.equal(healthRequests[0].url, "http://127.0.0.1:8000/api/health");
+  assert.equal(healthRequests[0].options.credentials, "omit");
 });
 
 test("missing error markup cannot crash terminal error handling", async () => {

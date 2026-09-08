@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee 网络画像与 IPure 场景评分">
   <title>Best IP · 节点质量检测</title>
-  <link rel="stylesheet" href="./styles.css?v=20260908-1">
-  <script src="./site-config.js?v=20260908-1" defer></script>
-  <script src="./action-client.js?v=20260908-1" defer></script>
+  <link rel="stylesheet" href="./styles.css?v=20260908-2">
+  <script src="./site-config.js?v=20260908-2" defer></script>
+  <script src="./action-client.js?v=20260908-3" defer></script>
 
-  <script src="./zip-reader.js?v=20260908-1" defer></script>
-  <script src="./app.js?v=20260908-1" defer></script>
+  <script src="./zip-reader.js?v=20260908-2" defer></script>
+  <script src="./app.js?v=20260908-4" defer></script>
 </head>
 <body>
   <div class="container">
@@ -25,7 +25,7 @@
 
     <header class="page-header">
       <div class="ip-section-header"><h1>Coffee 网络画像 · IPure 场景评分</h1></div>
-      <p class="desc">所有节点经独立工作区 Mihomo 并发检测，采集 Coffee 网络画像并查询 IPure 总分及四项场景评分；扫描期间展示 Actions Job/Step 进度，全部结束并校验终态 artifact 后统一展示。</p>
+      <p class="desc">所有节点经独立工作区 Mihomo 并发检测并采集 Coffee 网络画像；IPure 总分与四项场景评分通过官方查询接口获取，缺失时节点会标记为“部分”。</p>
     </header>
 
     <form id="scanForm" class="search-bar">

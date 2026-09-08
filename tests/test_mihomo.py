@@ -271,6 +271,72 @@ async def test_failed_readiness_releases_reserved_ports(tmp_path, monkeypatch) -
     assert mihomo.controller_port not in mihomo_module._RESERVED_PORTS
 
 
+async def test_unsupported_subprocess_loop_reports_runtime_error(tmp_path, monkeypatch) -> None:
+    async def unsupported_spawn(*_args: Any, **_kwargs: Any) -> None:
+        raise NotImplementedError("private runtime detail")
+
+    monkeypatch.setattr(mihomo_module.asyncio, "create_subprocess_exec", unsupported_spawn)
+    core_path = tmp_path / "mihomo.exe"
+    core_path.write_bytes(b"")
+    mihomo = MihomoProcess(core_path, tmp_path / "workspace", [{"name": "node-a"}])
+
+    with pytest.raises(MihomoNotReadyError) as caught:
+        await mihomo.start()
+
+    assert str(caught.value) == mihomo_module.MIHOMO_SUBPROCESS_UNSUPPORTED_MESSAGE
+    assert "private runtime detail" not in str(caught.value)
+    assert mihomo.process is None
+    assert mihomo._log_handle is None
+    assert mihomo._ports_reserved is False
+    assert mihomo.mixed_port not in mihomo_module._RESERVED_PORTS
+    assert mihomo.controller_port not in mihomo_module._RESERVED_PORTS
+
+
+async def test_select_returns_preselected_single_member_without_put(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    put_called = False
+
+    class Response:
+        is_success = True
+
+        @staticmethod
+        def json() -> dict[str, str]:
+            return {"now": "node-a"}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, _url: str, *, headers: dict[str, str]) -> Response:
+            assert headers["Authorization"].startswith("Bearer ")
+            return Response()
+
+        async def put(self, *_args: Any, **_kwargs: Any) -> None:
+            nonlocal put_called
+            put_called = True
+            raise AssertionError("单成员 selector 不应执行冗余 PUT")
+
+    monkeypatch.setattr(
+        "backend.app.mihomo.httpx.AsyncClient",
+        lambda **_kwargs: Client(),
+    )
+    mihomo = MihomoProcess(
+        tmp_path / "mihomo.exe",
+        tmp_path / "workspace",
+        [{"name": "node-a", "type": "ss"}],
+        selector_names=["node-a"],
+    )
+    mihomo.controller_port = 12345
+
+    assert await mihomo.select("node-a") == "node-a"
+    assert put_called is False
+
+
 async def test_stop_finishes_cleanup_before_propagating_cancellation(
     tmp_path,
     monkeypatch,
@@ -365,3 +431,4 @@ async def test_start_writes_physical_interface_and_independent_dns(
     assert dns_group["proxies"] == ["bootstrap-node"]
     controller_port = int(config["external-controller"].rsplit(":", 1)[-1])
     assert config["mixed-port"] != controller_port
+    assert "DOMAIN,ipure.dev,BEST-IP" in config["rules"]

@@ -99,7 +99,25 @@ def test_failed_node_does_not_persist_raw_mihomo_error() -> None:
     assert "secret" not in str(result)
 
 
+def test_failed_node_preserves_safe_selector_http_status() -> None:
+    result = _failed_node(
+        "job",
+        0,
+        "node-a",
+        "vless",
+        MihomoError("切换节点失败：HTTP 400"),
+        mihomo_error="unrelated warning containing endpoint.example",
+    )
+
+    assert result["error"] == "Mihomo selector 切换失败（HTTP 400）"
+    assert "endpoint.example" not in str(result)
+
+
 def test_summarize_mihomo_error_covers_observed_failures() -> None:
+    assert (
+        _summarize_mihomo_error("Parse config error: unsupport proxy type")
+        == "Mihomo 节点配置不受支持"
+    )
     assert _summarize_mihomo_error("dns resolve failed") == "节点服务器域名无法解析"
     assert _summarize_mihomo_error("reality authentication failed") == "节点 REALITY 认证失败"
     assert _summarize_mihomo_error("context deadline exceeded") == "连接节点服务器超时"
@@ -121,6 +139,61 @@ def test_job_error_does_not_persist_unexpected_exception_text() -> None:
 
     assert error == "扫描任务失败（RuntimeError）"
     assert "secret-value" not in error
+
+
+@pytest.mark.asyncio
+async def test_scan_node_contains_constructor_failure_to_one_node(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    written: dict[str, Any] = {}
+
+    class ConstructorFailureMihomo:
+        group_name = "BEST-IP"
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise MihomoError("invalid dialer-proxy dependency")
+
+    async def ignore_progress(_job: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr("backend.app.jobs.MihomoProcess", ConstructorFailureMihomo)
+    monkeypatch.setattr(
+        result_store,
+        "write_node",
+        lambda _job_id, _index, result: written.update(result=result),
+    )
+    monkeypatch.setattr(result_store, "summary", lambda result: {"status": result["status"]})
+    manager = ScanJobManager(
+        Settings(
+            mihomo_path=tmp_path / "mihomo.exe",
+            max_node_attempts=1,
+            node_retry_backoff_ms=0,
+        )
+    )
+    monkeypatch.setattr(manager, "_write_progress", ignore_progress)
+    proxy = {
+        "name": "node-a",
+        "type": "ss",
+        "server": "198.51.100.10",
+        "dialer-proxy": "missing-relay",
+    }
+    job = {
+        "id": "job-constructor-failure",
+        "total": 1,
+        "completed": 0,
+        "success_count": 0,
+        "partial_count": 0,
+        "failed_count": 0,
+    }
+
+    await manager._scan_node(job, tmp_path, [proxy], proxy, 0, [], None)
+
+    assert written["result"]["status"] == "failed"
+    assert written["result"]["phase"] == "start"
+    assert written["result"]["attempt_count"] == 1
+    assert job["completed"] == 1
+    assert job["failed_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -222,6 +295,7 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
     monkeypatch,
 ) -> None:
     instances: list[Any] = []
+    configured_proxy_names: list[list[str]] = []
     written: dict[str, Any] = {}
     collector_calls = 0
 
@@ -245,6 +319,7 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
             self.proxy_url = f"http://127.0.0.1:{21000 + len(instances)}"
             self.stopped = False
             assert selector_names == ["node-a"]
+            configured_proxy_names.append([str(item["name"]) for item in _proxies])
             instances.append(self)
 
         async def start(self) -> None:
@@ -319,11 +394,23 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
         "failed_count": 0,
     }
 
+    proxies = [
+        {
+            "name": "node-a",
+            "type": "ss",
+            "server": "198.51.100.10",
+            "dialer-proxy": "relay-a",
+        },
+        {"name": "relay-a", "type": "ss", "server": "relay.example"},
+        {"name": "bootstrap-a", "type": "ss", "server": "192.0.2.1"},
+        {"name": "bootstrap-b", "type": "ss", "server": "192.0.2.2"},
+        {"name": "bootstrap-c", "type": "ss", "server": "192.0.2.3"},
+    ]
     await manager._scan_node(
         job,
         tmp_path / "job-work",
-        [{"name": "node-a", "type": "ss"}],
-        {"name": "node-a", "type": "ss"},
+        proxies,
+        proxies[0],
         0,
         ["bootstrap-a", "bootstrap-b", "bootstrap-c"],
         "WLAN",
@@ -340,6 +427,11 @@ async def test_scan_node_retries_with_fresh_mihomo_processes(
         "bootstrap-a",
         "bootstrap-b",
         "bootstrap-c",
+    ]
+    assert configured_proxy_names == [
+        ["node-a", "relay-a", "bootstrap-a"],
+        ["node-a", "relay-a", "bootstrap-b"],
+        ["node-a", "relay-a", "bootstrap-c"],
     ]
     assert all(instance.stopped for instance in instances)
     assert all(not instance.work_dir.exists() for instance in instances)

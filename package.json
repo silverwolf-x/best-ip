@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "uv run python scripts/dev.py",
+    "dev:no-reload": "uv run python scripts/dev.py --no-reload",
     "check": "node --check worker/index.js && node --check frontend/app.js && node --check frontend/action-client.js && node --check frontend/zip-reader.js && node --check scripts/decrypt_subscription.mjs",
     "test:frontend": "node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs",
     "test:worker": "node --test tests/worker/*.test.mjs",

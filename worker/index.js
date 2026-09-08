@@ -793,6 +793,7 @@ async function fetchHandler(request, env, ctx) {
     return secureResponse(
       new Response(
         `window.BEST_IP_CONFIG = Object.freeze(${JSON.stringify({
+          mode: "gateway",
           publicKeyPath: "./scan-public.pem",
           keyId: String(env.SCAN_KEY_ID).trim().toLowerCase(),
         })});`,

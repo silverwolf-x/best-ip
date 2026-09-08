@@ -15,8 +15,13 @@ import httpx
 import yaml
 
 COFFEE_HOST = "ip.net.coffee"
+IPURE_HOST = "ipure.dev"
 MIHOMO_NOT_READY_MESSAGE = (
     "Mihomo 核心未就绪，请运行 uv run python scripts/download_mihomo.py"
+)
+MIHOMO_SUBPROCESS_UNSUPPORTED_MESSAGE = (
+    "当前事件循环不支持启动 Mihomo 子进程；"
+    "Windows 下请使用 npm run dev:no-reload，或关闭 Uvicorn 的 --reload/多 worker 模式"
 )
 
 
@@ -261,6 +266,7 @@ class MihomoProcess:
             "proxy-groups": proxy_groups,
             "rules": [
                 f"DOMAIN,{COFFEE_HOST},{self.group_name}",
+                f"DOMAIN,{IPURE_HOST},{self.group_name}",
                 f"DOMAIN,chatgpt.com,{self.group_name}",
                 f"DOMAIN,api.openai.com,{self.group_name}",
                 "MATCH,REJECT",
@@ -306,6 +312,8 @@ class MihomoProcess:
                 raise
             if isinstance(exc, asyncio.CancelledError):
                 raise
+            if isinstance(exc, NotImplementedError):
+                raise MihomoNotReadyError(MIHOMO_SUBPROCESS_UNSUPPORTED_MESSAGE) from None
             detail = await asyncio.to_thread(self._read_log_tail, self.log_path)
             suffix = f"：{detail}" if detail else ""
             raise MihomoError(f"Mihomo 启动失败{suffix}") from None
@@ -329,28 +337,41 @@ class MihomoProcess:
 
     async def select(self, node_name: str) -> str:
         endpoint = quote(self.group_name, safe="")
+        selector_url = f"{self.controller_url}/proxies/{endpoint}"
         async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+            async def current_selection() -> str | None:
+                selected = await client.get(selector_url, headers=self.headers)
+                if not selected.is_success:
+                    return None
+                try:
+                    payload = selected.json()
+                except ValueError:
+                    return None
+                current = payload.get("now") or payload.get("name")
+                return str(current) if isinstance(current, str) else None
+
+            # 每次扫描的 selector 只有当前节点。Mihomo 已自动选中唯一成员，
+            # 先确认即可；避免对单成员组执行会被部分核心版本拒绝的冗余 PUT。
+            current = await current_selection()
+            if current == node_name:
+                return current
+
             response = await client.put(
-                f"{self.controller_url}/proxies/{endpoint}",
+                selector_url,
                 headers=self.headers,
                 json={"name": node_name},
             )
             if not response.is_success:
+                current = await current_selection()
+                if current == node_name:
+                    return current
                 raise MihomoError(f"切换节点失败：HTTP {response.status_code}")
 
             deadline = asyncio.get_running_loop().time() + 5
             while asyncio.get_running_loop().time() < deadline:
-                selected = await client.get(
-                    f"{self.controller_url}/proxies/{endpoint}", headers=self.headers
-                )
-                if selected.is_success:
-                    try:
-                        payload = selected.json()
-                    except ValueError:
-                        payload = {}
-                    current = payload.get("now") or payload.get("name")
-                    if current == node_name:
-                        return str(current)
+                current = await current_selection()
+                if current == node_name:
+                    return current
                 await asyncio.sleep(0.1)
         raise MihomoError(f"切换节点后未确认 selector 身份：{node_name}")
 

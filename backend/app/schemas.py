@@ -25,3 +25,4 @@ class ScanCreated(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     mihomo_ready: bool
+    mode: str

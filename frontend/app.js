@@ -1,5 +1,6 @@
 const ACTION_QUEUE_DEADLINE_MS = 13 * 60 * 1000;
 const ACTION_RUN_DEADLINE_MS = 31 * 60 * 1000;
+const localMode = window.BestIpAction?.MODE === "local";
 const resultSearchIndex = new WeakMap();
 const IPURE_SCORE_LABELS = [
   ["ai", "AI"],
@@ -92,9 +93,9 @@ const elements = {
 
 const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
 
-function waitingNodeProgress(phase = "waiting_artifact") {
+function waitingNodeProgress(phase = localMode ? "queued" : "waiting_artifact") {
   return {
-    source: "artifact",
+    source: localMode ? "local" : "artifact",
     phase,
     total: null,
     completed: null,
@@ -121,7 +122,15 @@ function formatDuration(milliseconds) {
 }
 
 function actionStatusLabel(progress) {
-  if (!progress) return "等待 Actions";
+  if (!progress) return localMode ? "等待本地扫描" : "等待 Actions";
+  if (progress.source === "local") {
+    if (progress.run_status === "queued") return "等待本地扫描资源";
+    if (progress.raw_run_status === "preparing") return "正在准备本地扫描";
+    if (progress.run_status === "running") return "本地扫描进行中";
+    if (progress.run_status === "completed") return "本地扫描已完成";
+    if (progress.run_status === "cancelled") return "本地扫描已取消";
+    if (progress.run_status === "failed") return "本地扫描失败";
+  }
   if (progress.jobs_state === "waiting") return "等待 Actions 创建扫描 job";
   if (progress.jobs_state === "unavailable") return "Actions 步骤暂不可读，保留上次进度";
   if (progress.run_status === "artifact_pending") return "等待扫描结果 artifact";
@@ -141,7 +150,7 @@ function renderActionProgress(progress) {
     elements.scanProgressCount.textContent = "—";
     elements.actionJobProgress.textContent = "Job —/—";
     elements.actionStepProgress.textContent = "Step —/—";
-    elements.actionProgressStatus.textContent = "等待 Actions";
+    elements.actionProgressStatus.textContent = localMode ? "等待本地扫描" : "等待 Actions";
     elements.actionCurrentStep.textContent = "当前步骤：—";
     elements.actionProgressElapsed.textContent = "已用时：—";
     return;
@@ -152,13 +161,15 @@ function renderActionProgress(progress) {
   const stepIndex = Number.isInteger(progress.current_step_index) ? progress.current_step_index : null;
   const jobDone = Number.isInteger(progress.jobs_completed) ? progress.jobs_completed : 0;
   const stepDone = Number.isInteger(progress.steps_completed) ? progress.steps_completed : 0;
-  elements.actionJobProgress.textContent = `Job ${jobIndex ?? "—"}/${jobsTotal ?? "—"} · 已完成 ${jobDone}/${jobsTotal ?? "—"}`;
-  elements.actionStepProgress.textContent = `Step ${stepIndex ?? "—"}/${stepsTotal ?? "—"} · 已完成 ${stepDone}/${stepsTotal ?? "—"}`;
+  const jobLabel = progress.source === "local" ? "任务" : "Job";
+  const stepLabel = progress.source === "local" ? "阶段" : "Step";
+  elements.actionJobProgress.textContent = `${jobLabel} ${jobIndex ?? "—"}/${jobsTotal ?? "—"} · 已完成 ${jobDone}/${jobsTotal ?? "—"}`;
+  elements.actionStepProgress.textContent = `${stepLabel} ${stepIndex ?? "—"}/${stepsTotal ?? "—"} · 已完成 ${stepDone}/${stepsTotal ?? "—"}`;
   elements.actionProgressStatus.textContent = actionStatusLabel(progress);
   const currentStep = progress.current_step;
   elements.actionCurrentStep.textContent = currentStep
     ? `当前步骤：${currentStep.name}（${currentStep.status}${currentStep.conclusion ? ` · ${currentStep.conclusion}` : ""}）`
-    : "当前步骤：等待 Actions 创建扫描 job";
+    : localMode ? "当前步骤：等待本地扫描任务" : "当前步骤：等待 Actions 创建扫描 job";
   elements.actionCurrentStep.title = currentStep?.name || "";
   elements.actionProgressElapsed.textContent = `已用时：本步骤 ${formatDuration(currentStep?.elapsed_ms)} · 运行 ${formatDuration(progress.elapsed_ms)}${progress.run_attempt ? ` · Attempt ${progress.run_attempt}` : ""}`;
   elements.scanStatusText.textContent = currentStep?.name
@@ -208,7 +219,10 @@ elements.themeButton.addEventListener("click", () => {
 });
 
 elements.modeHint.hidden = false;
-elements.healthStatus.textContent = "个人 Actions 网关模式";
+elements.modeHint.textContent = localMode
+  ? "本地调试模式：独立前端通过受限 CORS 调用本机 FastAPI，订阅地址只发送到 127.0.0.1，并由本机 Mihomo 执行真实扫描。"
+  : "个人网关模式：Cloudflare Access 会话负责访问控制，订阅地址在浏览器内加密后发送，无需 GitHub 凭证；终态 artifact 校验完成后展示节点结果。";
+elements.healthStatus.textContent = localMode ? "检查本地 Mihomo..." : "个人 Actions 网关模式";
 elements.healthStatus.className = "health ready";
 
 elements.revealButton.addEventListener("click", () => {
@@ -288,7 +302,7 @@ elements.cancelButton.addEventListener("click", async () => {
     state.job = {
       ...state.job,
       status: "cancelled",
-      error: "已请求取消 GitHub Actions 扫描",
+      error: localMode ? "已请求取消本地扫描" : "已请求取消 GitHub Actions 扫描",
       action_progress: state.actionProgress,
     };
     renderProgress(state.job);
@@ -397,7 +411,7 @@ elements.exportCsvBtn.addEventListener("click", () => {
       csv(result.exit_ip || ""),
       csv(result.location || ""),
       csv(result.isp || result.as_org || ""),
-      csv(result.asn ? `AS${result.asn}` : ""),
+      csv(formatAsn(result.asn)),
       csv(result.asn_kind_display || ""),
       csv(result.native_status || (result.is_native === true ? "原生" : result.is_native === false ? "广播" : "未知")),
       csv(result.bogon_status || (result.is_bogon ? "是" : "否")),
@@ -743,9 +757,13 @@ function normalizeCsvHeader(value) {
 function normalizeImportedResult(raw, index, source) {
   if (!isRecord(raw)) throw new Error(`第 ${index + 1} 个节点结果不是对象。`);
   const result = { ...raw };
-  result.node = firstImportedValue(raw.node, raw.node_name, raw.name);
+  result.node = normalizeDisplayText(firstImportedValue(raw.node, raw.node_name, raw.name));
   if (!result.node) throw new Error(`第 ${index + 1} 个节点结果缺少节点名称。`);
-  result.type = firstImportedValue(raw.type, raw.protocol) || "未知";
+  result.type = normalizeDisplayText(firstImportedValue(raw.type, raw.protocol)) || "未知";
+  for (const key of ["location", "isp", "as_org", "rdns", "native_status", "native_detail", "company_type", "traffic_profile", "security_status", "abuse_level", "honeypot_status"]) {
+    if (result[key] !== null && result[key] !== undefined) result[key] = normalizeDisplayText(result[key]);
+  }
+  result.asn = parseImportedAsn(raw.asn);
   result.status = normalizeImportedStatus(raw.status, raw.exit_ip);
   result._index = raw.node_index ?? raw.index ?? index;
   result.node_index = raw.node_index ?? result._index;
@@ -781,10 +799,29 @@ function parseImportedBoolean(value) {
 }
 
 function parseImportedAsn(value) {
-  const normalized = String(value ?? "").trim().replace(/^AS/i, "");
+  const normalized = normalizeDisplayText(value).replace(/^(?:AS\s*)+/i, "");
   if (!normalized) return null;
+  if (!/^\d+$/u.test(normalized)) return null;
   const number = Number(normalized);
-  return Number.isFinite(number) ? number : normalized;
+  return Number.isSafeInteger(number) && number > 0 && number <= 4_294_967_295 ? number : null;
+}
+
+function formatAsn(value) {
+  const asn = parseImportedAsn(value);
+  return asn == null ? "" : `AS${asn}`;
+}
+
+function normalizeDisplayText(value) {
+  const namedEntities = { amp: "&", apos: "'", gt: ">", lt: "<", nbsp: " ", quot: '"', tab: " " };
+  return String(value ?? "")
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/giu, (match, hex, decimal) => {
+      const codePoint = Number.parseInt(hex || decimal, hex ? 16 : 10);
+      try { return Number.isInteger(codePoint) ? String.fromCodePoint(codePoint) : match; }
+      catch { return match; }
+    })
+    .replace(/&(amp|apos|gt|lt|nbsp|quot|tab);/giu, (_match, name) => namedEntities[name.toLowerCase()])
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function parseImportedNumber(value) {
@@ -927,11 +964,13 @@ function cloneImportedForExport(result) {
 function actionPollDeadlineExceeded(generation, status = state.job?.status) {
   if (generation !== state.pollGeneration || !state.actionDispatchedAt) return false;
   const elapsed = Date.now() - state.actionDispatchedAt;
-  const deadline = status === "running" ? ACTION_RUN_DEADLINE_MS : ACTION_QUEUE_DEADLINE_MS;
+  const deadline = localMode || status === "running" ? ACTION_RUN_DEADLINE_MS : ACTION_QUEUE_DEADLINE_MS;
   if (elapsed <= deadline) return false;
-  const message = status === "running"
-    ? "GitHub Actions 扫描超过 31 分钟，已停止等待，请检查运行记录后重试。"
-    : "GitHub Actions 排队超过 13 分钟，密文即将过期，请重新提交扫描。";
+  const message = localMode
+    ? "本地扫描超过 31 分钟，已停止等待；任务仍可能在后台运行，请检查终端日志。"
+    : status === "running"
+      ? "GitHub Actions 扫描超过 31 分钟，已停止等待，请检查运行记录后重试。"
+      : "GitHub Actions 排队超过 13 分钟，密文即将过期，请重新提交扫描。";
   showFatalError(message);
   return true;
 }
@@ -997,7 +1036,8 @@ async function pollAction(generation) {
       renderProgress(state.job);
     }
     if (actionPollDeadlineExceeded(generation)) return;
-    showInlineError(`读取 GitHub Actions 状态失败，重试中：${error.message}`);
+    const sourceLabel = localMode ? "读取本地扫描状态失败" : "读取 GitHub Actions 状态失败";
+    showInlineError(`${sourceLabel}，重试中：${error.message}`);
     state.pollTimer = setTimeout(() => pollAction(generation), state.actionPollDelay);
   }
 }
@@ -1005,11 +1045,11 @@ function applyActionResults(payload) {
   const actionResult = payload.action_result || payload;
   const records = Array.isArray(actionResult.results) ? actionResult.results : [];
   state.results = records.map((record, index) => ({
-    ...record,
+    ...normalizeImportedResult(record, index, localMode ? "local" : "github-actions"),
     _index: record.node_index ?? index,
   }));
   state.imported = true;
-  state.importSource = "github-actions";
+  state.importSource = localMode ? "local" : "github-actions";
   state.actionProgress = payload.action_progress || state.actionProgress;
   state.nodeProgress = payload.node_progress || {
     source: "artifact",
@@ -1179,8 +1219,10 @@ function renderRows() {
     emptyTitle.textContent = "导入结果为空";
     emptyDesc.textContent = "请选择包含节点结果的 JSON 或 CSV 文件。";
   } else {
-    emptyTitle.textContent = "等待终态 artifact";
-    emptyDesc.textContent = "Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。";
+    emptyTitle.textContent = localMode ? "等待本地扫描结果" : "等待终态 artifact";
+    emptyDesc.textContent = localMode
+      ? "本地扫描完成并通过 manifest 与节点完整性校验后，统一展示节点结果。"
+      : "Actions 完成并通过终态 artifact、manifest 和节点完整性校验后，统一展示节点结果。";
   }
 }
 
@@ -1212,7 +1254,14 @@ function createResultRow(result) {
   // 2. IPure 总分 (第2列，默认降序排)
   appendTextCell(row, "", (cell) => {
     if (result.score == null) {
-      cell.innerHTML = '<span class="score-pill score-none">—</span>';
+      const unavailable = result.requests?.ipure?.error_type === "EnrichmentUnavailable";
+      const label = unavailable ? "不可用" : "—";
+      const title = unavailable ? (result.requests?.ipure?.error || "IPure 查询暂不可用") : "暂无评分";
+      const badge = document.createElement("span");
+      badge.className = "score-pill score-none";
+      badge.title = title;
+      badge.textContent = label;
+      cell.replaceChildren(badge);
     } else {
       const score = Number(result.score);
       const scoreCls = score >= 75 ? "score-great" : score >= 45 ? "score-good" : "score-bad";
@@ -1233,6 +1282,12 @@ function createResultRow(result) {
       chip.textContent = `${label} ${scores[key]}`;
       container.append(chip);
     });
+    if (!container.children.length && result.requests?.ipure?.error_type === "EnrichmentUnavailable") {
+      const chip = document.createElement("span");
+      chip.className = "chip chip-info";
+      chip.textContent = "查询不可用";
+      container.append(chip);
+    }
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
   });
 
@@ -1290,10 +1345,11 @@ function createResultRow(result) {
     container.className = "tag-chips";
 
     // ASN 药丸
-    if (result.asn) {
+    const formattedAsn = formatAsn(result.asn);
+    if (formattedAsn) {
       const asnChip = document.createElement("span");
       asnChip.className = "chip chip-asn";
-      asnChip.textContent = `AS${result.asn}`;
+      asnChip.textContent = formattedAsn;
       if (result.asn_kind_display && result.asn_kind_display !== "未知") {
         asnChip.title = `自报类型: ${result.asn_kind_display}`;
       }
@@ -1358,8 +1414,11 @@ function createResultRow(result) {
       });
     } else {
       const cleanChip = document.createElement("span");
-      cleanChip.className = "chip chip-ok";
-      cleanChip.textContent = "🛡️ 纯净 (无威胁)";
+      const hasRiskEvidence = ["is_vpn", "is_proxy", "is_tor", "is_crawler", "is_abuser"]
+        .every((key) => typeof result[key] === "boolean");
+      const securityText = result.security_status || (hasRiskEvidence ? "🛡️ 纯净 (无威胁)" : "检测数据不足");
+      cleanChip.className = `chip ${hasRiskEvidence ? "chip-ok" : "chip-info"}`;
+      cleanChip.textContent = securityText;
       container.append(cleanChip);
     }
 
@@ -1394,7 +1453,7 @@ function createMiniGptBar(gptChecks) {
   if (!Array.isArray(gptChecks) || !gptChecks.length) {
     const span = document.createElement("span");
     span.className = "p-timeout p-gray";
-    span.textContent = "-1ms";
+    span.textContent = "未检测";
     return span;
   }
   const bar = document.createElement("div");
@@ -1418,8 +1477,8 @@ function createMiniGptBar(gptChecks) {
       node.title = `${item.name}: 受限地区不可访问`;
     } else {
       node.classList.add("node-timeout");
-      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(shortLabel)}</span><span class="p-ms p-timeout">-1ms</span>`;
-      node.title = `${item.name}: ${item.text || "不可访问 (-1ms)"}`;
+      node.innerHTML = `<span class="p-dot"></span><span class="p-code">${escapeHtml(shortLabel)}</span><span class="p-ms p-timeout">不可用</span>`;
+      node.title = `${item.name}: ${item.text || "不可访问"}${item.status_code ? ` (HTTP ${item.status_code})` : ""}`;
     }
     bar.append(node);
   });
@@ -1430,7 +1489,7 @@ function createMiniPingBar(pings) {
   if (!Array.isArray(pings) || !pings.length) {
     const span = document.createElement("span");
     span.className = "p-timeout p-gray";
-    span.textContent = "-1ms";
+    span.textContent = "未检测";
     return span;
   }
   const bar = document.createElement("div");
@@ -1447,12 +1506,18 @@ function createMiniPingBar(pings) {
       node.title = `${ping.name || code}: ${ms}ms`;
     } else {
       node.classList.add("node-timeout");
-      node.innerHTML = `<span class="p-dot p-dot-gray"></span><span class="p-code">${escapeHtml(code)}</span><span class="p-ms p-timeout p-gray">-1ms</span>`;
-      node.title = `${ping.name || code}: ${ping.status || "未检测/超时 (-1ms)"}`;
+      const status = normalizeUnavailableLatencyStatus(ping.status, "未检测/超时");
+      node.innerHTML = `<span class="p-dot p-dot-gray"></span><span class="p-code">${escapeHtml(code)}</span><span class="p-ms p-timeout p-gray">${escapeHtml(status)}</span>`;
+      node.title = `${ping.name || code}: ${status}`;
     }
     bar.append(node);
   });
   return bar;
+}
+
+function normalizeUnavailableLatencyStatus(value, fallback) {
+  const status = String(value || fallback).replace(/\s*\(?-1ms\)?\s*$/u, "").trim();
+  return status || fallback;
 }
 
 function appendTextCell(row, text, configure) {
@@ -1526,7 +1591,7 @@ function renderDetails(result) {
         <div class="modal-tag-row">
           <span class="chip ${result.is_residential ? "chip-ok" : "chip-warn"}">${result.is_residential ? "家庭住宅IP" : "机房/托管IP"}</span>
           <span class="chip ${result.is_native === true ? "chip-ok" : result.is_native === false ? "chip-warn" : "chip-asn"}">${escapeHtml(result.native_status || "原生性未知")}</span>
-          <span class="chip chip-asn">AS${escapeHtml(String(result.asn || "—"))} ${escapeHtml(result.asn_kind_display || "")}</span>
+          <span class="chip chip-asn">${escapeHtml(formatAsn(result.asn) || "ASN 未知")} ${escapeHtml(result.asn_kind_display || "")}</span>
           <span class="chip ${result.is_bogon ? "chip-bad" : "chip-ok"}">${result.is_bogon ? "Bogon 广播" : "公网可达"}</span>
           <span class="chip ${String(result.rpki_status || "").includes("Valid") ? "chip-ok" : "chip-bad"}">RPKI: ${escapeHtml(result.rpki_status || "未知")}</span>
         </div>
@@ -1563,7 +1628,7 @@ function renderDetails(result) {
     <h3>技术指标</h3>
     <div class="kv"><span class="k">Bogon / 广播<span class="tip-wrap">ⓘ<span class="tip-text">Bogon 指不应出现在公网路由上的 IP。公网 IP 显示否（公网可达）即可。</span></span></span><span class="v"><span class="chip ${result.is_bogon ? "chip-bad" : "chip-ok"}">${result.is_bogon ? "是" : "否（公网可达）"}</span></span></div>
     <div class="kv"><span class="k">反向 DNS</span><span class="v" title="${escapeHtml(result.rdns || "-")}"><span class="cell-truncate">${escapeHtml(result.rdns || "-")}</span></span></div>
-    <div class="kv"><span class="k">开放端口<span class="tip-wrap">ⓘ<span class="tip-text">常见端口探测结果</span></span></span><span class="v">${renderOpenPortsHtml(ports)}</span></div>
+    <div class="kv"><span class="k">开放端口<span class="tip-wrap">ⓘ<span class="tip-text">常见端口探测结果</span></span></span><span class="v">${renderOpenPortsHtml(ports, result.requests?.port_scan)}</span></div>
     <div class="kv"><span class="k">RPKI 状态<span class="tip-wrap">ⓘ<span class="tip-text">RPKI 是 BGP 路由起源验证机制，Valid 表示路由合法。</span></span></span><span class="v"><span class="chip ${String(result.rpki_status || "").includes("Valid") ? "chip-ok" : "chip-bad"}">${escapeHtml(result.rpki_status || "未知")}</span></span></div>
     <div class="kv"><span class="k">CIDR 网段</span><span class="v"><code>${escapeHtml(result.cidr || lookup.cidr || "-")}</code></span></div>
   `;
@@ -1625,7 +1690,9 @@ function renderDetails(result) {
     const pingCard = document.createElement("section");
     pingCard.className = "card sub-card";
     const cells = pings.map((p) => {
-      const ms = p.ok && typeof p.elapsed_ms === "number" ? `${p.elapsed_ms} ms` : (p.status || "超时");
+      const ms = p.ok && typeof p.elapsed_ms === "number"
+        ? `${p.elapsed_ms} ms`
+        : normalizeUnavailableLatencyStatus(p.status, "超时");
       const speedCls = p.ok && p.elapsed_ms < 80 ? "p-fast" : p.ok && p.elapsed_ms < 200 ? "p-mid" : "p-slow";
       return `
         <div class="gp-cell">
@@ -1664,6 +1731,9 @@ function renderDetailFlags(result) {
 function renderThreatChips(result, intel) {
   const threats = intel.threats || [];
   if (!threats.length && !result.is_abuser && !result.is_tor) {
+    const hasRiskEvidence = ["is_vpn", "is_proxy", "is_tor", "is_crawler", "is_abuser"]
+      .every((key) => typeof result[key] === "boolean");
+    if (!hasRiskEvidence) return '<span class="chip chip-info">检测数据不足</span>';
     return '<span class="chip chip-ok">未发现明显威胁</span>';
   }
   const chips = threats.map((t) => {
@@ -1673,8 +1743,9 @@ function renderThreatChips(result, intel) {
   return chips.join(" ") || '<span class="chip chip-warn">存在风险标记</span>';
 }
 
-function renderOpenPortsHtml(ports) {
+function renderOpenPortsHtml(ports, request) {
   if (!ports || typeof ports !== "object" || !Object.keys(ports).length) {
+    if (!request?.ok) return '<span class="chip chip-info">未检测</span>';
     return '<span class="chip chip-ok">未发现常见端口开放</span>';
   }
   const open = Object.keys(ports).filter((k) => ports[k] === "open" || ports[k] === true);
@@ -1726,9 +1797,18 @@ async function readResponse(response) {
 
 async function checkHealth() {
   try {
-    const data = await readResponse(await fetch("/api/health", { cache: "no-store", credentials: "same-origin" }));
-    elements.healthStatus.textContent = data.mode === "github-actions-gateway" ? "个人网关就绪" : "网关就绪";
-    elements.healthStatus.className = "health ready";
+    const healthUrl = window.BestIpAction?.apiUrl?.("/api/health") || "/api/health";
+    const data = await readResponse(await fetch(healthUrl, {
+      cache: "no-store",
+      credentials: localMode ? "omit" : "same-origin",
+    }));
+    if (data.mode === "local") {
+      elements.healthStatus.textContent = data.mihomo_ready ? "本地 Mihomo 就绪" : "本地 Mihomo 未安装";
+      elements.healthStatus.className = data.mihomo_ready ? "health ready" : "health error";
+    } else {
+      elements.healthStatus.textContent = data.mode === "github-actions-gateway" ? "个人网关就绪" : "网关就绪";
+      elements.healthStatus.className = "health ready";
+    }
   } catch (error) {
     elements.healthStatus.textContent = error.message;
     elements.healthStatus.className = "health error";

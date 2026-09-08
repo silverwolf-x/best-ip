@@ -1,8 +1,47 @@
 (() => {
   const config = window.BEST_IP_CONFIG || {};
+  const mode = config.mode === "local" ? "local" : "gateway";
   const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
   const MAX_POLL_DELAY_MS = 10_000;
   const TEXT_ENCODER = new TextEncoder();
+
+  function localApiBase() {
+    if (mode !== "local") return "";
+    const raw = String(config.apiBase || "").trim();
+    if (!raw) throw new Error("本地后端 API 地址未配置");
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error("本地后端 API 地址无效");
+    }
+    if (
+      parsed.protocol !== "http:"
+      || parsed.hostname !== "127.0.0.1"
+      || !parsed.port
+      || parsed.username
+      || parsed.password
+      || !["", "/"].includes(parsed.pathname)
+      || parsed.search
+      || parsed.hash
+    ) {
+      throw new Error("本地后端 API 必须是带端口的 127.0.0.1 HTTP origin");
+    }
+    return parsed.origin;
+  }
+
+  const apiBase = localApiBase();
+
+  function apiUrl(path) {
+    if (typeof path !== "string" || !path.startsWith("/api/")) {
+      throw new Error("API path 无效");
+    }
+    return apiBase ? new URL(path, `${apiBase}/`).toString() : path;
+  }
+
+  function apiCredentials() {
+    return apiBase ? "omit" : "same-origin";
+  }
 
   function requestId() {
     if (window.crypto?.randomUUID) return `req-${window.crypto.randomUUID()}`;
@@ -100,7 +139,7 @@
     };
   }
 
-  async function responseError(response) {
+  async function responseError(response, serviceName = "扫描网关") {
     if (response.status === 401 || response.status === 403) {
       return new Error(response.status === 401 ? "Cloudflare Access 登录已过期，请刷新页面" : "当前账号没有扫描权限");
     }
@@ -108,24 +147,24 @@
     if (response.status === 404) return new Error("扫描任务或结果不存在");
     try {
       const payload = await response.clone().json();
-      return new Error(payload.detail || `扫描网关请求失败（HTTP ${response.status}）`);
+      return new Error(payload.detail || `${serviceName}请求失败（HTTP ${response.status}）`);
     } catch {
-      return new Error(`扫描网关请求失败（HTTP ${response.status}）`);
+      return new Error(`${serviceName}请求失败（HTTP ${response.status}）`);
     }
   }
 
-  async function gatewayJson(scanToken, path, options = {}) {
-    const response = await fetch(path, {
+  async function gatewayJson(scanToken, path, options = {}, serviceName = "扫描网关") {
+    const response = await fetch(apiUrl(path), {
       ...options,
       cache: "no-store",
-      credentials: "same-origin",
+      credentials: apiCredentials(),
       headers: {
         Accept: "application/json",
         ...(scanToken ? { "X-Best-IP-Scan-Token": scanToken } : {}),
         ...(options.headers || {}),
       },
     });
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) throw await responseError(response, serviceName);
     if (response.status === 204) return null;
     try {
       return await response.json();
@@ -141,10 +180,10 @@
       throw new Error("扫描运行身份无效");
     }
     const response = await fetch(
-      `/api/scans/${encodeURIComponent(requestIdValue)}/artifact?run_id=${numericRunId}&run_attempt=${numericAttempt}`,
+      apiUrl(`/api/scans/${encodeURIComponent(requestIdValue)}/artifact?run_id=${numericRunId}&run_attempt=${numericAttempt}`),
       {
         cache: "no-store",
-        credentials: "same-origin",
+        credentials: apiCredentials(),
         headers: scanToken ? { "X-Best-IP-Scan-Token": scanToken } : {},
       },
     );
@@ -297,7 +336,137 @@
     };
   }
 
-  async function dispatch(subscriptionUrl) {
+  function localActionProgress(job, now = Date.now()) {
+    const rawStatus = String(job?.status || "queued");
+    const runStatus = ["preparing", "running"].includes(rawStatus) ? "running" : rawStatus;
+    const terminal = ["completed", "failed", "cancelled"].includes(runStatus);
+    const conclusion = runStatus === "completed" ? "success" : terminal ? runStatus : null;
+    const step = {
+      number: 1,
+      name: String(job?.message || "等待本地扫描任务"),
+      status: terminal ? "completed" : runStatus === "running" ? "in_progress" : "queued",
+      state: terminal ? "completed" : runStatus === "running" ? "running" : "queued",
+      conclusion,
+      started_at: job?.created_at || null,
+      completed_at: job?.finished_at || null,
+      elapsed_ms: elapsedMs(job?.created_at, job?.finished_at, now),
+    };
+    return {
+      source: "local",
+      request_id: job?.id || null,
+      run_id: null,
+      run_attempt: null,
+      run_status: runStatus,
+      raw_run_status: rawStatus,
+      conclusion,
+      jobs_state: "available",
+      jobs_total: 1,
+      jobs_completed: terminal ? 1 : 0,
+      current_job_index: 1,
+      current_job: null,
+      current_step_index: 1,
+      steps_total: 1,
+      steps_completed: terminal ? 1 : 0,
+      current_step: step,
+      jobs: [],
+      run_started_at: job?.created_at || null,
+      run_completed_at: job?.finished_at || null,
+      elapsed_ms: step.elapsed_ms,
+      updated_at: job?.updated_at || new Date(now).toISOString(),
+      warning: null,
+      run_url: null,
+    };
+  }
+
+  function localNodeProgress(job) {
+    const terminal = ["completed", "failed", "cancelled"].includes(job?.status);
+    const partial = Number.isInteger(job?.partial_count) ? job.partial_count : null;
+    const failed = Number.isInteger(job?.failed_count) ? job.failed_count : null;
+    return {
+      source: "local",
+      phase: terminal ? "terminal" : String(job?.status || "queued"),
+      total: Number.isInteger(job?.total) ? job.total : null,
+      completed: Number.isInteger(job?.completed) ? job.completed : null,
+      success_count: Number.isInteger(job?.success_count) ? job.success_count : null,
+      partial_count: partial,
+      failed_count: failed,
+      usable: job?.status === "completed" && partial !== null && failed !== null
+        ? partial === 0 && failed === 0
+        : null,
+    };
+  }
+
+  async function localDispatch(subscriptionUrl) {
+    let parsed;
+    try {
+      parsed = new URL(subscriptionUrl);
+    } catch {
+      throw new Error("订阅地址格式无效");
+    }
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("订阅地址必须是公开 HTTP/HTTPS 地址，且不能携带认证信息");
+    }
+    const id = requestId();
+    const dispatchedAt = Date.now();
+    const payload = await gatewayJson("", "/api/scans", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription_url: subscriptionUrl, request_id: id }),
+    }, "本地扫描服务");
+    return {
+      requestId: String(payload?.id || id),
+      runId: null,
+      dispatchedAt,
+      scanToken: "",
+    };
+  }
+
+  async function localPoll(_scanToken, requestIdValue) {
+    const path = `/api/scans/${encodeURIComponent(requestIdValue)}`;
+    const job = await gatewayJson("", path, {}, "本地扫描服务");
+    const actionProgress = localActionProgress(job);
+    const nodeProgress = localNodeProgress(job);
+    if (job?.status === "completed" && job?.manifest_ready === true) {
+      const result = await gatewayJson("", `${path}/export`, {}, "本地扫描服务");
+      const usable = nodeProgress.usable === true;
+      return {
+        ...result,
+        status: "completed",
+        requestId: requestIdValue,
+        runId: null,
+        action_progress: actionProgress,
+        node_progress: nodeProgress,
+        action_status: { status: "completed", usable, source: "local" },
+        action_result: result,
+        manifest_ready: true,
+        cleanup_confirmed: result?.cleanup_confirmed === true,
+      };
+    }
+    return {
+      status: String(job?.status || "queued"),
+      requestId: requestIdValue,
+      runId: null,
+      action_progress: actionProgress,
+      node_progress: nodeProgress,
+      total: nodeProgress.total,
+      completed: nodeProgress.completed,
+      results: [],
+      manifest_ready: false,
+      cleanup_confirmed: job?.cleanup_confirmed === true,
+      error: job?.error || null,
+    };
+  }
+
+  async function localCancel(_scanToken, requestIdValue) {
+    await gatewayJson(
+      "",
+      `/api/scans/${encodeURIComponent(requestIdValue)}`,
+      { method: "DELETE" },
+      "本地扫描服务",
+    );
+  }
+
+  async function gatewayDispatch(subscriptionUrl) {
     const id = requestId();
     const dispatchedAt = Date.now();
     const envelope = await encryptSubscriptionUrl(subscriptionUrl, id);
@@ -343,7 +512,7 @@
     };
   }
 
-  async function poll(scanToken, requestIdValue, runId) {
+  async function gatewayPoll(scanToken, requestIdValue, runId) {
     const query = new URLSearchParams();
     if (runId) query.set("run_id", String(runId));
     const suffix = query.size ? `?${query.toString()}` : "";
@@ -446,7 +615,7 @@
     };
   }
 
-  async function cancel(scanToken, requestIdValue, runId) {
+  async function gatewayCancel(scanToken, requestIdValue, runId) {
     if (!runId) throw new Error("GitHub Actions 运行尚未建立");
     await gatewayJson(
       scanToken,
@@ -456,9 +625,12 @@
   }
 
   window.BestIpAction = Object.freeze({
+    MODE: mode,
+    API_BASE: apiBase,
     MAX_POLL_DELAY_MS,
-    dispatch,
-    poll,
-    cancel,
+    apiUrl,
+    dispatch: mode === "local" ? localDispatch : gatewayDispatch,
+    poll: mode === "local" ? localPoll : gatewayPoll,
+    cancel: mode === "local" ? localCancel : gatewayCancel,
   });
 })();

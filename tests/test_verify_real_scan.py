@@ -102,6 +102,13 @@ def test_formal_scan_requires_every_node_to_be_usable() -> None:
         _require_no_failed_nodes({"failed_count": 4})
 
 
+def test_formal_scan_never_accepts_all_nodes_failed(monkeypatch) -> None:
+    monkeypatch.setenv("BEST_IP_ALLOW_PARTIAL", "1")
+
+    with pytest.raises(RuntimeError, match="全部节点"):
+        _require_no_failed_nodes({"failed_count": 4, "total": 4})
+
+
 def test_api_base_requires_local_http_origin() -> None:
     assert _validate_local_api_base("http://127.0.0.1:8000/") == "http://127.0.0.1:8000"
     assert _validate_local_api_base("http://[::1]:8000") == "http://[::1]:8000"

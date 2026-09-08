@@ -408,26 +408,39 @@ class ScanJobManager:
             result: dict[str, Any] | None = None
             final_mihomo: MihomoProcess | None = None
             attempts_used = 0
+            last_dns_bootstrap_proxy: str | None = None
+            proxy_by_name = {
+                str(candidate.get("name") or ""): candidate for candidate in proxies
+            }
 
             for attempt in range(1, self.settings.max_node_attempts + 1):
                 attempts_used = attempt
-                dns_bootstrap_proxy = _dns_bootstrap_for_attempt(
-                    proxy,
-                    dns_bootstrap_candidates,
-                    node_index=index,
-                    attempt=attempt,
-                )
-                mihomo = MihomoProcess(
-                    self.settings.mihomo_path,
-                    work_dir / f"node-{index:04d}-attempt-{attempt:02d}",
-                    proxies,
-                    selector_names=[node_name],
-                    outbound_interface=outbound_interface,
-                    dns_bootstrap_proxy=dns_bootstrap_proxy,
-                )
-                final_mihomo = mihomo
+                mihomo: MihomoProcess | None = None
                 log_offset = 0
+                failure_phase = "start"
                 try:
+                    dns_bootstrap_proxy = _dns_bootstrap_for_attempt(
+                        proxy,
+                        dns_bootstrap_candidates,
+                        proxy_by_name=proxy_by_name,
+                        node_index=index,
+                        attempt=attempt,
+                    )
+                    last_dns_bootstrap_proxy = dns_bootstrap_proxy
+                    attempt_proxies = _attempt_proxies(
+                        proxy,
+                        proxy_by_name,
+                        dns_bootstrap_proxy=dns_bootstrap_proxy,
+                    )
+                    mihomo = MihomoProcess(
+                        self.settings.mihomo_path,
+                        work_dir / f"node-{index:04d}-attempt-{attempt:02d}",
+                        attempt_proxies,
+                        selector_names=[node_name],
+                        outbound_interface=outbound_interface,
+                        dns_bootstrap_proxy=dns_bootstrap_proxy,
+                    )
+                    final_mihomo = mihomo
                     job["message"] = (
                         f"正在并行检测 {index + 1}/{job['total']}：{node_name}，"
                         f"尝试 {attempt}/{self.settings.max_node_attempts}"
@@ -438,6 +451,7 @@ class ScanJobManager:
                     finally:
                         _record_phase(job, "start", phase_started)
                     log_offset = mihomo.log_offset()
+                    failure_phase = "selector"
                     phase_started = perf_counter()
                     try:
                         selected = await mihomo.select(node_name)
@@ -447,6 +461,7 @@ class ScanJobManager:
                         mihomo.proxy_url,
                         timeout_ms=self.settings.page_timeout_ms,
                     )
+                    failure_phase = "collector"
                     phase_started = perf_counter()
                     try:
                         result = await asyncio.wait_for(
@@ -468,24 +483,30 @@ class ScanJobManager:
                 except MihomoNotReadyError:
                     raise
                 except Exception as exc:
-                    mihomo_error = _read_mihomo_error(mihomo, log_offset)
+                    mihomo_error = (
+                        _read_mihomo_error(mihomo, log_offset) if mihomo else ""
+                    )
                     result = _failed_node(
                         job["id"],
                         index,
                         node_name,
                         node_type,
                         exc,
+                        phase=failure_phase,
                         mihomo_error=mihomo_error,
                         mihomo=mihomo,
                     )
                 finally:
-                    phase_started = perf_counter()
-                    try:
-                        await mihomo.stop()
-                    finally:
-                        _record_phase(job, "stop", phase_started)
-                    if not await _to_thread_uncancelled(_remove_work_dir, mihomo.work_dir):
-                        raise MihomoStopError("Mihomo 工作目录清理未确认")
+                    if mihomo:
+                        phase_started = perf_counter()
+                        try:
+                            await mihomo.stop()
+                        finally:
+                            _record_phase(job, "stop", phase_started)
+                        if not await _to_thread_uncancelled(
+                            _remove_work_dir, mihomo.work_dir
+                        ):
+                            raise MihomoStopError("Mihomo 工作目录清理未确认")
 
                 if result.get("status") != "failed":
                     break
@@ -497,7 +518,7 @@ class ScanJobManager:
                         self.settings.node_retry_backoff_ms * attempt / 1000
                     )
 
-            if result is None or final_mihomo is None:
+            if result is None:
                 raise RuntimeError("节点扫描没有产生终态记录")
             _attach_attempt_evidence(
                 result,
@@ -505,6 +526,8 @@ class ScanJobManager:
                 max_attempts=self.settings.max_node_attempts,
                 attempt_errors=attempt_errors,
                 mihomo=final_mihomo,
+                outbound_interface=outbound_interface,
+                dns_bootstrap_proxy=last_dns_bootstrap_proxy,
             )
             phase_started = perf_counter()
             try:
@@ -622,16 +645,69 @@ def _dns_bootstrap_for_attempt(
     proxy: dict[str, Any],
     candidates: list[str],
     *,
+    proxy_by_name: dict[str, dict[str, Any]] | None = None,
     node_index: int,
     attempt: int,
 ) -> str | None:
     if not candidates:
         return None
+    if _proxy_chain_requires_dns(proxy, proxy_by_name or {}):
+        return candidates[(node_index + attempt - 1) % len(candidates)]
+    return None
+
+
+def _proxy_chain_requires_dns(
+    proxy: dict[str, Any],
+    proxy_by_name: dict[str, dict[str, Any]],
+    visited: set[str] | None = None,
+) -> bool:
     try:
         ipaddress.ip_address(str(proxy.get("server") or ""))
     except ValueError:
-        return candidates[(node_index + attempt - 1) % len(candidates)]
-    return None
+        return True
+
+    dependency_name = proxy.get("dialer-proxy")
+    if not isinstance(dependency_name, str) or not dependency_name:
+        return False
+    seen = set() if visited is None else visited
+    if dependency_name in seen:
+        return False
+    dependency = proxy_by_name.get(dependency_name)
+    if dependency is None:
+        return False
+    seen.add(dependency_name)
+    return _proxy_chain_requires_dns(dependency, proxy_by_name, seen)
+
+
+def _attempt_proxies(
+    proxy: dict[str, Any],
+    proxy_by_name: dict[str, dict[str, Any]],
+    *,
+    dns_bootstrap_proxy: str | None,
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    included_names: set[str] = set()
+
+    def include(candidate: dict[str, Any]) -> None:
+        name = str(candidate.get("name") or "")
+        if not name or name in included_names:
+            return
+        included_names.add(name)
+        selected.append(candidate)
+        dependency_name = candidate.get("dialer-proxy")
+        if not isinstance(dependency_name, str) or not dependency_name:
+            return
+        dependency = proxy_by_name.get(dependency_name)
+        if dependency is not None:
+            include(dependency)
+
+    include(proxy)
+    if dns_bootstrap_proxy:
+        bootstrap = proxy_by_name.get(dns_bootstrap_proxy)
+        if bootstrap is None:
+            raise MihomoError("DNS 引导节点不在当前订阅代理集合中")
+        include(bootstrap)
+    return selected
 
 
 def _attempt_error(result: dict[str, Any]) -> str:
@@ -645,7 +721,9 @@ def _attach_attempt_evidence(
     attempts_used: int,
     max_attempts: int,
     attempt_errors: list[str],
-    mihomo: MihomoProcess,
+    mihomo: MihomoProcess | None,
+    outbound_interface: str | None,
+    dns_bootstrap_proxy: str | None,
 ) -> None:
     result["attempt_count"] = attempts_used
     result["retry_count"] = attempts_used - 1
@@ -656,8 +734,12 @@ def _attach_attempt_evidence(
         result["proxy_evidence"] = evidence
     evidence.update(
         {
-            "outbound_interface": mihomo.outbound_interface,
-            "dns_bootstrap_proxy": mihomo.dns_bootstrap_proxy,
+            "outbound_interface": (
+                mihomo.outbound_interface if mihomo else outbound_interface
+            ),
+            "dns_bootstrap_proxy": (
+                mihomo.dns_bootstrap_proxy if mihomo else dns_bootstrap_proxy
+            ),
             "fresh_mihomo_per_attempt": True,
             "max_attempts": max_attempts,
         }
@@ -701,14 +783,14 @@ def _failed_node(
     node_type: str,
     exc: Exception,
     *,
+    phase: str | None = None,
     mihomo_error: str = "",
     mihomo: MihomoProcess | None = None,
 ) -> dict[str, Any]:
-    transport_error = (
-        _summarize_mihomo_error(mihomo_error)
-        if mihomo_error
-        else _safe_exception_error(exc)
-    )
+    exception_error = _safe_exception_error(exc)
+    transport_error = exception_error
+    if mihomo_error and exception_error == "Mihomo 节点连接失败":
+        transport_error = _summarize_mihomo_error(mihomo_error)
     error = transport_error
     return {
         "schema_version": 1,
@@ -718,7 +800,7 @@ def _failed_node(
         "type": node_type,
         "status": "failed",
         "error": error,
-        "phase": "selector" if isinstance(exc, MihomoError) else "collector",
+        "phase": phase or ("selector" if isinstance(exc, MihomoError) else "collector"),
         "started_at": _now(),
         "finished_at": _now(),
         "exit_ip": None,
@@ -785,6 +867,8 @@ def _failed_node(
 
 def _summarize_mihomo_error(message: str) -> str:
     normalized = message.lower()
+    if "parse config error" in normalized or "unsupport proxy type" in normalized:
+        return "Mihomo 节点配置不受支持"
     if "dns resolve failed" in normalized or "no such host" in normalized:
         return "节点服务器域名无法解析"
     if "reality authentication failed" in normalized:
@@ -806,6 +890,14 @@ def _summarize_mihomo_error(message: str) -> str:
 
 def _safe_exception_error(exc: Exception) -> str:
     if isinstance(exc, MihomoError):
+        message = str(exc)
+        prefix = "切换节点失败：HTTP "
+        if message.startswith(prefix):
+            status_code = message.removeprefix(prefix).strip()
+            if status_code.isdigit():
+                return f"Mihomo selector 切换失败（HTTP {status_code}）"
+        if message.startswith("切换节点后未确认 selector 身份"):
+            return "Mihomo selector 未确认所选节点"
         return _summarize_mihomo_error(str(exc))
     return f"节点采集失败（{exc.__class__.__name__}）"
 

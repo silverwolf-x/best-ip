@@ -91,6 +91,94 @@ function gatewayWindow(fetch, extra = {}) {
   }, { fetch, document: { baseURI: "https://best-ip.example.workers.dev/" } });
 }
 
+function localWindow(fetch) {
+  return loadScript("frontend/action-client.js", {
+    crypto: webcrypto,
+    BEST_IP_CONFIG: { mode: "local", apiBase: "http://127.0.0.1:8000" },
+    location: { hostname: "127.0.0.1" },
+  }, { fetch, document: { baseURI: "http://127.0.0.1:5173/" } });
+}
+
+test("local dispatch sends the subscription only to the configured loopback API", async () => {
+  const requests = [];
+  const fakeFetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    return { ok: true, status: 202, json: async () => ({ id: "req-local", status: "queued" }) };
+  };
+  const window = localWindow(fakeFetch);
+  const subscriptionUrl = "https://subscription.example/config?token=local-secret";
+
+  const dispatched = await window.BestIpAction.dispatch(subscriptionUrl);
+
+  assert.equal(window.BestIpAction.MODE, "local");
+  assert.deepEqual(
+    { requestId: dispatched.requestId, runId: dispatched.runId, scanToken: dispatched.scanToken },
+    { requestId: "req-local", runId: null, scanToken: "" },
+  );
+  assert.equal(requests[0].url, "http://127.0.0.1:8000/api/scans");
+  assert.equal(JSON.parse(requests[0].options.body).subscription_url, subscriptionUrl);
+  assert.equal(requests[0].options.credentials, "omit");
+});
+
+test("local polling exposes live counts then fetches the verified full export", async () => {
+  const requestId = "req-local-poll";
+  let completed = false;
+  const record = { node_index: 0, node: "local-node", status: "success" };
+  const fakeFetch = async (url) => {
+    if (String(url) === `http://127.0.0.1:8000/api/scans/${requestId}`) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => completed
+          ? { id: requestId, status: "completed", message: "扫描完成", total: 1, completed: 1, success_count: 1, partial_count: 0, failed_count: 0, manifest_ready: true, cleanup_confirmed: true }
+          : { id: requestId, status: "running", message: "正在检测 local-node", total: 2, completed: 1, success_count: 1, partial_count: 0, failed_count: 0, manifest_ready: false, cleanup_confirmed: false },
+      };
+    }
+    if (String(url) === `http://127.0.0.1:8000/api/scans/${requestId}/export`) {
+      return { ok: true, status: 200, json: async () => ({ id: requestId, status: "completed", total: 1, completed: 1, success_count: 1, partial_count: 0, failed_count: 0, manifest_ready: true, cleanup_confirmed: true, results: [record], manifest: { complete: true } }) };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const window = localWindow(fakeFetch);
+
+  const running = await window.BestIpAction.poll("", requestId, null);
+  assert.equal(running.status, "running");
+  assert.equal(running.action_progress.source, "local");
+  assert.equal(running.action_progress.current_step.name, "正在检测 local-node");
+  assert.equal(running.node_progress.completed, 1);
+
+  completed = true;
+  const terminal = await window.BestIpAction.poll("", requestId, null);
+  assert.equal(terminal.status, "completed");
+  assert.equal(terminal.action_status.usable, true);
+  assert.equal(terminal.action_result.results[0].node, "local-node");
+  assert.equal(terminal.manifest_ready, true);
+});
+
+test("local cancellation uses the FastAPI job endpoint without gateway identity", async () => {
+  const calls = [];
+  const window = localWindow(async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return { ok: true, status: 200, json: async () => ({ status: "cancelled" }) };
+  });
+
+  await window.BestIpAction.cancel("", "req-local-cancel", null);
+
+  assert.equal(calls[0].url, "http://127.0.0.1:8000/api/scans/req-local-cancel");
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[0].options.headers["X-Best-IP-Scan-Token"], undefined);
+});
+
+test("local mode rejects a non-loopback API base before sending subscriptions", () => {
+  assert.throws(
+    () => loadScript("frontend/action-client.js", {
+      crypto: webcrypto,
+      BEST_IP_CONFIG: { mode: "local", apiBase: "https://collector.example" },
+    }, { fetch: async () => {}, document: { baseURI: "http://127.0.0.1:5173/" } }),
+    /127\.0\.0\.1/u,
+  );
+});
+
 test("gateway dispatch encrypts the URL and sends no browser credential", async () => {
   const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 3072 });
   const der = publicKey.export({ type: "spki", format: "der" });

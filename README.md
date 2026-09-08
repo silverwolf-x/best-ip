@@ -13,7 +13,31 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
               └─ sanitized artifact → Worker → 浏览器
 ```
 
-Python FastAPI 仅是 `scan.yml` 在临时 runner 内部使用的 loopback 扫描接口，不是独立部署入口。仓库不再提供 Docker、Compose、本地浏览器直连 FastAPI 或 GitHub Pages 模式。
+Python FastAPI 在生产中仅是 `scan.yml` 临时 runner 内的 loopback 扫描接口，不是独立部署入口。本地调试同样保持前后端分离：独立静态服务提供页面，FastAPI 只提供 API。仓库不提供 Docker、Compose 或 GitHub Pages 模式。
+
+## 本地调试
+
+本地调试模式复用同一套 Mihomo、扫描器、结果存储和前端，只替换任务传输层；启动器分别运行前端静态服务与 FastAPI API。生产环境仍使用 Cloudflare Worker → GitHub Actions，不会降级 Access、密文订阅或 artifact 校验。
+
+安装 [uv](https://docs.astral.sh/uv/) 后，在仓库根目录运行：
+
+```powershell
+npm run dev
+```
+
+也可以不经过 npm：
+
+```powershell
+uv run python scripts/dev.py
+```
+
+首次启动会自动下载当前固定版本的 Mihomo；前端默认监听 `127.0.0.1:5173`，后端 API 默认监听 `127.0.0.1:8000`，端口占用时各自自动选择空闲端口。准备就绪后浏览器只打开前端地址，前端通过动态的 loopback API Base 调用后端。Windows 下自动关闭后端热重载，因为 Uvicorn 的重载模式使用不支持异步子进程的 SelectorEventLoop，会导致 Mihomo 无法启动；修改后端代码后需重启。其他系统默认启用热重载；需要稳定执行长扫描时使用：
+
+```powershell
+npm run dev:no-reload
+```
+
+可用 `--port 8080` 更换后端 API 端口、`--frontend-port 5174` 更换前端端口、`--no-open` 禁止自动打开浏览器。手动启动时必须同时设置 `BEST_IP_LOCAL_DEV=1` 与精确的 `BEST_IP_LOCAL_FRONTEND_ORIGIN=http://127.0.0.1:<前端端口>`；不要将任一服务绑定到局域网或公网地址，因为本地模式有意跳过生产 Worker 的 Access 与 scan token，只用于本机调试。
 
 ## 生产行为
 
@@ -21,7 +45,7 @@ Python FastAPI 仅是 `scan.yml` 在临时 runner 内部使用的 loopback 扫�
 - 浏览器使用 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key；明文 URL 不进入 Worker API、GitHub workflow input 或 artifact。
 - Worker 固定调度 `silverwolf-x/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
 - 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 8 个节点并发，每节点最多 3 次尝试。
-- Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 评分及 ChatGPT/Codex 探测按既定依赖并发执行。
+- Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 总分或四项场景评分缺失时，节点会如实标记为“部分”。
 - mixed-port 与 controller 只监听 `127.0.0.1`；Coffee 与 IPure 请求固定 `trust_env=False`、禁用重定向且不提供 direct fallback。
 - 每个真实节点恰好产生一条 `success`、`partial` 或 `failed` 记录。失败记录的 `exit_ip` 必须为 JSON `null`。
 - 节点文件原子写入；只有节点集合、字段、状态、出口 IP、代理证据、文件大小和 SHA-256 全部通过后才生成 manifest。
@@ -110,5 +134,5 @@ git diff --check
 
 - 只支持顶部含 `proxies` 列表的 Mihomo YAML；不支持 URI 列表或只有远程 `proxy-providers` 的配置。
 - 如果全部节点服务器都是域名且没有可用的字面 IP 引导节点，严格 DNS 隔离可能导致节点明确失败，不会回退宿主代理。
-- Coffee 接口以及 IPure 报告页结构、字段和限流属于外部服务，改版时必须同步 URL allowlist、解析器与契约测试。
+- Coffee 接口以及 IPure `/api/lookup` 的字段和限流属于外部服务，改版时必须同步 URL allowlist、解析器与契约测试。
 - Cloudflare Worker 不执行扫描本身；扫描延迟仍包含 GitHub Actions 排队、runner 初始化、Mihomo 启动和节点网络耗时。

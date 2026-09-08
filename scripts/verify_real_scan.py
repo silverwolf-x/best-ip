@@ -24,7 +24,7 @@ if str(ROOT_DIR) not in sys.path:
 from backend.app.config import JOBS_DIR, RESULTS_DIR, settings
 from backend.app.jobs import _TRANSPORT_ERROR_TYPES
 from backend.app.result_store import result_store
-from backend.app.scanner import _is_same_ip, _trace_ip
+from backend.app.scanner import IPURE_HOST, _ipure_url, _is_same_ip, _trace_ip
 from backend.app.subscription import (
     download_subscription,
     is_subscription_metadata,
@@ -197,6 +197,9 @@ def _require_no_failed_nodes(job: dict[str, Any]) -> None:
     failed_count = job.get("failed_count")
     if not isinstance(failed_count, int) or failed_count < 0:
         raise RuntimeError("正式订阅没有合法失败节点计数")
+    total = job.get("total")
+    if isinstance(total, int) and total > 0 and failed_count == total:
+        raise RuntimeError("正式订阅可用性验收失败：全部节点均未获得有效结果")
     if failed_count and os.environ.get("BEST_IP_ALLOW_PARTIAL") != "1":
         raise RuntimeError(
             f"正式订阅可用性验收失败：{failed_count} 个节点未获得有效结果"
@@ -508,6 +511,7 @@ async def verify() -> None:
                 page = requests.get("page") if isinstance(requests, dict) else None
                 trace = requests.get("trace") if isinstance(requests, dict) else None
                 lookup = requests.get("lookup") if isinstance(requests, dict) else None
+                ipure = requests.get("ipure") if isinstance(requests, dict) else None
                 lookup_data = (
                     lookup.get("data") if isinstance(lookup, dict) else None
                 )
@@ -529,6 +533,33 @@ async def verify() -> None:
                     or not _is_same_ip(lookup_data.get("ip"), exit_ip)
                 ):
                     raise RuntimeError(f"节点 {index} trace/lookup 证据无效")
+                if (
+                    not isinstance(ipure, dict)
+                    or ipure.get("attempted") is not True
+                    or ipure.get("via_mihomo") is not True
+                    or ipure.get("proxy_url") != evidence.get("proxy_url")
+                    or ipure.get("target_host") != IPURE_HOST
+                    or ipure.get("url") != _ipure_url(exit_ip)
+                ):
+                    raise RuntimeError(f"节点 {index} IPure 代理证据无效")
+                ipure_data = ipure.get("data")
+                ipure_scores = record.get("ipure_scores")
+                if ipure.get("ok") is True:
+                    if (
+                        not isinstance(ipure_data, dict)
+                        or not isinstance(ipure_scores, dict)
+                        or any(
+                            not isinstance(ipure_data.get(key), int)
+                            or isinstance(ipure_data.get(key), bool)
+                            or not 0 <= ipure_data[key] <= 100
+                            or ipure_scores.get(key) != ipure_data[key]
+                            for key in ("total", "ai", "streaming", "ecommerce", "email")
+                        )
+                        or record.get("score") != ipure_data["total"]
+                    ):
+                        raise RuntimeError(f"节点 {index} IPure 评分证据无效")
+                elif record.get("status") != "partial" or record.get("score") is not None:
+                    raise RuntimeError(f"节点 {index} IPure 缺失未标记为部分")
                 completeness = record.get("completeness")
                 checks = (
                     completeness.get("checks")
@@ -542,6 +573,7 @@ async def verify() -> None:
                     or checks.get("exit_ip_valid") is not True
                     or checks.get("lookup_received") is not True
                     or checks.get("lookup_matches_trace") is not True
+                    or checks.get("ipure_recorded") is not (ipure.get("ok") is True)
                 ):
                     raise RuntimeError(f"节点 {index} 完整性证据无效")
             elif status == "failed":
@@ -629,7 +661,12 @@ async def verify() -> None:
             "manifest/export 校验通过"
         )
         _require_no_failed_nodes(job)
-        print(f"正式订阅可用性验收通过：{total} 个节点均获得有效结果")
+        print(
+            "正式订阅可用性验收完成："
+            f"完整 {job.get('success_count', 0)}，"
+            f"部分 {job.get('partial_count', 0)}，"
+            f"失败 {job.get('failed_count', 0)}"
+        )
 
 
 def main() -> None:

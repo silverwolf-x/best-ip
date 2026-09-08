@@ -12,10 +12,13 @@ from backend.app.scanner import (
     GPT_RESTRICTED_COUNTRIES,
     IPURE_HOST,
     CoffeeCollector,
+    _completeness,
     _global_ping_url,
     _gpt_check_summary,
     _ipure_url,
+    _normalize_asn,
     _parse_ipure_scores,
+    _profile_summary,
     _request_recorded,
     _trace_ip,
     _validate_coffee_url,
@@ -58,15 +61,19 @@ def test_ipure_allowlist_and_score_parser_support_ipv4_and_ipv6() -> None:
     ipv6_url = _ipure_url("2001:db8::10")
     _validate_ipure_url(ipv4_url)
     _validate_ipure_url(ipv6_url)
-    assert ipv4_url == "https://ipure.dev/ip/203.0.113.10"
-    assert ipv6_url == "https://ipure.dev/ip/2001%3Adb8%3A%3A10"
+    assert ipv4_url == "https://ipure.dev/api/lookup?ip=203.0.113.10"
+    assert ipv6_url == "https://ipure.dev/api/lookup?ip=2001%3Adb8%3A%3A10"
 
-    body = """<title>1.1.1.1 纯净度 62/100</title>
-    <p>AI 服务</p><span class="tnum">51</span>
-    <p>流媒体 / 短视频</p><span class="tnum">68</span>
-    <p>跨境电商</p><span class="tnum">53</span>
-    <p>邮件发送</p><span class="tnum">57</span>""".encode()
-    assert _parse_ipure_scores(body) == {
+    payload = {
+        "risk": {"purity": 62},
+        "scenarios": [
+            {"id": "ai", "score": 51},
+            {"id": "streaming", "score": 68},
+            {"id": "ecommerce", "score": 53},
+            {"id": "email", "score": 57},
+        ],
+    }
+    assert _parse_ipure_scores(payload) == {
         "total": 62,
         "ai": 51,
         "streaming": 68,
@@ -75,10 +82,12 @@ def test_ipure_allowlist_and_score_parser_support_ipv4_and_ipv6() -> None:
     }
 
     for url in (
-        "http://ipure.dev/ip/203.0.113.10",
-        "https://example.com/ip/203.0.113.10",
-        "https://ipure.dev/api/ip/203.0.113.10",
-        "https://ipure.dev/ip/203.0.113.10?next=example.com",
+        "http://ipure.dev/api/lookup?ip=203.0.113.10",
+        "https://example.com/api/lookup?ip=203.0.113.10",
+        "https://ipure.dev/ip/203.0.113.10",
+        "https://ipure.dev/api/lookup?ip=203.0.113.10&next=example.com",
+        "https://ipure.dev/api/lookup?ip=203.0.113.10&ip=198.51.100.2",
+        "https://ipure.dev/api/lookup",
     ):
         with pytest.raises(ValueError):
             _validate_ipure_url(url)
@@ -128,6 +137,140 @@ def test_gpt_check_summary_marks_restricted_country_after_connection() -> None:
     assert all(check["status"] == "restricted" for check in checks)
     assert all(check["text"] == "不可访问" for check in checks)
     assert all(check["ok"] is False for check in checks)
+
+
+def test_codex_probe_uses_authenticated_api_route_and_accepts_unauthorized() -> None:
+    assert GPT_PROBE_TARGETS[1]["url"] == "https://api.openai.com/v1/models"
+    responses = {
+        GPT_PROBE_TARGETS[0]["name"]: {
+            "status_code": 200,
+            "elapsed_ms": 20,
+            "ok": True,
+        },
+        GPT_PROBE_TARGETS[1]["name"]: {
+            "status_code": 401,
+            "elapsed_ms": 30,
+            "ok": True,
+        },
+    }
+
+    checks = _gpt_check_summary(responses, {"countryCode": "US"})
+
+    assert checks[1]["status"] == "normal"
+    assert checks[1]["elapsed_ms"] == 30
+    assert checks[1]["ok"] is True
+
+
+def test_profile_summary_normalizes_asn_aliases_and_encoded_whitespace() -> None:
+    summary = _profile_summary(
+        {
+            "country": "Japan&#x9;",
+            "region": " Tokyo\t",
+            "isp": "Amazon.com&#x9; Inc.",
+            "as_org": "Amazon.com&#9; Inc.",
+            "asn": "ASAS16509",
+            "asn_kind": "hosting&#9;",
+            "rpki_status": "valid&#x9;",
+            "country_code": "JP",
+            "registeredCountryCode": "US",
+            "is_residential": False,
+            "isDatacenter": True,
+        }
+    )
+
+    assert summary["location"] == "Japan Tokyo"
+    assert summary["isp"] == "Amazon.com Inc."
+    assert summary["as_org"] == "Amazon.com Inc."
+    assert summary["asn"] == 16509
+    assert summary["asn_kind_display"] == "机房/托管"
+    assert summary["rpki_status"] == "✓ Valid"
+    assert summary["native_status"] == "广播 IP (US)"
+    assert summary["is_datacenter"] is True
+    assert _normalize_asn("as as 64500") == 64500
+
+
+@pytest.mark.asyncio
+async def test_ipure_http_verification_is_non_blocking_enrichment() -> None:
+    class VerificationClient:
+        async def get(self, _url, *, timeout):
+            assert timeout > 0
+            return httpx.Response(403, json={"code": "verification_required"})
+
+    collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
+    result = await collector._request_ipure(
+        VerificationClient(),
+        _ipure_url("203.0.113.10"),
+        timeout_seconds=1,
+    )
+
+    assert result["ok"] is False
+    assert result["skipped"] is True
+    assert result["error_type"] == "EnrichmentUnavailable"
+
+
+@pytest.mark.asyncio
+async def test_ipure_request_parses_official_lookup_response() -> None:
+    class LookupClient:
+        async def get(self, url, *, timeout):
+            assert url == "https://ipure.dev/api/lookup?ip=8.8.8.8"
+            assert timeout > 0
+            return httpx.Response(
+                200,
+                json={
+                    "risk": {"purity": 78},
+                    "scenarios": [
+                        {"id": "ai", "score": 58},
+                        {"id": "streaming", "score": 77},
+                        {"id": "ecommerce", "score": 67},
+                        {"id": "email", "score": 91},
+                    ],
+                    "source": "cache",
+                    "stale": True,
+                },
+            )
+
+    collector = CoffeeCollector("http://127.0.0.1:12345", timeout_ms=1000)
+    result = await collector._request_ipure(
+        LookupClient(),
+        _ipure_url("8.8.8.8"),
+        timeout_seconds=1,
+    )
+
+    assert result["ok"] is True
+    assert result["data"] == {
+        "total": 78,
+        "ai": 58,
+        "streaming": 77,
+        "ecommerce": 67,
+        "email": 91,
+    }
+
+
+def test_ipure_unavailability_marks_result_incomplete() -> None:
+    recorded = {"attempted": True, "status_code": 200, "ok": True}
+    skipped_ipure = {
+        "attempted": True,
+        "status_code": 200,
+        "ok": False,
+        "skipped": True,
+        "error_type": "EnrichmentUnavailable",
+    }
+    requests = {
+        "page": recorded,
+        "trace": recorded,
+        "lookup": recorded,
+        "global_ping": recorded,
+        "port_scan": recorded,
+        "ping_check": recorded,
+        "related": recorded,
+        "ipure": skipped_ipure,
+    }
+
+    completeness = _completeness(requests, "203.0.113.10", {"ip": "203.0.113.10"})
+
+    assert completeness["complete"] is False
+    assert completeness["checks"]["ipure_recorded"] is False
+    assert completeness["unrecorded_requests"] == ["ipure_recorded"]
 
 
 @pytest.mark.asyncio
@@ -278,7 +421,7 @@ async def test_collect_uses_allowlisted_sources(monkeypatch) -> None:
     assert result["proxy_evidence"]["direct_fallback"] is False
     assert all(
         url.startswith("https://ip.net.coffee/")
-        or url.startswith("https://ipure.dev/ip/")
+        or url.startswith("https://ipure.dev/api/lookup?ip=")
         for url in requested
     )
     forbidden_hosts = ("chatgpt", "claude", "openai", "anthropic")

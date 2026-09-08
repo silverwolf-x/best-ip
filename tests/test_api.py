@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
 from backend.app.jobs import job_manager
-from backend.app.main import app
+from backend.app.main import app, create_app
 from backend.app.mihomo import MIHOMO_NOT_READY_MESSAGE
 from backend.app.result_store import result_store
 
@@ -36,6 +36,7 @@ def test_health_reports_application_and_core_state() -> None:
         response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["mode"] == "runner-api"
     assert isinstance(response.json()["mihomo_ready"], bool)
 
 
@@ -164,3 +165,57 @@ def test_actions_api_does_not_serve_a_second_frontend() -> None:
         response = client.get("/")
         app_script = client.get("/app.js")
     assert response.status_code == app_script.status_code == 404
+
+
+def test_local_dev_app_only_serves_api() -> None:
+    with TestClient(create_app(local_dev=True)) as client:
+        page = client.get("/")
+        app_script = client.get("/app.js")
+        site_config = client.get("/site-config.js")
+        health = client.get("/api/health")
+
+    assert page.status_code == app_script.status_code == site_config.status_code == 404
+    assert health.json()["mode"] == "local"
+    assert isinstance(health.json()["mihomo_ready"], bool)
+
+
+def test_local_dev_cors_allows_only_configured_frontend_origin() -> None:
+    frontend_origin = "http://127.0.0.1:5173"
+    with TestClient(
+        create_app(local_dev=True, local_frontend_origin=frontend_origin)
+    ) as client:
+        allowed = client.options(
+            "/api/scans",
+            headers={
+                "Origin": frontend_origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        rejected = client.options(
+            "/api/scans",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == frontend_origin
+    assert "POST" in allowed.headers["access-control-allow-methods"]
+    assert "content-type" in allowed.headers["access-control-allow-headers"].lower()
+    assert "access-control-allow-origin" not in rejected.headers
+
+
+def test_validation_error_does_not_echo_subscription_secret() -> None:
+    secret = "sensitive-subscription-token"
+    with TestClient(create_app(local_dev=True)) as client:
+        response = client.post(
+            "/api/scans",
+            json={"subscription_url": f"https://example.com/?token={secret}" + "x" * 5000},
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "请求参数无效"}
+    assert secret not in response.text

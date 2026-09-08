@@ -29,7 +29,7 @@ IPURE_SCORE_LABELS = {
 }
 GPT_PROBE_TARGETS = [
     {"name": "chatgpt.com", "url": "https://chatgpt.com/cdn-cgi/trace"},
-    {"name": "api.openai.com", "url": "https://api.openai.com/"},
+    {"name": "api.openai.com", "url": "https://api.openai.com/v1/models"},
 ]
 GPT_RESTRICTED_COUNTRIES = {"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"}
 GPT_CHECK_TIMEOUT_SECONDS = 6.0
@@ -513,14 +513,26 @@ class CoffeeCollector:
                     error="IPure 响应超过大小限制",
                     error_type="ResponseTooLarge",
                 )
-            scores = _parse_ipure_scores(body) if response.is_success else None
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            scores = _parse_ipure_scores(payload) if response.is_success else None
             error = None
             error_type = None
             if not response.is_success:
-                error = f"HTTP {response.status_code}"
-                error_type = "HTTPStatusError"
+                code = payload.get("code") if isinstance(payload, dict) else None
+                if response.status_code == 403 and code == "verification_required":
+                    error = "IPure 需要完成人机验证后才能查询"
+                    error_type = "EnrichmentUnavailable"
+                elif response.status_code == 429:
+                    error = "IPure 查询频率受限"
+                    error_type = "EnrichmentUnavailable"
+                else:
+                    error = f"HTTP {response.status_code}"
+                    error_type = "HTTPStatusError"
             elif scores is None:
-                error = "IPure 响应缺少完整评分"
+                error = "IPure API 响应缺少完整评分"
                 error_type = "ResponseParseError"
             return _ipure_request_result(
                 self.proxy_url,
@@ -531,6 +543,7 @@ class CoffeeCollector:
                 error=error,
                 error_type=error_type,
                 location=response.headers.get("location"),
+                skipped=error_type == "EnrichmentUnavailable",
             )
         except Exception as exc:
             return _ipure_request_result(
@@ -560,7 +573,7 @@ class CoffeeCollector:
                 ),
             )
             status_code = response.status_code
-            accepted = status_code in {200, 204, 301, 302}
+            accepted = _gpt_response_connected(name, status_code)
             headers = getattr(response, "headers", {})
             return {
                 "name": name,
@@ -571,7 +584,7 @@ class CoffeeCollector:
                 "target_host": name,
                 "ok": accepted,
                 "status_code": status_code,
-                "elapsed_ms": round((perf_counter() - started) * 1000) if accepted else -1,
+                "elapsed_ms": round((perf_counter() - started) * 1000),
                 "data": None,
                 "error": None if accepted else f"HTTP {status_code}",
                 "error_type": None if accepted else "HTTPStatusError",
@@ -693,7 +706,7 @@ def _validate_gpt_url(url: str, target_name: str | None = None) -> None:
 
 def _ipure_url(exit_ip: str) -> str:
     normalized = str(ipaddress.ip_address(exit_ip))
-    return f"{IPURE_ORIGIN}/ip/{quote(normalized, safe='')}"
+    return f"{IPURE_ORIGIN}/api/lookup?{urlencode({'ip': normalized})}"
 
 
 def _validate_ipure_url(url: str) -> None:
@@ -708,35 +721,36 @@ def _validate_ipure_url(url: str) -> None:
         or parsed.username
         or parsed.password
         or port is not None
-        or parsed.query
         or parsed.fragment
-        or not parsed.path.startswith("/ip/")
+        or parsed.path != "/api/lookup"
     ):
         raise ValueError(f"拒绝未允许的 IPure 请求：{url}")
-    value = unquote(parsed.path.removeprefix("/ip/"))
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if set(query) != {"ip"} or len(query["ip"]) != 1:
+        raise ValueError(f"IPure 查询必须且只能包含一个 IP 参数：{url}")
+    value = query["ip"][0]
     try:
         ipaddress.ip_address(value)
     except ValueError as exc:
         raise ValueError(f"IPure IP 参数无效：{url}") from exc
 
 
-def _parse_ipure_scores(body: bytes) -> dict[str, int] | None:
-    text = unescape(body.decode("utf-8", errors="replace"))
-    total_match = re.search(
-        r"<title[^>]*>.*?纯净度\s*(\d{1,3})/100\b",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    total = _numeric_score(int(total_match.group(1))) if total_match else None
-    scores: dict[str, int | None] = {"total": total}
-    for key, label in IPURE_SCORE_LABELS.items():
-        match = re.search(
-            rf">\s*{re.escape(label)}\s*</p>.{{0,900}}?"
-            rf"<span[^>]*class=\"[^\"]*\btnum\b[^\"]*\"[^>]*>\s*(\d{{1,3}})\s*</span>",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        scores[key] = _numeric_score(int(match.group(1))) if match else None
+def _parse_ipure_scores(payload: Any) -> dict[str, int] | None:
+    if not isinstance(payload, dict):
+        return None
+    risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
+    scenarios = payload.get("scenarios")
+    if not isinstance(scenarios, list):
+        return None
+
+    scenario_scores = {
+        item.get("id"): _numeric_score(item.get("score"))
+        for item in scenarios
+        if isinstance(item, dict) and item.get("id") in IPURE_SCORE_LABELS
+    }
+    scores: dict[str, int | None] = {"total": _numeric_score(risk.get("purity"))}
+    for key in IPURE_SCORE_LABELS:
+        scores[key] = scenario_scores.get(key)
     if any(value is None for value in scores.values()):
         return None
     return {key: int(value) for key, value in scores.items() if value is not None}
@@ -760,6 +774,7 @@ def _ipure_request_result(
     error: str | None = None,
     error_type: str | None = None,
     location: str | None = None,
+    skipped: bool = False,
 ) -> dict[str, Any]:
     return {
         "url": url,
@@ -774,6 +789,7 @@ def _ipure_request_result(
         "error": error,
         "error_type": error_type,
         "location": location,
+        "skipped": skipped,
     }
 
 
@@ -825,9 +841,17 @@ def _node_status(
 def _format_native(lookup_data: dict[str, Any]) -> dict[str, Any]:
     # 对标 Coffee IP 原生性逻辑:
     # 比较 countryCode 与 registered_country_code
-    cc_lo = str(lookup_data.get("countryCode") or "").strip().lower()
-    reg_lo = str(lookup_data.get("registered_country_code") or "").strip().lower()
-    reg_name = str(lookup_data.get("registered_country") or "").strip()
+    cc_lo = _clean_text(
+        lookup_data.get("countryCode") or lookup_data.get("country_code")
+    ).lower()
+    reg_lo = _clean_text(
+        lookup_data.get("registered_country_code")
+        or lookup_data.get("registeredCountryCode")
+    ).lower()
+    reg_name = _clean_text(
+        lookup_data.get("registered_country")
+        or lookup_data.get("registeredCountry")
+    )
     is_public_service = bool(lookup_data.get("is_public_service"))
 
     if is_public_service:
@@ -840,7 +864,7 @@ def _format_native(lookup_data: dict[str, Any]) -> dict[str, Any]:
         return {"is_native": True, "native_status": "原生 IP", "native_detail": ""}
 
     reg_up = reg_lo.upper()
-    country_up = str(lookup_data.get("country") or "").upper()
+    country_up = _clean_text(lookup_data.get("country")).upper()
     tip_more = f" ({reg_name})" if reg_name else ""
     return {
         "is_native": False,
@@ -921,7 +945,11 @@ def _asn_kind_label(asn_kind: Any) -> str:
 
 def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     residential_value = ip_result.get("isResidential")
+    if residential_value is None:
+        residential_value = ip_result.get("is_residential")
     datacenter_value = ip_result.get("is_datacenter")
+    if datacenter_value is None:
+        datacenter_value = ip_result.get("isDatacenter")
     is_residential = residential_value if isinstance(residential_value, bool) else None
     is_datacenter = datacenter_value if isinstance(datacenter_value, bool) else None
 
@@ -933,10 +961,10 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
 
     # Bogon / 广播
     is_bogon = bool(ip_result.get("is_bogon"))
-    bogon_reason = str(ip_result.get("bogon_reason") or "")
+    bogon_reason = _clean_text(ip_result.get("bogon_reason"))
 
     # RPKI 状态
-    rpki_raw = str(ip_result.get("rpki_status") or "").strip().lower()
+    rpki_raw = _clean_text(ip_result.get("rpki_status")).lower()
     if rpki_raw == "valid":
         rpki_status = "✓ Valid"
     elif rpki_raw == "invalid":
@@ -947,7 +975,7 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
         rpki_status = "未知"
 
     # ASN 及自报类型
-    asn_kind_raw = str(ip_result.get("asn_kind") or "").strip()
+    asn_kind_raw = _clean_text(ip_result.get("asn_kind"))
     asn_kind_display = _asn_kind_label(asn_kind_raw)
 
     # 人机流量画像
@@ -976,7 +1004,7 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
         traffic_profile = "未知"
 
     # 运营商类型 (company_type)
-    company_type_value = str(ip_result.get("company_type") or "").strip()
+    company_type_value = _clean_text(ip_result.get("company_type"))
     if company_type_value.lower() == "isp" or is_residential:
         company_type = "ISP（家庭宽带）"
     elif is_datacenter or company_type_value.lower() == "hosting":
@@ -1005,7 +1033,7 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     intel = ip_result.get("intelligence") if isinstance(ip_result.get("intelligence"), dict) else {}
     threats = intel.get("threats") if isinstance(intel.get("threats"), list) else []
     threat_labels = [
-        str(threat.get("label") or "")
+        _clean_text(threat.get("label"))
         for threat in threats
         if isinstance(threat, dict) and threat.get("label")
     ]
@@ -1034,11 +1062,15 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "cidr": ip_result.get("cidr") or "",
-        "rdns": ip_result.get("rdns") or "-",
-        "ai_verdict": ai_verdict.get("label") or "",
+        "cidr": _clean_text(ip_result.get("cidr")),
+        "rdns": _clean_text(ip_result.get("rdns"), default="-"),
+        "ai_verdict": _clean_text(ai_verdict.get("label")),
         "location": _location(ip_result),
-        "isp": ip_result.get("isp") or ip_result.get("asOrganization") or "",
+        "isp": _clean_text(
+            ip_result.get("isp")
+            or ip_result.get("asOrganization")
+            or ip_result.get("as_org")
+        ),
         "score": _numeric_score(ip_result.get("trust_score")),
         "is_residential": is_residential,
         "is_datacenter": is_datacenter,
@@ -1058,8 +1090,12 @@ def _profile_summary(ip_result: dict[str, Any]) -> dict[str, Any]:
         **risk_values,
         "security_status": security_status,
         "threat_tags": threat_labels,
-        "asn": ip_result.get("asn"),
-        "as_org": ip_result.get("asOrganization") or ip_result.get("isp") or "",
+        "asn": _normalize_asn(ip_result.get("asn")),
+        "as_org": _clean_text(
+            ip_result.get("asOrganization")
+            or ip_result.get("as_org")
+            or ip_result.get("isp")
+        ),
     }
 
 
@@ -1088,13 +1124,13 @@ def _global_ping_summary(response: dict[str, Any]) -> list[dict[str, Any]]:
         if ok:
             status = f"{elapsed_ms} ms"
         elif target["node"] in timeouts:
-            status = "超时 (-1ms)"
+            status = "超时"
         elif target["node"] in pending:
-            status = "等待 (-1ms)"
+            status = "等待"
         elif response.get("attempted"):
-            status = "未返回 (-1ms)"
+            status = "未返回"
         else:
-            status = "未检测 (-1ms)"
+            status = "未检测"
         results.append(
             {
                 "code": target["code"],
@@ -1139,6 +1175,12 @@ def _ping_check_summary(response: dict[str, Any]) -> dict[str, Any] | None:
 _GPT_ACCEPTED_STATUS_CODES = {200, 204, 301, 302}
 
 
+def _gpt_response_connected(name: str, status_code: int) -> bool:
+    if name == "api.openai.com":
+        return status_code in {*_GPT_ACCEPTED_STATUS_CODES, 401}
+    return status_code in _GPT_ACCEPTED_STATUS_CODES
+
+
 def _gpt_overall_status(checks: list[dict[str, Any]]) -> str:
     statuses = [str(check.get("status")) for check in checks]
     if not statuses or all(status == "failed" for status in statuses):
@@ -1174,7 +1216,9 @@ def _gpt_check_summary(
                 by_name[name] = response
 
     country_code = (
-        str(lookup_data.get("countryCode") or "").strip().upper()
+        _clean_text(
+            lookup_data.get("countryCode") or lookup_data.get("country_code")
+        ).upper()
         if isinstance(lookup_data, dict)
         else str(lookup_data or "").strip().upper()
     )
@@ -1190,7 +1234,11 @@ def _gpt_check_summary(
             if _is_finite_number(elapsed) and elapsed >= 0
             else -1
         )
-        connected = status_code in _GPT_ACCEPTED_STATUS_CODES and elapsed_ms >= 0
+        connected = (
+            status_code is not None
+            and _gpt_response_connected(target["name"], status_code)
+            and elapsed_ms >= 0
+        )
         if country_code in GPT_RESTRICTED_COUNTRIES and connected:
             status = "restricted"
             text = "不可访问"
@@ -1296,10 +1344,31 @@ def _request_recorded(result: dict[str, Any]) -> bool:
 
 def _location(geo: dict[str, Any]) -> str:
     return " ".join(
-        str(geo.get(key, "")).strip()
+        _clean_text(geo.get(key))
         for key in ("country", "region", "city")
-        if str(geo.get(key, "")).strip()
+        if _clean_text(geo.get(key))
     )
+
+
+def _clean_text(value: Any, *, default: str = "") -> str:
+    text = unescape(str(value or ""))
+    normalized = re.sub(r"\s+", " ", text).strip()
+    return normalized or default
+
+
+def _normalize_asn(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
+    else:
+        normalized = re.sub(r"^(?:AS\s*)+", "", _clean_text(value), flags=re.IGNORECASE)
+        if not normalized.isdigit():
+            return None
+        number = int(normalized)
+    return number if 0 < number <= 4_294_967_295 else None
 
 
 def _is_finite_number(value: Any) -> bool:
