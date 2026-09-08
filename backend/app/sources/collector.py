@@ -25,6 +25,7 @@ from .http import (
     COFFEE_ORIGIN,
     COFFEE_PAGE_URL,
     COFFEE_TRACE_URL,
+    IPURE_HOST,
     IPURE_ORIGIN,
     IPURE_TIMEOUT_SECONDS,
     ProxyTransport,
@@ -228,7 +229,10 @@ class CoffeeCollector:
                 "target_origin": COFFEE_ORIGIN,
                 "enrichment_origin": IPURE_ORIGIN,
                 "trust_env": False,
-                "direct_fallback": False,
+                "direct_fallback": bool(ipure.get("direct_fallback")),
+                "ipure_verification_session_used": bool(
+                    ipure.get("verification_session_used")
+                ),
             },
             "completeness": completeness,
             "requests": {
@@ -327,7 +331,8 @@ def _combined_error(*results: dict[str, Any]) -> str | None:
     errors = [
         result.get("error")
         for result in results
-        if result.get("error") and not result.get("skipped")
+        if result.get("error")
+        and (not result.get("skipped") or result.get("target_host") == IPURE_HOST)
     ]
     return "；".join(dict.fromkeys(errors)) or None
 

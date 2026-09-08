@@ -28,10 +28,10 @@ from backend.app.sources.ipure import _ipure_url, _parse_ipure_scores
 
 class StubClient:
     @asynccontextmanager
-    async def stream(self, method, url, *, timeout):
+    async def stream(self, method, url, *, timeout, headers=None):
         assert method == "GET"
         response = await self.get(url, timeout=timeout)
-        response.request = httpx.Request(method, url)
+        response.request = httpx.Request(method, url, headers=headers)
         yield response
 
 
@@ -200,7 +200,9 @@ def test_profile_summary_normalizes_asn_aliases_and_encoded_whitespace() -> None
 
 
 @pytest.mark.asyncio
-async def test_ipure_http_verification_is_non_blocking_enrichment() -> None:
+async def test_ipure_http_verification_is_non_blocking_enrichment(monkeypatch) -> None:
+    monkeypatch.delenv("BEST_IP_IPURE_COOKIE", raising=False)
+
     class VerificationClient(StubClient):
         async def get(self, _url, *, timeout):
             assert timeout > 0

@@ -89,8 +89,10 @@ Disk layout: `{job_id}/progress.json`, `nodes/0000.json` onward, `manifest.json`
 Files are atomically written. Exactly one terminal record per actual node, with
 status success/partial/failed. Failed records require a safe error and null exit IP.
 Success and partial require a valid IP and confirmed workspace Mihomo proxy
-evidence, loopback HTTP port, no trust_env/direct fallback, and five true base
-collection checks. Retry metadata, when present, must be internally consistent.
+evidence, loopback HTTP port, no trust_env, and five true base collection checks.
+IPure may use an explicitly verified session fallback; such records must set both
+`direct_fallback:true` and `ipure_verification_session_used:true`. Retry metadata,
+when present, must be internally consistent.
 Required and optional record fields are enforced by Python's ResultStore validator;
 fixtures carry the minimal valid set, not a real enrichment response.
 

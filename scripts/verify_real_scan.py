@@ -362,7 +362,13 @@ async def verify() -> None:
                     raise RuntimeError(f"节点 {index} 缺少 selector 身份确认")
                 if (
                     evidence.get("trust_env") is not False
-                    or evidence.get("direct_fallback") is not False
+                    or (
+                        evidence.get("direct_fallback") is not False
+                        and not (
+                            evidence.get("direct_fallback") is True
+                            and evidence.get("ipure_verification_session_used") is True
+                        )
+                    )
                     or evidence.get("transport") != "workspace_mihomo_mixed_port"
                     or evidence.get("selected_proxy") != record.get("node")
                 ):
@@ -372,6 +378,7 @@ async def verify() -> None:
                 trace = requests.get("trace") if isinstance(requests, dict) else None
                 lookup = requests.get("lookup") if isinstance(requests, dict) else None
                 ipure = requests.get("ipure") if isinstance(requests, dict) else None
+                ipure_direct_fallback = evidence.get("direct_fallback") is True
                 lookup_data = lookup.get("data") if isinstance(lookup, dict) else None
                 if (
                     not isinstance(page, dict)
@@ -394,10 +401,15 @@ async def verify() -> None:
                 if (
                     not isinstance(ipure, dict)
                     or ipure.get("attempted") is not True
-                    or ipure.get("via_mihomo") is not True
-                    or ipure.get("proxy_url") != evidence.get("proxy_url")
+                    or ipure.get("via_mihomo") is not (not ipure_direct_fallback)
+                    or (
+                        ipure.get("proxy_url") != evidence.get("proxy_url")
+                        if not ipure_direct_fallback
+                        else ipure.get("proxy_url") is not None
+                    )
                     or ipure.get("target_host") != IPURE_HOST
                     or ipure.get("url") != _ipure_url(exit_ip)
+                    or ipure.get("verification_session_used") is not ipure_direct_fallback
                 ):
                     raise RuntimeError(f"节点 {index} IPure 代理证据无效")
                 ipure_data = ipure.get("data")
@@ -416,7 +428,12 @@ async def verify() -> None:
                         or record.get("score") != ipure_data["total"]
                     ):
                         raise RuntimeError(f"节点 {index} IPure 评分证据无效")
-                elif record.get("status") != "partial" or record.get("score") is not None:
+                elif (
+                    record.get("status") != "partial"
+                    or record.get("score") is not None
+                    or not str(ipure.get("error") or "").strip()
+                    or str(ipure.get("error")) not in str(record.get("error") or "")
+                ):
                     raise RuntimeError(f"节点 {index} IPure 缺失未标记为部分")
                 completeness = record.get("completeness")
                 checks = completeness.get("checks") if isinstance(completeness, dict) else None

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import json
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlencode
@@ -15,6 +17,7 @@ from .http import (
     ResponseTooLarge,
     _validate_ipure_url,
 )
+from .ipure_config import load_ipure_headers
 from .values import _numeric_score
 
 IPURE_SCORE_LABELS = {
@@ -33,11 +36,26 @@ async def request(
     timeout_seconds: float,
 ) -> dict[str, Any]:
     _validate_ipure_url(url)
+    verification_cookie = ""
     started = perf_counter()
     try:
-        response = await transport.get(
-            client, url, timeout=timeout_seconds, max_bytes=IPURE_MAX_RESPONSE_BYTES
-        )
+        verification_cookie = _verification_cookie()
+        for attempt in range(3):
+            remaining = timeout_seconds - (perf_counter() - started)
+            if remaining <= 0:
+                raise TimeoutError
+            response = await transport.get(
+                client, url, timeout=remaining, max_bytes=IPURE_MAX_RESPONSE_BYTES
+            )
+            if response.status_code != 429 or attempt == 2:
+                break
+            delay = float(2**attempt)
+            retry_after = response.headers.get("Retry-After", "")
+            if retry_after.isdigit():
+                delay = max(delay, float(retry_after))
+            if delay >= timeout_seconds - (perf_counter() - started):
+                break
+            await asyncio.sleep(delay)
         if 300 <= response.status_code < 400:
             return _ipure_request_result(
                 transport.proxy_url,
@@ -55,6 +73,14 @@ async def request(
         scores = _parse_ipure_scores(payload) if response.is_success else None
         error = None
         error_type = None
+        if not response.is_success and verification_cookie and response.status_code == 403:
+            fallback = await _direct_request(
+                url,
+                timeout_seconds=timeout_seconds,
+                verification_cookie=verification_cookie,
+            )
+            if fallback is not None:
+                return fallback
         if not response.is_success:
             if response.status_code == 403:
                 error = "IPure 需要完成人机验证后才能查询"
@@ -88,6 +114,23 @@ async def request(
             error="IPure 响应超过大小限制",
             error_type="ResponseTooLarge",
         )
+    except (httpx.ConnectError, httpx.TimeoutException, TimeoutError):
+        if verification_cookie:
+            fallback = await _direct_request(
+                url,
+                timeout_seconds=timeout_seconds,
+                verification_cookie=verification_cookie,
+            )
+            if fallback is not None:
+                return fallback
+        return _ipure_request_result(
+            transport.proxy_url,
+            url,
+            started,
+            error="IPure 连接失败，请检查代理出口或稍后重试",
+            error_type="EnrichmentUnavailable",
+            skipped=True,
+        )
     except Exception as exc:
         return _ipure_request_result(
             transport.proxy_url,
@@ -96,6 +139,63 @@ async def request(
             error=exc.__class__.__name__,
             error_type=exc.__class__.__name__,
         )
+
+
+async def _direct_request(
+    url: str,
+    *,
+    timeout_seconds: float,
+    verification_cookie: str,
+) -> dict[str, Any] | None:
+    started = perf_counter()
+    try:
+        _validate_ipure_url(url)
+        headers = load_ipure_headers()
+        if "cookie" not in headers:
+            headers["Cookie"] = verification_cookie
+        async with (
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+                headers=headers,
+            ) as client,
+            client.stream("GET", url) as response,
+        ):
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > IPURE_MAX_RESPONSE_BYTES:
+                    return None
+                body.extend(chunk)
+            if not response.is_success:
+                return None
+            try:
+                payload = json.loads(body)
+            except ValueError:
+                return None
+        scores = _parse_ipure_scores(payload)
+        if scores is None:
+            return None
+        return _ipure_request_result(
+            None,
+            url,
+            started,
+            status_code=response.status_code,
+            data=scores,
+            location=response.headers.get("location"),
+            via_mihomo=False,
+            direct_fallback=True,
+            verification_session_used=True,
+        )
+    except (httpx.HTTPError, TimeoutError, ValueError):
+        return None
+
+
+def _verification_cookie() -> str:
+    cookie = load_ipure_headers().get("cookie", "").strip()
+    if not cookie or len(cookie) > 8192 or "\r" in cookie or "\n" in cookie:
+        return ""
+    return cookie
 
 
 def _ipure_url(exit_ip: str) -> str:
@@ -140,11 +240,14 @@ def _ipure_request_result(
     error_type: str | None = None,
     location: str | None = None,
     skipped: bool = False,
+    via_mihomo: bool = True,
+    direct_fallback: bool = False,
+    verification_session_used: bool = False,
 ) -> dict[str, Any]:
     return {
         "url": url,
         "attempted": True,
-        "via_mihomo": True,
+        "via_mihomo": via_mihomo,
         "proxy_url": proxy_url,
         "target_host": IPURE_HOST,
         "ok": status_code is not None and 200 <= status_code < 300 and error is None,
@@ -155,4 +258,6 @@ def _ipure_request_result(
         "error_type": error_type,
         "location": location,
         "skipped": skipped,
+        "direct_fallback": direct_fallback,
+        "verification_session_used": verification_session_used,
     }

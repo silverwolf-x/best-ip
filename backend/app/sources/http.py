@@ -6,13 +6,15 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import httpx
 
+from .ipure_config import load_ipure_headers
+
 COFFEE_HOST = "ip.net.coffee"
 COFFEE_ORIGIN = f"https://{COFFEE_HOST}"
 COFFEE_PAGE_URL = f"{COFFEE_ORIGIN}/ip/"
 COFFEE_TRACE_URL = f"{COFFEE_ORIGIN}/cdn-cgi/trace"
 IPURE_HOST = "ipure.dev"
 IPURE_ORIGIN = f"https://{IPURE_HOST}"
-IPURE_TIMEOUT_SECONDS = 30.0
+IPURE_TIMEOUT_SECONDS = 8.0
 IPURE_MAX_RESPONSE_BYTES = 1_000_000
 GPT_PROBE_TARGETS = [
     {"name": "chatgpt.com", "url": "https://chatgpt.com/cdn-cgi/trace"},
@@ -75,7 +77,8 @@ class ProxyTransport:
     ) -> httpx.Response:
         budget = timeout.read if isinstance(timeout, httpx.Timeout) else timeout
         async with asyncio.timeout(budget):
-            async with client.stream("GET", url, timeout=timeout) as response:
+            headers = load_ipure_headers() if urlsplit(url).hostname == IPURE_HOST else None
+            async with client.stream("GET", url, timeout=timeout, headers=headers) as response:
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     if len(body) + len(chunk) > max_bytes:

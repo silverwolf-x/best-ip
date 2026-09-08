@@ -224,7 +224,13 @@ def validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
             or parsed_proxy.username
             or parsed_proxy.password
             or evidence.get("trust_env") is not False
-            or evidence.get("direct_fallback") is not False
+            or (
+                evidence.get("direct_fallback") is not False
+                and not (
+                    evidence.get("direct_fallback") is True
+                    and evidence.get("ipure_verification_session_used") is True
+                )
+            )
             or not isinstance(checks, dict)
             or not all(
                 checks.get(key) is True

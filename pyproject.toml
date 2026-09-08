@@ -25,6 +25,7 @@ package = false
 asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["integration: tests requiring live external services"]
 
 [tool.ruff]
 line-length = 100

@@ -80,13 +80,23 @@ async def _resolve_with_public_doh(
                     params={"name": hostname, "type": "AAAA"},
                     headers={"Accept": "application/dns-json"},
                 ),
+                return_exceptions=True,
             )
             addresses = []
             for response in responses:
-                response.raise_for_status()
-                for item in response.json().get("Answer", []):
-                    if item.get("type") in {1, 28} and item.get("data"):
+                if isinstance(response, Exception) or response.status_code >= 400:
+                    continue
+                try:
+                    answers = response.json().get("Answer", [])
+                except (ValueError, TypeError):
+                    continue
+                for item in answers:
+                    if not isinstance(item, dict) or item.get("type") not in {1, 28}:
+                        continue
+                    try:
                         addresses.append(ipaddress.ip_address(item["data"]))
+                    except (KeyError, ValueError, TypeError):
+                        continue
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         raise SubscriptionError("无法通过公共 DNS 核验订阅地址") from exc
 

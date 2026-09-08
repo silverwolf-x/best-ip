@@ -62,6 +62,17 @@ jobs:
       - name: Sync locked dependencies
         run: uv sync --frozen --no-dev
 
+      - name: Materialize IPure request configuration
+        env:
+          IPURE_CONFIG_YAML: ${{ secrets.IPURE_CONFIG_YAML }}
+        shell: bash
+        run: |
+          test -n "$IPURE_CONFIG_YAML"
+          mkdir -p config
+          umask 077
+          printf '%s\n' "$IPURE_CONFIG_YAML" > config/ipure.yml
+          uv run --no-sync python -c 'from backend.app.sources.ipure_config import load_ipure_headers; headers = load_ipure_headers(); assert headers.get("cookie"), "IPure verification cookie is required"'
+
       - name: Restore pinned Mihomo archive
         uses: actions/cache@v4
         with:
@@ -122,5 +133,5 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/scan-private.pem" "$RUNNER_TEMP/subscription-url"
+          rm -f "$RUNNER_TEMP/scan-private.pem" "$RUNNER_TEMP/subscription-url" config/ipure.yml
           rm -rf runtime/mihomo

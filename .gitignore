@@ -19,6 +19,7 @@ best-ip-results-*.csv
 .idea/
 .claude/
 # Local configuration
+config/ipure.yml
 .env
 .dev.vars
 .dev.vars.*
