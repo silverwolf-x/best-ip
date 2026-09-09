@@ -24,9 +24,7 @@ export function normalizeImportedResult(raw, index, source) {
     result.score = parseImportedNumber(result.score);
   }
   result.ipure_scores = normalizeIpureScores(result.ipure_scores, result.score);
-  if (result.coffee_score !== null && result.coffee_score !== undefined && result.coffee_score !== "") {
-    result.coffee_score = parseImportedNumber(result.coffee_score);
-  }
+  result.coffee_score = parseImportedNumber(result.coffee_score);
   if (result.elapsed_ms !== null && result.elapsed_ms !== undefined && result.elapsed_ms !== "") {
     result.elapsed_ms = parseImportedNumber(result.elapsed_ms) ?? 0;
   }
@@ -153,10 +151,17 @@ export function searchableResultText(result) {
   resultSearchIndex.set(result, text);
   return text;
 }
-export function compareResults(left, right, sortKey = "score", sortDirection = "desc") {
+export function compareResults(left, right, sortKey = "coffee_score", sortDirection = "desc") {
   const direction = sortDirection === "asc" ? 1 : -1;
   const leftValue = left[sortKey];
   const rightValue = right[sortKey];
+  if (sortKey === "coffee_score" || sortKey === "score") {
+    const leftScore = parseImportedNumber(leftValue);
+    const rightScore = parseImportedNumber(rightValue);
+    if (leftScore === null) return rightScore === null ? 0 : 1;
+    if (rightScore === null) return -1;
+    return (leftScore - rightScore) * direction;
+  }
   if (typeof leftValue === "number" || typeof rightValue === "number") return ((leftValue ?? -1) - (rightValue ?? -1)) * direction;
   return String(leftValue || "").localeCompare(String(rightValue || ""), "zh-CN", { numeric: true, sensitivity: "base" }) * direction;
 }
@@ -167,7 +172,7 @@ export function normalizeUnavailableLatencyStatus(value, fallback) {
 export function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
-export function filterResults(results, { query = "", status = "all", columnFilters = {}, sortKey = "score", sortDirection = "desc" } = {}) {
+export function filterResults(results, { query = "", status = "all", columnFilters = {}, sortKey = "coffee_score", sortDirection = "desc" } = {}) {
  const globalStatus = status;
  const cf = columnFilters;
  query = query.trim().toLocaleLowerCase("zh-CN");

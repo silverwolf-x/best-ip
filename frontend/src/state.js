@@ -1,7 +1,7 @@
 import { normalizeImportedResult } from "./results.js";
 
 export function createState() {
-  return { job: null, snapshot: null, results: [], scanning: false, cancelling: false, imported: false, importSource: "", error: "", sortKey: "score", sortDirection: "desc", activeDetailResult: null, detailGeneration: 0, columnFilters: { node: "", score: "", status: "", exit_ip: "", isp: "", native: "", security: "", gpt: "", ping: "" } };
+  return { job: null, snapshot: null, results: [], scanning: false, cancelling: false, imported: false, importSource: "", error: "", sortKey: "coffee_score", sortDirection: "desc", activeDetailResult: null, detailGeneration: 0, columnFilters: { node: "", score: "", status: "", exit_ip: "", isp: "", native: "", security: "", gpt: "", ping: "" } };
 }
 
 export function resetScan(state) {

@@ -9,11 +9,6 @@ function renderRows() {
   const fragment = document.createDocumentFragment();
   rows.forEach((result) => fragment.append(createResultRow(result)));
   elements.resultBody.replaceChildren(fragment);
-  if (elements.resultCards) {
-    const cards = document.createDocumentFragment();
-    rows.forEach((result) => cards.append(createResultCard(result)));
-    elements.resultCards.replaceChildren(cards);
-  }
   elements.emptyResults.hidden = rows.length > 0;
   const emptyTitle = elements.emptyResults.querySelector(".empty-title");
   const emptyDesc = elements.emptyResults.querySelector(".empty-desc");
@@ -38,41 +33,6 @@ function scheduleRenderRows() {
     renderFrame = null;
     renderRows();
   });
-}
-function createResultCard(result) {
-  const cells = Array.from(createResultRow(result).children);
-  const card = document.createElement("article");
-  card.className = "node-card card";
-  card._bestIpResult = result;
-  const header = document.createElement("div");
-  header.className = "node-card-header";
-  header.append(...cells[0].childNodes, ...cells[3].childNodes);
-  const hero = document.createElement("div");
-  hero.className = "node-card-hero";
-  hero.append(...cells[4].childNodes);
-  const score = document.createElement("div");
-  score.className = "node-card-score";
-  const label = document.createElement("span");
-  label.textContent = "IPure 总分";
-  score.append(label, ...cells[1].childNodes);
-  hero.append(score);
-  const details = document.createElement("dl");
-  details.className = "node-card-details";
-  for (const [index, title] of [[5, "服务商"], [6, "网络属性"], [2, "场景评分"], [7, "安全指标"], [8, "GPT · Codex"], [9, "全球 Ping"], [10, "检测耗时"]]) {
-    const term = document.createElement("dt");
-    term.textContent = title;
-    const value = document.createElement("dd");
-    value.append(...cells[index].childNodes);
-    details.append(term, value);
-  }
-  card.append(header, hero, details);
-  if (result.error) {
-    const error = document.createElement("p");
-    error.className = "node-card-error";
-    error.textContent = result.error;
-    card.append(error);
-  }
-  return card;
 }
 function createResultRow(result) {
   const row = document.createElement("tr");
@@ -122,6 +82,15 @@ function createResultRow(result) {
       container.append(chip);
     }
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
+  });
+  appendTextCell(row, "", (cell) => {
+    const score = result.coffee_score;
+    const badge = document.createElement("span");
+    const scoreClass = !Number.isFinite(score) ? "score-none" : score >= 75 ? "score-great" : score >= 45 ? "score-good" : "score-bad";
+    badge.className = `score-pill ${scoreClass}`;
+    badge.textContent = Number.isFinite(score) ? String(score) : "—";
+    badge.title = Number.isFinite(score) ? "Coffee 评分" : "暂无 Coffee 评分";
+    cell.replaceChildren(badge);
   });
   appendTextCell(row, "", (cell) => {
     const badge = document.createElement("span");
@@ -331,5 +300,5 @@ function appendTextCell(row, text, configure) {
   if (configure) configure(cell);
   row.append(cell);
 }
-return { renderRows, scheduleRenderRows, createResultRow, createResultCard, createMiniGptBar, createMiniPingBar };
+return { renderRows, scheduleRenderRows, createResultRow, createMiniGptBar, createMiniPingBar };
 }

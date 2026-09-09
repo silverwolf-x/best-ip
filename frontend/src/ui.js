@@ -38,10 +38,6 @@ const elements = {
   importFileInput: document.querySelector("#importFileInput"),
   resultsToolbar: document.querySelector("#resultsToolbar"),
   resultBody: document.querySelector("#resultBody"),
-  resultCards: document.querySelector("#resultCards"),
-  resultTable: document.querySelector("#resultTable"),
-  cardViewButton: document.querySelector("#cardViewButton"),
-  tableViewButton: document.querySelector("#tableViewButton"),
   emptyResults: document.querySelector("#emptyResults"),
   detailDialog: document.querySelector("#detailDialog"),
   detailTitle: document.querySelector("#detailTitle"),
@@ -122,19 +118,10 @@ document.querySelectorAll(".th-filter").forEach((input) => {
   });
 });
 
-function setResultView(cards) {
-  elements.resultCards.hidden = !cards;
-  elements.resultTable.hidden = cards;
-  elements.cardViewButton.setAttribute("aria-pressed", String(cards));
-  elements.tableViewButton.setAttribute("aria-pressed", String(!cards));
-}
-elements.cardViewButton?.addEventListener("click", () => setResultView(true));
-elements.tableViewButton?.addEventListener("click", () => setResultView(false));
-
 async function handleResultClick(event) {
   const target = event.target;
   if (!target?.closest) return;
-  const result = (target.closest("tr") || target.closest(".node-card"))?._bestIpResult;
+  const result = target.closest("tr")?._bestIpResult;
   if (!result) return;
   if (target.closest(".node-name-btn")) {
     openDetails(result);
@@ -152,7 +139,6 @@ async function handleResultClick(event) {
   }
 }
 elements.resultBody.addEventListener("click", handleResultClick);
-elements.resultCards?.addEventListener("click", handleResultClick);
 
 elements.closeDialog.addEventListener("click", () => elements.detailDialog.close());
 elements.detailDialog.addEventListener("close", () => {

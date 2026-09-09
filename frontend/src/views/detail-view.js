@@ -23,6 +23,8 @@ function renderDetails(result) {
   headSection.className = "merged-card-section";
   const scoreVal = result.score != null ? Number(result.score) : null;
   const scoreBadgeCls = scoreVal == null ? "score-none" : scoreVal >= 75 ? "score-great" : scoreVal >= 45 ? "score-good" : "score-bad";
+  const coffeeScore = Number.isFinite(result.coffee_score) ? result.coffee_score : null;
+  const coffeeBadgeCls = coffeeScore == null ? "score-none" : coffeeScore >= 75 ? "score-great" : coffeeScore >= 45 ? "score-good" : "score-bad";
   const ipureScores = normalizeIpureScores(result.ipure_scores, result.score);
   const ipureScoreChips = IPURE_SCORE_LABELS
     .filter(([key]) => ipureScores[key] != null)
@@ -44,6 +46,10 @@ function renderDetails(result) {
           <span class="chip ${String(result.rpki_status || "").includes("Valid") ? "chip-ok" : "chip-bad"}">RPKI: ${escapeHtml(result.rpki_status || "未知")}</span>
         </div>
         ${ipureScoreChips ? `<div class="modal-tag-row">${ipureScoreChips}</div>` : ""}
+      </div>
+      <div class="modal-score-box ${coffeeBadgeCls}">
+        <span class="modal-score-lbl">Coffee 评分</span>
+        <strong class="modal-score-num">${coffeeScore ?? "—"}</strong>
       </div>
       <div class="modal-score-box ${scoreBadgeCls}">
         <span class="modal-score-lbl">IPure 总分</span>

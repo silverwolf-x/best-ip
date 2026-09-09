@@ -5,19 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="通过工作区 Mihomo 逐节点采集 Coffee 网络画像与 IPure 场景评分">
   <title>Best IP · 节点质量检测</title>
-  <link rel="stylesheet" href="./styles.css?v=20260909-d53">
-  <script src="./site-config.js?v=20260909-d53" defer></script>
-  <script src="./action-client.js?v=20260909-d53" defer></script>
-
-  <script src="./zip-reader.js?v=20260909-d53" defer></script>
-  <script src="./app.js?v=20260909-d53" defer></script>
+  <link rel="stylesheet" href="./styles.css?v=20260909-coffee-2">
+  <script src="./site-config.js?v=20260909-coffee-2"></script>
+  <script type="module" src="./src/main.js"></script>
 </head>
 <body>
   <div class="container">
     <nav class="nav">
       <div class="nav-scroll"><a href="./" class="active" aria-current="page">IP 节点质量检测</a></div>
       <div class="nav-tools">
-        <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">0/0</strong></div>
+        <div id="scanStatusBadge" class="scan-status-badge" hidden><span class="pulse-dot"></span><span id="scanStatusText">准备中</span><strong id="scanProgressCount">—/—</strong></div>
         <span id="healthStatus" class="health" aria-live="polite">检查后端...</span>
         <button id="themeButton" class="icon-btn" type="button" aria-label="切换主题" title="切换主题">◐</button>
       </div>
@@ -25,11 +22,12 @@
 
     <header class="page-header">
       <div class="ip-section-header"><h1>Coffee 网络画像 · IPure 场景评分</h1></div>
-      <p class="desc">所有节点经独立工作区 Mihomo 并发检测，采集 Coffee 网络画像并查询 IPure 总分及四项场景评分；扫描期间展示 Actions Job/Step 进度，全部结束并校验终态 artifact 后统一展示。</p>
+      <p class="desc">同时查看 Coffee 评分、IPure 总分与四项场景评分。节点默认按 Coffee 评分从高到低排列，缺失评分显示为 —。</p>
     </header>
 
     <form id="scanForm" class="search-bar">
       <div class="input-wrap">
+        <label class="sr-only" for="subscriptionUrl">Mihomo YAML 订阅链接</label>
         <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴 Mihomo YAML 订阅链接 (https://...)" required>
         <button id="revealButton" class="reveal-btn" type="button" aria-label="切换显示">👁️</button>
       </div>
@@ -76,7 +74,7 @@
       <p class="import-hint">可点击“导入结果”选择文件，也可将之前导出的 .json / .csv 拖拽到此处</p>
     </section>
 
-    <section class="card table-container">
+    <section id="resultTable" class="card table-container" aria-label="节点评分对比表格" tabindex="0">
       <table class="main-table">
         <thead>
           <tr class="header-titles">
