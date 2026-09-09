@@ -1,5 +1,0 @@
-{
-  "environment_failure": {"id": "contract-request", "status": "failed", "phase": "failed", "total": 0, "completed": 0, "success_count": 0, "partial_count": 0, "failed_count": 0, "manifest_ready": false, "cleanup_confirmed": true, "error": "Mihomo runtime unavailable", "results": []},
-  "cancelled": {"id": "contract-request", "status": "cancelled", "phase": "cancelled", "total": 1, "completed": 0, "success_count": 0, "partial_count": 0, "failed_count": 0, "manifest_ready": false, "cleanup_confirmed": true, "error": null, "results": []},
-  "invalid_artifact": {"mutation": "result_sha256", "value": "0000000000000000000000000000000000000000000000000000000000000000", "accepted": false}
-}
