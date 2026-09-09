@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Skill(pua)",
-      "Skill(pua:*)"
-    ]
-  },
-  "enabledPlugins": {}
-}

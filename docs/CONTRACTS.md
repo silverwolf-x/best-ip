@@ -1,13 +1,13 @@
-# Frozen contracts (P0, 2026-09-08)
+# Runtime contracts
 
-This describes implementation before the PLAN.md refactor, not a new schema.
+This describes the local API, production CLI and Worker gateway contracts.
 Fixtures are synthetic, credential-free examples, not evidence of a real scan.
 `records.json` has a base node plus shallow case overrides; both languages
 materialize the same records. The documentation IP is deliberately non-production.
 
 ## Entrypoints and boundaries
 
-- Local: `uv run python scripts/dev.py` (also `npm run dev`), optional
+- Local: `uv run --no-dev python scripts/dev.py` (also `npm run dev`), optional
   `--port`, `--frontend-port`, `--no-open`, `--no-reload`. Separate loopback
   services default to frontend 5173 and API 8000 and select free ports independently.
   `/site-config.js` supplies `window.BEST_IP_CONFIG` with local mode and actual API base.
@@ -17,9 +17,9 @@ materialize the same records. The documentation IP is deliberately non-productio
   Windows launcher disables reload; health checks file existence, not process creation.
 - Production: Worker Static Assets + Access -> GitHub App -> fixed
   `silverwolf-x/best-ip`, `main`, `.github/workflows/scan.yml`.
-  P0 workflow decrypts with `scripts/decrypt_subscription.mjs`, starts loopback
-  Uvicorn, runs `scripts/verify_real_scan.py`, then `scripts/sanitize_action_artifact.py`.
-  A direct production CLI is a later migration, not present at P0.
+  The workflow decrypts with `scripts/decrypt_subscription.mjs`, then runs
+  `scripts/run_scan.py` directly against the shared scan core. No HTTP server or
+  acceptance script runs in production. See [CLI.md](CLI.md) for arguments and exits.
 - `npm run dry-run` checks bundling; `npm run deploy` publishes. Neither unit
   tests nor dry-run prove real Mihomo or Actions execution.
 
@@ -46,8 +46,8 @@ completed,success_count,partial_count,failed_count,current_node,manifest_ready,
 cleanup_confirmed,execution_mode,error,results`. Status values include queued,
 preparing, running, completed, failed, cancelled. Persisted progress uses
 `job_id` and `phase` (currently human-readable message), not HTTP `id/message`.
-Lifecycle fixtures describe minimum failure/cancellation facts, not a promise
-that environment failures already have structured codes.
+Lifecycle fixtures describe minimum failure/cancellation facts; structured scan
+errors are defined in `backend/app/scan/errors.py`.
 
 ## Gateway HTTP and dispatch
 
@@ -112,11 +112,11 @@ Sanitizer rejects credential keys, credential-bearing URLs and subscription valu
 Browser checks ZIP paths, duplicate entries, stored/deflate methods, CRC and bounded
 sizes (50 MiB compressed, 100 MiB decompressed), digest, identity and aggregate facts.
 
-Important P0 differences (recorded, not silently fixed):
+Validation boundaries:
 
-1. Browser ZIP validation accepts failed-with-IP and missing proxy evidence;
-   Python rejects both. Shared fixtures explicitly record both expectations.
-   JS checks identity/status/summary/counts, not all Python node rules.
+1. Python and browser validators reject failed records with an exit IP and
+   successful records missing proxy evidence. Shared fixtures exercise both
+   implementations; browser validation also applies to local JSON imports.
 2. `status.usable` means zero failed AND zero partial nodes in sanitizer/browser.
    Partial artifacts are structurally accepted but usable=false. An all-failed
    manifest is structurally complete yet unusable; workflow success is not node success.
@@ -130,12 +130,12 @@ Important P0 differences (recorded, not silently fixed):
 | Local | `BEST_IP_MIHOMO_PATH` runtime/mihomo/mihomo(.exe); `BEST_IP_LOCAL_DEV` false; `BEST_IP_LOCAL_FRONTEND_ORIGIN` unset; `BEST_IP_OUTBOUND_INTERFACE` unset |
 | Limits | `BEST_IP_SUBSCRIPTION_MAX_BYTES` 5242880; `BEST_IP_MAX_NODES` 500; `BEST_IP_MAX_PARALLEL_JOBS` 2; `BEST_IP_MAX_PARALLEL_NODES` 8; `BEST_IP_MAX_NODE_ATTEMPTS` 3; `BEST_IP_NODE_RETRY_BACKOFF_MS` 500; `BEST_IP_PAGE_TIMEOUT_MS` 45000; `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` 30 |
 | Download | `BEST_IP_MIHOMO_TAG`, `BEST_IP_MIHOMO_ARCHIVE_SHA256` optional command defaults; workflow pins v1.19.30 and archive SHA-256 |
-| Existing verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800 (workflow 1500); `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in (workflow 1) |
+| Local verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800; `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in |
 | Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `ACCESS_TEAM_DOMAIN`, `ACCESS_POLICY_AUD`, `ACCESS_ALLOWED_EMAIL`; `ASSETS` binding |
-| Actions | secret `SCAN_PRIVATE_KEY_PEM`, variable `SCAN_KEY_ID`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`, `RUN_ID`, `RUN_ATTEMPT`; standard GitHub/runner context |
+| Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`; variable `SCAN_KEY_ID`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`; run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
 | Deployment CI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 
-## Next transport boundary (not a wire-protocol change)
+## Frontend transport boundary
 
 Use exactly `health()`, `start(subscriptionUrl)`, `poll(session)`, `cancel(session)`.
 The opaque session owns token/run/attempt/dispatch time. UI never persists those.

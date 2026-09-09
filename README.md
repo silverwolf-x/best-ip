@@ -13,7 +13,7 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
               └─ sanitized artifact → Worker → 浏览器
 ```
 
-Python FastAPI 在生产中仅是 `scan.yml` 临时 runner 内的 loopback 扫描接口，不是独立部署入口。本地调试同样保持前后端分离：独立静态服务提供页面，FastAPI 只提供 API。仓库不提供 Docker、Compose 或 GitHub Pages 模式。
+生产扫描由 `scan.yml` 直接运行 `scripts/run_scan.py`，不启动 FastAPI。FastAPI 仅用于本地 loopback API：独立静态服务提供页面，前后端分离。仓库不提供 Docker、Compose 或 GitHub Pages 模式。
 
 ## 本地调试
 
@@ -30,7 +30,7 @@ npm run dev
 也可以不经过 npm：
 
 ```powershell
-uv run python scripts/dev.py
+uv run --no-dev python scripts/dev.py
 ```
 
 首次启动会自动下载当前固定版本的 Mihomo；前端默认监听 `127.0.0.1:5173`，后端 API 默认监听 `127.0.0.1:8000`，端口占用时各自自动选择空闲端口。准备就绪后浏览器只打开前端地址，前端通过动态的 loopback API Base 调用后端。Windows 下自动关闭后端热重载，因为 Uvicorn 的重载模式使用不支持异步子进程的 SelectorEventLoop，会导致 Mihomo 无法启动；修改后端代码后需重启。其他系统默认启用热重载；需要稳定执行长扫描时使用：
@@ -93,7 +93,7 @@ Worker 使用 Static Assets 托管 `frontend/`；当前配置不使用 Cloudflar
 
 ## API
 
-除健康检查外，所有请求都需要内存中的 scan token；状态变更还需要同源 Origin/Fetch-Metadata。
+所有生产请求都需要 Cloudflare Access。创建扫描时签发 scan token，不要求预先持有 token；后续查询、下载和取消请求需要内存中的 scan token。状态变更还需要同源 Origin/Fetch-Metadata。
 
 ```http
 POST /api/scans
@@ -106,6 +106,8 @@ GET /api/health
 Worker 会精确核对 request ID、workflow path、事件、分支、run/attempt、创建时间窗和唯一 artifact 名称。artifact 只保留 1 天。
 
 ## 验证
+
+仓库保留运行源码、部署配置、依赖锁文件和回归测试；本地工具状态、凭据、Mihomo 二进制和扫描结果不进入 Git。本地启动使用 `--no-dev`，不安装 pytest、Ruff 等测试工具。生产 CLI 用法见 [docs/CLI.md](docs/CLI.md)，接口与结果格式见 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
 ```powershell
 uv sync --dev
