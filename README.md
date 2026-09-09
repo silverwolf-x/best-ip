@@ -6,7 +6,7 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
 
 ```text
 浏览器
-  └─ Cloudflare Access
+  └─ 访问密码登录（签名 Cookie）
       └─ Cloudflare Worker + Static Assets
           └─ GitHub App → GitHub Actions scan.yml
               ├─ Mihomo 节点扫描
@@ -19,7 +19,7 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
 
 结果默认采用 Coffee 风格的双列节点卡片，小屏幕自动切换为单列；可切换到表格进行逐列筛选和排序。两种视图使用相同结果，点击节点名称查看完整详情，导入、导出与完整性校验保持不变。
 
-本地调试模式复用同一套 Mihomo、扫描器、结果存储和前端，只替换任务传输层；启动器分别运行前端静态服务与 FastAPI API。生产环境仍使用 Cloudflare Worker → GitHub Actions，不会降级 Access、密文订阅或 artifact 校验。
+本地调试模式复用同一套 Mihomo、扫描器、结果存储和前端，只替换任务传输层；启动器分别运行前端静态服务与 FastAPI API。生产环境仍使用 Cloudflare Worker → GitHub Actions，保留密码登录、密文订阅与 artifact 校验。
 
 安装 [uv](https://docs.astral.sh/uv/) 后，在仓库根目录运行：
 
@@ -39,7 +39,7 @@ uv run --no-dev python scripts/dev.py
 npm run dev:no-reload
 ```
 
-可用 `--port 8080` 更换后端 API 端口、`--frontend-port 5174` 更换前端端口、`--no-open` 禁止自动打开浏览器。手动启动时必须同时设置 `BEST_IP_LOCAL_DEV=1` 与精确的 `BEST_IP_LOCAL_FRONTEND_ORIGIN=http://127.0.0.1:<前端端口>`；不要将任一服务绑定到局域网或公网地址，因为本地模式有意跳过生产 Worker 的 Access 与 scan token，只用于本机调试。
+可用 `--port 8080` 更换后端 API 端口、`--frontend-port 5174` 更换前端端口、`--no-open` 禁止自动打开浏览器。手动启动时必须同时设置 `BEST_IP_LOCAL_DEV=1` 与精确的 `BEST_IP_LOCAL_FRONTEND_ORIGIN=http://127.0.0.1:<前端端口>`；不要将任一服务绑定到局域网或公网地址，因为本地模式有意跳过生产 Worker 的密码登录与 scan token，只用于本机调试。
 
 固定正式版本（如 `v1.19.30`）安装遇到 GitHub API `403`/`429` 时，自动改用官方 Release 直链，不依赖第三方镜像。`latest` 与非标准 tag 不猜测下载地址。设置 `BEST_IP_MIHOMO_ARCHIVE_SHA256` 可强制校验归档；回退时若未指定摘要，则仅依赖官方 HTTPS，计算出的 SHA-256 不代表真实性校验。已有核心可通过 `BEST_IP_MIHOMO_PATH` 指定路径，跳过下载。
 
@@ -58,7 +58,11 @@ npm run dev:no-reload
 
 ## 部署
 
-要求：Node.js 22、npm，以及一个已启用 Workers 的 Cloudflare 账户。
+推荐使用 Cloudflare Workers Builds：在现有 Worker 的 Settings → Builds 连接 GitHub 仓库，生产分支选 `main`，根目录留空，Build command 留空，Deploy command 填 `npx wrangler deploy`，Preview deploy command 填 `npx wrangler versions upload`，构建变量设 `NODE_VERSION=22`。依赖安装由构建机处理，本机只需提交并推送代码。
+
+Worker 没有第三方运行时 npm 依赖；密码会话和 GitHub App RS256 签名都使用原生 Web Crypto。`package.json` 与锁文件保留模块声明、测试命令和 Wrangler 部署工具。
+
+也可在安装 Node.js 22 和 npm 的电脑上手动部署：
 
 ```powershell
 npm ci
@@ -67,7 +71,7 @@ npm run dry-run
 npm run deploy
 ```
 
-也可以把以下 GitHub Actions secrets 配好后推送 `main`，由 `.github/workflows/worker.yml` 自动发布：
+备用部署工作流 `.github/workflows/worker.yml` 仅支持手动触发，避免与 Workers Builds 重复部署。使用该备用工作流需要以下 GitHub Actions secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
@@ -77,7 +81,7 @@ Worker 使用 Static Assets 托管 `frontend/`；当前配置不使用 Cloudflar
 ## 平台配置
 
 1. 创建 GitHub App，只授予当前仓库 `Actions: Read and write` 与 `Metadata: Read`，并只安装到 `silverwolf-x/best-ip`。
-2. 在 Cloudflare Access 为 Worker hostname 建立单用户策略，只允许指定邮箱。
+2. 在 Worker 的 Settings → Variables and Secrets 添加 Secret `SITE_PASSWORD`：使用密码管理器生成至少 16 个字符的随机密码（最多 1024 字符）。无需 Cloudflare Access；如果之前启用了 Worker 域名的 Access 保护，请关闭该保护，并移除覆盖该域名的 Zero Trust Access Application。原来的三个 `ACCESS_*` 变量可以删除。
 3. 配置 Worker secrets/variables：
 
    - `SCAN_KEY_ID`：`frontend/scan-public.pem` 的 SPKI DER SHA-256 指纹。
@@ -85,17 +89,17 @@ Worker 使用 Static Assets 托管 `frontend/`；当前配置不使用 Cloudflar
    - `GITHUB_APP_INSTALLATION_ID`
    - `GITHUB_APP_PRIVATE_KEY`
    - `SCAN_TOKEN_SECRET`
-   - `ACCESS_TEAM_DOMAIN`
-   - `ACCESS_POLICY_AUD`
-   - `ACCESS_ALLOWED_EMAIL`
+   - `SITE_PASSWORD`
 
 4. 配置 Actions secrets `SCAN_PRIVATE_KEY_PEM`、`IPURE_CONFIG_YAML`，并配置 Actions variable `SCAN_KEY_ID`。`IPURE_CONFIG_YAML` 保存与本地 `config/ipure.yml` 相同的完整 YAML 内容；Actions 扫描前生成该文件，结束时清理，不上传到结果 artifact。Worker 仅调度扫描，不查询 IPure，也不向前端提供 Cookie。可用 `gh secret set IPURE_CONFIG_YAML --repo silverwolf-x/best-ip < config/ipure.yml` 同步本地配置到云端。Cookie 过期后需更新本地 YAML 并重新同步 Secret；修改本地文件不会自动更新 GitHub Secret。
 
-缺少任一生产配置时 Worker 失败关闭。scan token 有效期两小时，只存在页面内存并通过 `X-Best-IP-Scan-Token` 请求头发送，不进入 URL 或 localStorage。
+打开网站后输入访问密码。登录会话有效期 12 小时，保存在 Secure、HttpOnly、SameSite=Strict 的主机专属 Cookie 中；页面提供退出登录入口。修改 `SITE_PASSWORD` 或 `SCAN_TOKEN_SECRET` 后旧会话失效。退出登录清除当前浏览器 Cookie，其他浏览器的会话不受影响。密码和签名密钥只放 Worker 运行时 Secrets，不放 Build variables 或仓库。
+
+登录接口为 `POST /login`，没有内置分布式尝试次数限制；如需限制在线猜测，可在 Cloudflare 为该路径配置限流规则。缺少登录配置时 Worker 返回 503；扫描配置在调用扫描功能时检查。scan token 有效期两小时，只存在页面内存并通过 `X-Best-IP-Scan-Token` 请求头发送，不进入 URL 或 localStorage。
 
 ## API
 
-所有生产请求都需要 Cloudflare Access。创建扫描时签发 scan token，不要求预先持有 token；后续查询、下载和取消请求需要内存中的 scan token。状态变更还需要同源 Origin/Fetch-Metadata。
+除登录、退出页面及登录样式外，所有生产请求都需要密码登录会话。浏览器页面导航未登录时跳转 `/login`，API 未登录时返回 401。创建扫描时签发 scan token，不要求预先持有 token；后续查询、下载和取消请求需要内存中的 scan token。状态变更（包括登录和退出）还需要同源 Origin/Fetch-Metadata。
 
 ```http
 POST /api/scans

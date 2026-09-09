@@ -13,9 +13,6 @@
     "deploy": "wrangler deploy",
     "dry-run": "wrangler deploy --dry-run"
   },
-  "dependencies": {
-    "jose": "^6.2.10"
-  },
   "devDependencies": {
     "wrangler": "^4.125.0"
   }

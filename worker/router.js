@@ -3,12 +3,13 @@ import { KEY_ID_PATTERN, assertWorkerConfigured } from "./config.js";
 import { authenticate, assertSameOrigin } from "./auth.js";
 import { createScan, scanState, cancelScan, resolveScanRun } from "./scans.js";
 import { downloadArtifact } from "./artifacts.js";
+import { loginRoute, loginRedirect } from "./login.js";
 
 export async function api(request, env, auth) {
   const url = new URL(request.url);
   if (url.pathname === "/api/health" && request.method === "GET") {
     assertWorkerConfigured(env);
-    return json({ status: "ok", mode: "github-actions-gateway", authenticated_email: auth.email }, 200, { "Cache-Control": "no-store" });
+    return json({ status: "ok", mode: "github-actions-gateway", authentication: auth.method }, 200, { "Cache-Control": "no-store" });
   }
   if (url.pathname === "/api/scans" && request.method === "POST") return createScan(request, env);
   const match = url.pathname.match(/^\/api\/scans\/([^/]+)(\/artifact)?$/u);
@@ -29,8 +30,19 @@ export async function api(request, env, auth) {
 }
 
 export async function fetchHandler(request, env, ctx) {
-  const auth = await authenticate(request, env, ctx);
   const url = new URL(request.url);
+  const login = await loginRoute(request, env);
+  if (login) return secureResponse(login, { noStore: true });
+  let auth;
+  try {
+    auth = await authenticate(request, env, ctx);
+  } catch (error) {
+    if (error.status === 401 && request.method === "GET" &&
+        !url.pathname.startsWith("/api/") && request.headers.get("Accept")?.includes("text/html")) {
+      return secureResponse(loginRedirect(), { noStore: true });
+    }
+    throw error;
+  }
   if (url.pathname.startsWith("/api/")) {
     assertSameOrigin(request);
     return secureResponse(await api(request, env, auth), { noStore: true });
@@ -52,5 +64,5 @@ export async function fetchHandler(request, env, ctx) {
     );
   }
   if (!env.ASSETS?.fetch) throw new HttpError(503, "Worker 静态资源尚未绑定", "worker_not_configured");
-  return secureResponse(await env.ASSETS.fetch(request));
+  return secureResponse(await env.ASSETS.fetch(request), { noStore: true });
 }

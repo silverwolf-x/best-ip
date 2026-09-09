@@ -15,7 +15,7 @@ materialize the same records. The documentation IP is deliberately non-productio
   FastAPI `/` is 404. Local CORS allows only configured frontend Origin, methods
   GET/POST/DELETE, headers Accept/Content-Type, and no credentials.
   Windows launcher disables reload; health checks file existence, not process creation.
-- Production: Worker Static Assets + Access -> GitHub App -> fixed
+- Production: Worker Static Assets + password session -> GitHub App -> fixed
   `silverwolf-x/best-ip`, `main`, `.github/workflows/scan.yml`.
   The workflow decrypts with `scripts/decrypt_subscription.mjs`, then runs
   `scripts/run_scan.py` directly against the shared scan core. No HTTP server or
@@ -51,13 +51,22 @@ errors are defined in `backend/app/scan/errors.py`.
 
 ## Gateway HTTP and dispatch
 
-All requests, including static assets/config and health, require Access.
-Health does not require a scan token. POST requires Access plus same-origin
+All requests, including static assets/config and health, require a password session,
+except GET/POST `/login`, GET/POST `/logout`, and GET `/login.css`.
+Login accepts a URL-encoded password form (8192-byte cap), returning a 303 to
+`/` and a 12-hour signed `__Host-best-ip-session` cookie with Secure,
+HttpOnly, SameSite=Strict and Path=/. Wrong passwords return 401. Passwords
+must contain 16–1024 characters. Changing SITE_PASSWORD or SCAN_TOKEN_SECRET
+invalidates existing sessions. POST logout clears the current browser cookie.
+Login and logout POSTs require same-origin metadata. Unauthenticated HTML
+navigation redirects to `/login`; API requests return 401. Authentication
+responses and protected assets use Cache-Control: no-store.
+Health does not require a scan token. POST scans requires a session plus same-origin
 Origin/Fetch-Metadata but does not require a pre-existing scan token. Subsequent
 GET/DELETE/artifact requests require `X-Best-IP-Scan-Token`, an in-memory,
 two-hour token bound to request ID and dispatch time. Mutations are same-origin.
 
-- GET `/api/health`: `{status:"ok",mode:"github-actions-gateway",authenticated_email}`.
+- GET `/api/health`: `{status:"ok",mode:"github-actions-gateway",authentication:"password"}`.
 - POST `/api/scans`: `{request_id,key_id,envelope}`; returns 202
   `{request_id,run_id:null,dispatched_at,scan_token}`.
 - Envelope v1: `v,kid,alg,request_id,issued_at,expires_at,ek,iv,aad,ct`;
@@ -131,7 +140,7 @@ Validation boundaries:
 | Limits | `BEST_IP_SUBSCRIPTION_MAX_BYTES` 5242880; `BEST_IP_MAX_NODES` 500; `BEST_IP_MAX_PARALLEL_JOBS` 2; `BEST_IP_MAX_PARALLEL_NODES` 8; `BEST_IP_MAX_NODE_ATTEMPTS` 3; `BEST_IP_NODE_RETRY_BACKOFF_MS` 500; `BEST_IP_PAGE_TIMEOUT_MS` 45000; `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` 30 |
 | Download | `BEST_IP_MIHOMO_TAG`, `BEST_IP_MIHOMO_ARCHIVE_SHA256` optional command defaults; workflow pins v1.19.30 and archive SHA-256 |
 | Local verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800; `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in |
-| Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `ACCESS_TEAM_DOMAIN`, `ACCESS_POLICY_AUD`, `ACCESS_ALLOWED_EMAIL`; `ASSETS` binding |
+| Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `SITE_PASSWORD`; `ASSETS` binding |
 | Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`; variable `SCAN_KEY_ID`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`; run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
 | Deployment CI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 

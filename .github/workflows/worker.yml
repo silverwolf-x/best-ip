@@ -1,17 +1,6 @@
 name: Deploy Cloudflare Worker
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "frontend/**"
-      - "worker/**"
-      - "tests/**"
-      - "scripts/check_js.mjs"
-      - "package.json"
-      - "package-lock.json"
-      - "wrangler.jsonc"
-      - ".github/workflows/worker.yml"
   workflow_dispatch:
 
 concurrency:

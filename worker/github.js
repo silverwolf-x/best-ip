@@ -1,4 +1,4 @@
-import { SignJWT, importPKCS8 } from "jose";
+import { base64UrlEncode, text } from "./auth.js";
 import { HttpError, GitHubError } from "./responses.js";
 import { GITHUB_API, GITHUB_OWNER, GITHUB_REPOSITORY, APP_ID_PATTERN, INSTALLATION_ID_PATTERN, MAX_ARTIFACT_BYTES, isRecord } from "./config.js";
 
@@ -12,17 +12,17 @@ export async function appJwt(env) {
   }
   let key;
   try {
-    key = await importPKCS8(privateKey, "RS256");
+    key = await crypto.subtle.importKey("pkcs8", pemBytes(privateKey, "PRIVATE KEY"),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   } catch {
     throw new HttpError(503, "GitHub App 私钥无效", "worker_not_configured");
   }
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({})
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-    .setIssuedAt(now - 60)
-    .setExpirationTime(now + 540)
-    .setIssuer(appId)
-    .sign(key);
+  const header = base64UrlEncode(text(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const payload = base64UrlEncode(text(JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId })));
+  const unsigned = `${header}.${payload}`;
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, text(unsigned));
+  return `${unsigned}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
 
 export function derLength(length) {

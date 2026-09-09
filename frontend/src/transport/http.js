@@ -5,7 +5,7 @@ export function validateSubscriptionUrl(value) {
 }
 
 export async function responseError(response, serviceName) {
-  const messages = { 401: "Cloudflare Access 登录已过期，请刷新页面", 403: "当前账号没有扫描权限", 429: "扫描服务触发限流，请稍后重试", 404: "扫描任务或结果不存在" };
+  const messages = { 401: "登录已过期，请刷新页面重新输入访问密码", 403: "当前账号没有扫描权限", 429: "扫描服务触发限流，请稍后重试", 404: "扫描任务或结果不存在" };
   let payload;
   try { payload = await response.clone().json(); } catch {}
   const error = new Error(messages[response.status] || (typeof payload?.detail === "string" ? payload.detail : `${serviceName}请求失败（HTTP ${response.status}）`));

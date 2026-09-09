@@ -1,8 +1,6 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
 import { HttpError } from "./responses.js";
 import { SCAN_TOKEN_TTL_SECONDS, REQUEST_ID_PATTERN, isRecord } from "./config.js";
 
-const accessJwksCache = new Map();
 const hmacKeyCache = new Map();
 
 export function base64UrlEncode(bytes) {
@@ -95,67 +93,57 @@ export async function verifyScanToken(env, token, requestId) {
   return payload;
 }
 
-export function normalizeTeamDomain(value) {
-  const domain = String(value || "").trim().replace(/\/+$/u, "");
-  if (!/^https:\/\/[^/]+$/u.test(domain)) return "";
-  return domain;
+export const SESSION_COOKIE = "__Host-best-ip-session";
+export const LOGIN_CSRF_COOKIE = "__Host-best-ip-login-csrf";
+export const SESSION_TTL_SECONDS = 12 * 60 * 60;
+
+export function assertLoginConfigured(env) {
+  if (typeof env.SITE_PASSWORD !== "string" || env.SITE_PASSWORD.length < 16 || env.SITE_PASSWORD.length > 1024 ||
+      !String(env.SCAN_TOKEN_SECRET || "").trim()) {
+    throw new HttpError(503, "请配置至少 16 个字符的 SITE_PASSWORD 和 SCAN_TOKEN_SECRET", "worker_not_configured");
+  }
 }
 
-export async function authenticate(request, env, ctx) {
-  const url = new URL(request.url);
-  if (env.DEV_ALLOW_UNAUTHENTICATED === "1" && ["localhost", "127.0.0.1"].includes(url.hostname)) {
-    return { email: "development" };
-  }
-  const teamDomain = normalizeTeamDomain(env.ACCESS_TEAM_DOMAIN);
-  const audience = String(env.ACCESS_POLICY_AUD || "").trim();
-  const allowedEmail = String(env.ACCESS_ALLOWED_EMAIL || "").trim().toLowerCase();
+async function sessionKey(env) {
+  assertLoginConfigured(env);
+  // Separate login signatures from scan tokens; rotating either secret revokes sessions.
+  return hmacKey(JSON.stringify(["best-ip-session-v1", env.SCAN_TOKEN_SECRET, env.SITE_PASSWORD]));
+}
 
-  if (ctx?.access) {
-    try {
-      if (!allowedEmail) {
-        throw new HttpError(503, "Cloudflare Access 尚未配置允许邮箱", "worker_not_configured");
-      }
-      const nativeAudience = String(ctx.access.aud || "").trim();
-      if (!nativeAudience || (audience && nativeAudience !== audience)) {
-        throw new HttpError(401, "Cloudflare Access 应用身份无效", "access_invalid");
-      }
-      const identity = await ctx.access.getIdentity();
-      const email = String(identity?.email || "").trim().toLowerCase();
-      if (!email) throw new HttpError(401, "Cloudflare Access 身份无效", "access_invalid");
-      if (email !== allowedEmail) {
-        throw new HttpError(403, "当前账号没有使用权限", "access_forbidden");
-      }
-      return { email };
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(401, "Cloudflare Access 身份无效", "access_invalid");
-    }
-  }
+export async function passwordMatches(env, password) {
+  assertLoginConfigured(env);
+  const key = await sessionKey(env);
+  const signature = await crypto.subtle.sign("HMAC", key, text(env.SITE_PASSWORD));
+  return crypto.subtle.verify("HMAC", key, signature, text(password));
+}
 
-  if (!teamDomain || !audience || !allowedEmail) {
-    throw new HttpError(503, "Cloudflare Access 尚未配置", "worker_not_configured");
-  }
-  const token = request.headers.get("cf-access-jwt-assertion");
-  if (!token) throw new HttpError(401, "需要 Cloudflare Access 登录", "access_required");
-  let jwks = accessJwksCache.get(teamDomain);
-  if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${teamDomain}/cdn-cgi/access/certs`));
-    accessJwksCache.set(teamDomain, jwks);
-  }
+export async function signSession(env, origin) {
+  const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const payload = base64UrlEncode(text(JSON.stringify({ v: 1, origin, expires })));
+  const signature = await crypto.subtle.sign("HMAC", await sessionKey(env), text(payload));
+  return `${payload}.${base64UrlEncode(new Uint8Array(signature))}`;
+}
+
+export async function authenticate(request, env) {
+  assertLoginConfigured(env);
+  const cookie = (request.headers.get("Cookie") || "").split(";")
+    .map((part) => part.trim()).find((part) => part.startsWith(`${SESSION_COOKIE}=`));
+  const token = cookie?.slice(SESSION_COOKIE.length + 1) || "";
   try {
-    const result = await jwtVerify(token, jwks, {
-      issuer: teamDomain,
-      audience,
-      algorithms: ["RS256"],
-    });
-    const email = String(result.payload.email || "").trim().toLowerCase();
-    if (!email || email !== allowedEmail) {
-      throw new HttpError(403, "当前账号没有使用权限", "access_forbidden");
-    }
-    return { email };
-  } catch (error) {
-    if (error instanceof HttpError) throw error;
-    throw new HttpError(401, "Cloudflare Access 身份无效", "access_invalid");
+    const parts = token.split(".");
+    if (token.length > 2048 || parts.length !== 2) throw new Error("invalid");
+    const [payload, signature] = parts;
+    const valid = await crypto.subtle.verify("HMAC", await sessionKey(env),
+      base64UrlDecode(signature), text(payload));
+    if (!valid) throw new Error("invalid");
+    const data = JSON.parse(new TextDecoder().decode(base64UrlDecode(payload)));
+    const now = Math.floor(Date.now() / 1000);
+    if (!isRecord(data) || data.v !== 1 || data.origin !== new URL(request.url).origin ||
+        !Number.isSafeInteger(data.expires) || data.expires <= now ||
+        data.expires > now + SESSION_TTL_SECONDS) throw new Error("expired");
+    return { method: "password" };
+  } catch {
+    throw new HttpError(401, "请使用访问密码登录", "login_required");
   }
 }
 
@@ -167,6 +155,21 @@ export function assertSameOrigin(request) {
   }
   const fetchSite = request.headers.get("Sec-Fetch-Site");
   if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite)) {
+    throw new HttpError(403, "拒绝跨站状态变更请求", "csrf_rejected");
+  }
+}
+
+// Some privacy-focused browsers omit Fetch Metadata or report it incorrectly
+// for a top-level form. Trust an explicit same-origin Origin, while rejecting
+// an explicit cross-origin Origin and cross-site requests without one.
+export function assertLoginOrigin(request) {
+  const expected = new URL(request.url).origin;
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== expected) {
+    throw new HttpError(403, "拒绝跨站状态变更请求", "csrf_rejected");
+  }
+  const fetchSite = request.headers.get("Sec-Fetch-Site");
+  if (!origin && fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite)) {
     throw new HttpError(403, "拒绝跨站状态变更请求", "csrf_rejected");
   }
 }
