@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -71,6 +73,29 @@ def download(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "best-ip-installer"})
     with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as output:
         shutil.copyfileobj(response, output)
+
+
+def resolve_release(tag: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    release_url = (
+        f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{tag}"
+        if tag
+        else f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+    )
+    try:
+        release = github_json(release_url)
+    except urllib.error.HTTPError as error:
+        if error.code not in {403, 429} or not tag or not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+            raise
+        prefix, suffix, _ = platform_asset()
+        name = f"{prefix}{tag.removeprefix('v')}{suffix}"
+        print(f"GitHub API 返回 {error.code}，改用固定版本 {tag} 的官方 Release 直链。")
+        return {"tag_name": tag}, {
+            "name": name,
+            "browser_download_url": (
+                f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+            ),
+        }
+    return release, select_asset(release)
 
 
 def verify_digest(path: Path, digest: str | None) -> str:
@@ -152,13 +177,7 @@ def main() -> None:
         print(f"已安装：{destination}")
         return
 
-    release_url = (
-        f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{args.tag}"
-        if args.tag
-        else f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
-    )
-    release = github_json(release_url)
-    asset = select_asset(release)
+    release, asset = resolve_release(args.tag)
 
     file_descriptor, temporary_name = tempfile.mkstemp(suffix=Path(asset["name"]).suffix)
     os.close(file_descriptor)
@@ -167,6 +186,8 @@ def main() -> None:
         print(f"下载 {asset['name']} ({release['tag_name']})")
         download(asset["browser_download_url"], archive)
         expected_digest = args.archive_sha256 or asset.get("digest")
+        if not expected_digest:
+            print("未提供可信 SHA-256；本次仅通过官方 HTTPS 下载，输出摘要不代表真实性校验。")
         digest = verify_digest(archive, expected_digest)
         if cache_path is not None:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,4 +211,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+        raise SystemExit(f"Mihomo 安装失败：{error}") from None

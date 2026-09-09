@@ -39,7 +39,7 @@ def _ensure_mihomo() -> Path:
     if configured:
         raise SystemExit(f"BEST_IP_MIHOMO_PATH 指向的文件不存在：{path}")
     print(f"首次启动：正在安装 Mihomo {MIHOMO_TAG} ...", flush=True)
-    subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             str(ROOT_DIR / "scripts" / "download_mihomo.py"),
@@ -47,8 +47,13 @@ def _ensure_mihomo() -> Path:
             MIHOMO_TAG,
         ],
         cwd=ROOT_DIR,
-        check=True,
+        check=False,
     )
+    if result.returncode:
+        raise SystemExit(
+            "Mihomo 自动安装失败；请检查上述下载错误后重试，"
+            "或设置 BEST_IP_MIHOMO_PATH 指向已安装的核心。"
+        )
     if not path.is_file():
         raise SystemExit(f"Mihomo 安装完成后仍未找到：{path}")
     return path
