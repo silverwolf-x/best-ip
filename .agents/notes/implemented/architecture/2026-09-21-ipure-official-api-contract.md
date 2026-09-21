@@ -29,8 +29,11 @@ IPure 接入是在"未收录 IP 需要人机验证"的前提下长出来的：�
 `BEST_IP_IPURE_COOKIE` 以及记录里的 `direct_fallback` / `ipure_verification_session_used` 全部不再存在，
 校验器不再接受它们。
 
-**解析**：`risk.purity` 是唯一的硬要求，缺它才算解析失败；`risk.level / label / verdict`、
-`scenarios[].score / level / levelLabel`、`reportUrl`、`source`（fresh / cache / store）、
+**解析**：`risk.purity` 是唯一的硬要求，缺它才算解析失败——例外是 `risk.level == restricted`：上游对该
+档位可能干脆不给 `purity`，这类报告仍然可用，2026-09-21 起记为 `-1`，见
+[IPure 受限档改记 -1，评分按 ipure.dev 色带直显](2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
+`risk.level / label / verdict`、`scenarios[].score / level / levelLabel`、`reportUrl`、
+`source`（fresh / cache / store）、
 `stale`、`scenarioApplicable` 都是尽力解析。六项场景永远齐备：某个场景缺席时该项为 `null`，
 不影响纯净度总分，因为验收要求的是"每个节点都有分数"，不是"每个场景都有分数"。
 
@@ -38,16 +41,21 @@ IPure 接入是在"未收录 IP 需要人机验证"的前提下长出来的：�
 查询时间预算就不再等待，也不会切换出口重试。`403` 不重试，把官方 `reportUrl` 记进结果。
 `x-open-budget-remaining` 写入 `proxy_evidence.ipure_budget_remaining`。
 
-**落盘契约**：节点记录新增 `ipure_scores`（七键：`total` + 六场景）、`ipure_level`、
-`ipure_verdict`、`ipure_scenario_levels`（六场景 id → 档位码）、`ipure_report_url`。`score` 必须等于
-`ipure_scores.total`。`ipure_scores` 与 `ipure_scenario_levels` 的键集合必须精确等于约定集合，
-取值必须是 0..100 的整数或 `null`。
+**落盘契约（2026-09-21 收窄）**：节点记录带 `ipure_scores`（七键：`total` + 六场景）与
+`ipure_report_url`。`score` 必须等于 `ipure_scores.total`，键集合必须精确等于约定集合，取值 ∈
+`0..100 ∪ {-1} ∪ {null}`——`-1` 是 `restricted` 的哨兵，`-2` / `101` 被两侧校验器拒绝。
+`ipure_level`、`ipure_verdict`、`ipure_scenario_levels` 三个字段已被删除（两个读取端容忍历史记录里的
+它们），档位、`label`、`verdict` 只留在 `requests.ipure.data` 里；理由见
+[IPure 受限档改记 -1，评分按 ipure.dev 色带直显](2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
 
 **前后端分离**：前后端之间只有 artifact / 节点记录这一个契约，前端不 import 后端任何东西。
 `frontend/src/artifact/` 是自包含的契约层（校验、ZIP 读取），不依赖 `src/results.js` 这类应用层模块；
 场景键与中文标签因此在两侧各有一份自有清单，靠"两侧都对同一份外部文档"和契约测试对齐，
 而不是靠共享模块——前端没有构建步骤，跨层 import 会把契约层绑死在应用层上。
 
+（下面这段"档位渲染"是改动前的规则，已被 2026-09-21 的决策取代：档位不再渲染，六项评分一律显示成
+带颜色的数字，`restricted` 记 `-1` 并以中性灰显示，见
+[IPure 受限档改记 -1，评分按 ipure.dev 色带直显](2026-09-21-ipure-restricted-sentinel-and-score-band.md)。）
 **档位渲染**：场景 chip 存在与否只看"这个场景有没有值"，不看"有没有数字"。分数可以合法缺席
 （IPure 对 `restricted` 场景回 `score: null`），此时档位仍然存在，必须渲染档位中文名，而不是把
 这一项丢掉。`frontend/src/views/table-view.js` 因此先取档位、再判有无：只有分数与档位都没有才算
@@ -80,6 +88,7 @@ IPure 接入是在"未收录 IP 需要人机验证"的前提下长出来的：�
 
 ## Consequences
 
+（下面两条"收益"里关于"显示档位"的部分自 2026-09-21 起不再成立，其余仍然有效。）
 收益：节点只要拿到出口 IP 就会带一份完整六场景报告与原始 `reportUrl`；前端不会再把
 `restricted` / `not_applicable` / `unusable` 的分数渲染成可用性结论，而是显示档位并给出原因提示；
 整个 IPure 链路不再有凭据，`IPURE_CONFIG_YAML` Secret 变为可选的请求头覆盖。
@@ -89,8 +98,11 @@ IPure 接入是在"未收录 IP 需要人机验证"的前提下长出来的：�
 漏改任意一处会让 artifact 校验以"manifest 与节点结果不一致"失败。这是刻意保留的重复：
 reader 是自包含契约层，不能 import 后端常量，也无法在运行时读 Python。改字段时必须四处同改。
 
-代价：单次 IPure 查询预算由 8 秒放宽到 20 秒，以覆盖未收录 IP 的实时多源查询。该查询与
+代价：宿主侧直连兜底的预算由 8 秒放宽到 20 秒、再于 2026-09-21 收紧到 5 秒（13 条真实直连记录全部
+≤1.3 秒，而 11/16 条慢 IPure 记录都停在 18–20 秒的兜底超时上），代理侧查询沿用 collector 的 30 秒
+deadline。该查询与
 lookup、global ping、portscan 并发，通常不延长节点墙钟时间；极端情况下会多占一个节点槽位。
+依据与实测见 [真实订阅扫描的墙钟预算](2026-09-21-scan-wall-clock-budget.md)。
 
 代价：免验证额度是真实约束。额度耗尽时节点只能标记"部分"并记录 `reportUrl`，本次扫描拿不到分数，
 验收会因此失败——这是有意暴露而不是静默降级。
@@ -129,22 +141,25 @@ lookup、global ping、portscan 并发，通常不延长节点墙钟时间；极
 
 ## Testing
 
-`uv run --no-dev pytest`：209 passed, 2 skipped。覆盖六场景解析、`total` 缺失才判失败、单场景缺失
+`uv run --no-dev pytest`：275 passed, 2 skipped（2026-09-21 更新）。覆盖六场景解析、`total` 缺失才判失败、单场景缺失
 保留总分、`403 verification_required` 带出 `reportUrl`、`429` 有界重试不换出口、`refresh` 参数
 allowlist、以及"IPure 请求不携带 Cookie/Authorization"。
 
-`npm test`：49 passed（frontend 28 / worker 13 / contracts 8）。覆盖六项评分键集合与取值校验、
+`npm test`：67 passed（frontend 34 / worker 22 / contracts 11，2026-09-21 更新）。覆盖六项评分键集合与取值校验、
 伪造 `ipure_scores` 被拒、CSV 往返保留六项评分、artifact summary 键集合与 reader 一致。
 
 真实验收：`scripts/verify_real_scan.py` 用 `.env` 的正式订阅跑完整扫描，断言每个取得出口 IP 的节点
 都带整数 0..100 的纯净度总分与六项场景评分，并打印评分覆盖数。订阅 token 不落盘、不入结果。
-25 节点订阅历次可评分覆盖在 18–22/25 之间波动，全部失败都落在共享主机 `cf-yes.nekocloud.host` 上。
+25 节点订阅历次可评分覆盖在 13–22/25 之间波动，全部失败都落在共享主机 `cf-yes.nekocloud.host` 上；
+覆盖数由窗口好坏决定，与节点并发无关（同窗口配对对照见
+[真实订阅扫描的墙钟预算](2026-09-21-scan-wall-clock-budget.md)）。
 
 浏览器闭环：用 Playwright 自带的 Chromium（CDP，无第三方依赖）打开本地前端，在页面里提交同一份
 正式订阅，走完 前端 → 后端 → artifact → 表格渲染 全链路。结果：25 行全部渲染，每个取得出口 IP 的
-节点都显示 IPure 总分与六项场景；`restricted` / `not_applicable` / `unusable` 档位渲染为档位中文名
-（如「地区受限」「不可用」）而不是分数，与官方"不得当作可用性结论"的要求一致；详情弹窗渲染
-IPure 判定、六项场景、总分与 `ipure.dev` 原始报告链接；控制台 error/warning 与未捕获异常均为 0。
+节点都显示 IPure 总分与六项场景；控制台 error/warning 与未捕获异常均为 0。其中"用档位中文名代替分数"
+这一段已被取代：2026-09-21 起档位不再渲染，六项评分一律显示成带颜色的数字、`restricted` 记 `-1`
+并以中性灰显示，详情弹窗也不再渲染「IPure 判定」这一行（改为原始报告链接），见
+[IPure 受限档改记 -1，评分按 ipure.dev 色带直显](2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
 
 ### 未采用：为失败节点枚举候选出口 IP
 

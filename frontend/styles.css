@@ -683,6 +683,11 @@ h1 {
 .score-low, .score-bad { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
 .score-none { background: var(--bg-soft); color: var(--text-muted); border: 1px solid var(--border); }
 
+/* 色带直显（第2列与场景 chip）：颜色一律由 results.js 的 ipureScoreInlineStyle 以内联样式给出。
+   类名只负责排版不设颜色，避免同一分数在两处显示成两种颜色；-1（地区受限）用中性灰。 */
+.score-band { border: 1px solid transparent; font-variant-numeric: tabular-nums; }
+.chip-score { font-variant-numeric: tabular-nums; font-weight: 700; }
+
 /* 表格内微型延迟条 (Coffee 全球 Ping & GPT · Codex 严格单行高审美微型条) */
 .mini-ping-bar, .mini-gpt-bar {
   display: inline-flex;

@@ -157,38 +157,85 @@ export async function githubJson(env, path, options = {}, retry = true) {
   return payload;
 }
 
+// ZIP 的三种起始魔数：本地文件头、空存档的结束目录、分卷标记。
+// upload-artifact 产出的归档一定以本地文件头开头，因此空 body 或 JSON/HTML 错误页会被下面拦下。
+const ZIP_MAGIC = [
+  Uint8Array.of(0x50, 0x4b, 0x03, 0x04),
+  Uint8Array.of(0x50, 0x4b, 0x05, 0x06),
+  Uint8Array.of(0x50, 0x4b, 0x07, 0x08),
+];
+
+export function hasZipMagic(bytes) {
+  if (!bytes || bytes.byteLength < 4) return false;
+  return ZIP_MAGIC.some((magic) => magic.every((byte, index) => bytes[index] === byte));
+}
+
+// 读掉第一个分片做内容判定，再把完整字节重新拼成流交给调用方转发。
+// 少了这一步，一个空 200（重定向没被跟随、或 blob 刚 finalize 还没就绪）会被原样转发给浏览器，
+// 浏览器只会看到「artifact ZIP 缺少结束目录」，看不出是传输层给空 body 还是归档真的坏了。
+export async function inspectArchiveResponse(response) {
+  if (!response.body) return { zip: false, received: 0, body: null };
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  const head = first.done ? null : first.value;
+  const body = new ReadableStream({
+    start(controller) {
+      if (head) controller.enqueue(head);
+    },
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(next.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { zip: hasZipMagic(head), received: head ? head.byteLength : 0, body };
+}
+
+function assertArchiveSize(response) {
+  const contentLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_ARTIFACT_BYTES) {
+    throw new HttpError(413, "扫描 artifact 超出安全上限", "artifact_too_large");
+  }
+}
+
+async function resolveArchiveRedirect(response, zipUrl, headers) {
+  if (response.status < 300 || response.status >= 400) return response;
+  const location = response.headers.get("Location");
+  // 拿不到 Location 说明该运行时对 manual 的语义不同：退回默认重定向再取一次，而不是直接放弃。
+  return location ? fetch(location, { redirect: "follow" }) : fetch(zipUrl, { headers, redirect: "follow" });
+}
+
 export async function githubRawArtifact(env, artifactId, retry = true) {
   const token = await installationToken(env);
-  const response = await fetch(githubUrl(`/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/artifacts/${artifactId}/zip`), {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "best-ip-cloudflare-worker",
-      Authorization: `Bearer ${token}`,
-    },
-    redirect: "manual",
-  });
+  const zipUrl = githubUrl(`/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/artifacts/${artifactId}/zip`);
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "best-ip-cloudflare-worker",
+    Authorization: `Bearer ${token}`,
+  };
+  const response = await fetch(zipUrl, { headers, redirect: "manual" });
   if (response.status === 401 && retry) {
     installationTokenCache = null;
     return githubRawArtifact(env, artifactId, false);
   }
-  if (response.status === 200) {
-    const contentLength = Number(response.headers.get("Content-Length"));
-    if (Number.isFinite(contentLength) && contentLength > MAX_ARTIFACT_BYTES) {
-      throw new HttpError(413, "扫描 artifact 超出安全上限", "artifact_too_large");
-    }
-    return response;
-  }
-  if (response.status < 300 || response.status >= 400) {
-    throw new GitHubError(502, "GitHub artifact 下载失败");
-  }
-  const location = response.headers.get("Location");
-  if (!location) throw new GitHubError(502, "GitHub artifact 下载地址缺失");
-  const archive = await fetch(location, { redirect: "follow" });
+  const archive = await resolveArchiveRedirect(response, zipUrl, headers);
   if (!archive.ok) throw new GitHubError(502, "GitHub artifact 下载失败");
-  const contentLength = Number(archive.headers.get("Content-Length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_ARTIFACT_BYTES) {
-    throw new HttpError(413, "扫描 artifact 超出安全上限", "artifact_too_large");
+  assertArchiveSize(archive);
+  const inspected = await inspectArchiveResponse(archive);
+  if (inspected.zip) return new Response(inspected.body, { status: 200 });
+  // 只兜底一次：既覆盖“重定向没被跟随”，也覆盖 blob 刚 finalize 还没就绪的瞬时情况。
+  const fallback = await fetch(zipUrl, { headers, redirect: "follow" });
+  if (fallback.ok) {
+    assertArchiveSize(fallback);
+    const retried = await inspectArchiveResponse(fallback);
+    if (retried.zip) return new Response(retried.body, { status: 200 });
   }
-  return archive;
+  throw new GitHubError(502, `GitHub artifact 响应不是 ZIP（收到 ${inspected.received} 字节）`);
 }

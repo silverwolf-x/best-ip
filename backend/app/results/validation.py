@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..sources.ipure import IPURE_SCENARIOS
+from ..sources.ipure import IPURE_RESTRICTED_SCORE, IPURE_SCENARIOS
 
 _SUMMARY_KEYS = (
     "node_index",
@@ -27,9 +27,6 @@ _SUMMARY_KEYS = (
     "isp",
     "score",
     "ipure_scores",
-    "ipure_level",
-    "ipure_verdict",
-    "ipure_scenario_levels",
     "ipure_report_url",
     "is_residential",
     "is_datacenter",
@@ -95,9 +92,6 @@ _NODE_FIELDS = {
     "score",
     "coffee_score",
     "ipure_scores",
-    "ipure_level",
-    "ipure_verdict",
-    "ipure_scenario_levels",
     "ipure_report_url",
     "is_residential",
     "is_datacenter",
@@ -135,6 +129,11 @@ _NODE_FIELDS = {
     "coffee",
     "pages",
 }
+
+# 旧版本写过这三个档位字段；落盘契约已收窄，读取时忽略，历史结果仍要能打开。
+_RETIRED_NODE_FIELDS = frozenset(
+    {"ipure_level", "ipure_verdict", "ipure_scenario_levels"}
+)
 _NODE_REQUIRED_FIELDS = {
     "schema_version",
     "job_id",
@@ -165,7 +164,7 @@ def validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
         raise ResultStoreError("节点记录结构无效")
     if index < 0:
         raise ResultStoreError("节点索引不能为负数")
-    unknown_fields = set(record) - _NODE_FIELDS
+    unknown_fields = set(record) - _NODE_FIELDS - _RETIRED_NODE_FIELDS
     missing_fields = _NODE_REQUIRED_FIELDS - set(record)
     if unknown_fields or missing_fields:
         raise ResultStoreError("节点记录字段集合无效")
@@ -265,28 +264,33 @@ def summary(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_ipure_scores(record: dict[str, Any]) -> None:
-    """Keep the IPure score map shape stable so every node exposes the same six scenarios."""
+    """Keep the IPure score map shape stable so every node exposes the same six scenarios.
+
+    Allowed values are 0..100, the -1 sentinel (upstream marked it region-restricted)
+    and null (upstream published no score). Anything else — including -2 and 101 —
+    is rejected. `score` is checked on its own too, so deleting `ipure_scores` cannot
+    smuggle an out-of-scale total past the record contract.
+    """
 
     scores = record.get("ipure_scores")
-    if scores is not None:
-        if not isinstance(scores, dict) or set(scores) != {"total", *IPURE_SCENARIOS}:
-            raise ResultStoreError("节点 IPure 评分字段集合无效")
-        for value in scores.values():
-            if value is not None and (
-                not isinstance(value, int)
-                or isinstance(value, bool)
-                or not 0 <= value <= 100
-            ):
-                raise ResultStoreError("节点 IPure 评分取值无效")
-        if record.get("score") != scores.get("total"):
-            raise ResultStoreError("节点总分与 IPure 纯净度不一致")
-    levels = record.get("ipure_scenario_levels")
-    if levels is not None and (
-        not isinstance(levels, dict)
-        or set(levels) != set(IPURE_SCENARIOS)
-        or not all(value is None or isinstance(value, str) for value in levels.values())
-    ):
-        raise ResultStoreError("节点 IPure 场景档位无效")
+    total = record.get("score")
+    if scores is None:
+        if total is not None:
+            raise ResultStoreError("节点 IPure 评分字段缺失")
+        return
+    if not isinstance(scores, dict) or set(scores) != {"total", *IPURE_SCENARIOS}:
+        raise ResultStoreError("节点 IPure 评分字段集合无效")
+    for value in scores.values():
+        if value is None:
+            continue
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or (value != IPURE_RESTRICTED_SCORE and not 0 <= value <= 100)
+        ):
+            raise ResultStoreError("节点 IPure 评分取值无效")
+    if total != scores.get("total"):
+        raise ResultStoreError("节点总分与 IPure 纯净度不一致")
 
 
 def validate_ipure_evidence(evidence: dict[str, Any], requests: dict[str, Any]) -> None:

@@ -8,19 +8,21 @@ const IPURE_SCORE_LABELS = [
   ["ecommerce", "电商"],
   ["email", "邮件"],
 ];
-// 官网要求：这些档位下 score 不代表可用性，不能当作评分结论引用。
-const IPURE_NON_JUDGABLE_LEVELS = new Set(["restricted", "not_applicable", "unusable"]);
-const IPURE_LEVEL_LABELS = {
-  pristine: "极佳",
-  clean: "纯净",
-  neutral: "一般",
-  suspicious: "可疑",
-  risky: "高风险",
-  dangerous: "极高风险",
-  restricted: "地区受限",
-  not_applicable: "不适用",
-  unusable: "不可用",
-};
+// 分数配色直接复刻 ipure.dev 官网自己的色带（取自 /ip/{ip} 页面内联样式）：
+// 0 品红 → 25 橙红 → 50 黄 → 75 绿 → 100 青，相邻停靠点之间按位置线性插值，逐通道取整。
+// 官网不再有"绿/黄/红"三档断点，前端因此也不再分桶，避免同一个分数在两处显示不同颜色。
+const IPURE_SCORE_STOPS = [
+  [0, [232, 68, 125]],
+  [25, [242, 115, 78]],
+  [50, [242, 193, 78]],
+  [75, [141, 232, 106]],
+  [100, [52, 229, 196]],
+];
+// 地区受限不是"分数低"：-1 在 0..100 刻度之外，硬插值会落到 0 分位的品红，
+// 等于把"该地区受限"谎报成"分数极低"。官网自己也不给受限项上色（用中性灰），
+// 所以 -1 沿用官网的中性灰 --color-ink-dim，仍然以数字形式展示。
+export const IPURE_RESTRICTED_SCORE = -1;
+export const IPURE_RESTRICTED_CHANNELS = [139, 155, 171];
 const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
 export function normalizeImportedResult(raw, index, source) {
   if (!isRecord(raw)) throw new Error(`第 ${index + 1} 个节点结果不是对象。`);
@@ -109,7 +111,8 @@ export function parseImportedIpureScores(value, total) {
   const scores = { total: parseImportedNumber(total) };
   const text = String(value || "");
   IPURE_SCORE_LABELS.forEach(([key, label]) => {
-    const match = text.match(new RegExp(`${label}\\s*[:：]\\s*(\\d+(?:\\.\\d+)?)`, "u"));
+    // 负号必须匹配：受限项在 CSV 里就是 -1。
+    const match = text.match(new RegExp(`${label}\\s*[:：]\\s*(-?\\d+(?:\\.\\d+)?)`, "u"));
     scores[key] = match ? parseImportedNumber(match[1]) : null;
   });
   return scores;
@@ -131,28 +134,41 @@ export function formatIpureScores(value) {
     .join(" | ");
 }
 
-function scenarioMeta(result, key) {
-  const nested = result?.requests?.ipure?.data?.scenarios;
-  return isRecord(nested) && isRecord(nested[key]) ? nested[key] : null;
+// 唯一的分数取色入口：表格、场景 chip、详情弹窗都必须走这里，
+// 否则同一个分数会在两处显示成不同颜色。
+export function ipureScoreChannels(score) {
+  const value = parseImportedNumber(score);
+  if (value === null) return null;
+  if (value === IPURE_RESTRICTED_SCORE) return IPURE_RESTRICTED_CHANNELS;
+  if (value < 0 || value > 100) return null;
+  for (let index = 0; index < IPURE_SCORE_STOPS.length - 1; index += 1) {
+    const [low, lowChannels] = IPURE_SCORE_STOPS[index];
+    const [high, highChannels] = IPURE_SCORE_STOPS[index + 1];
+    if (value < low || value > high) continue;
+    const ratio = (value - low) / (high - low);
+    return lowChannels.map((channel, channelIndex) =>
+      Math.round(channel + (highChannels[channelIndex] - channel) * ratio));
+  }
+  return null;
 }
 
-export function ipureScenarioLevel(result, key) {
-  const levels = result?.ipure_scenario_levels;
-  const stored = isRecord(levels) ? levels[key] : null;
-  if (typeof stored === "string" && stored) return stored;
-  const level = scenarioMeta(result, key)?.level;
-  return typeof level === "string" && level ? level : null;
+export function ipureScoreColor(score) {
+  const channels = ipureScoreChannels(score);
+  return channels ? `rgb(${channels.join(" ")})` : null;
 }
 
-export function ipureScenarioLabel(result, key) {
-  const level = ipureScenarioLevel(result, key);
-  if (!level) return null;
-  const apiLabel = scenarioMeta(result, key)?.label;
-  return (typeof apiLabel === "string" && apiLabel) || IPURE_LEVEL_LABELS[level] || level;
+// 分数药丸的前景/边框/底色全部由同一条色带派生，颜色只在一个地方决定。
+export function ipureScoreInlineStyle(score) {
+  const channels = ipureScoreChannels(score);
+  if (!channels) return "";
+  const [red, green, blue] = channels;
+  return `color:rgb(${red} ${green} ${blue});border-color:rgba(${red},${green},${blue},0.45);background:rgba(${red},${green},${blue},0.14)`;
 }
 
-export function isIpureScenarioJudgable(result, key) {
-  return !IPURE_NON_JUDGABLE_LEVELS.has(ipureScenarioLevel(result, key));
+// -1 不参与数值比较：受限节点既不是"最低分"，也不该被分数筛选当成低分命中。
+export function comparableIpureScore(value) {
+  const score = parseImportedNumber(value);
+  return score === null || score === IPURE_RESTRICTED_SCORE ? null : score;
 }
 
 export function firstImportedValue(...values) {
@@ -196,8 +212,8 @@ export function compareResults(left, right, sortKey = "coffee_score", sortDirect
   const leftValue = left[sortKey];
   const rightValue = right[sortKey];
   if (sortKey === "coffee_score" || sortKey === "score") {
-    const leftScore = parseImportedNumber(leftValue);
-    const rightScore = parseImportedNumber(rightValue);
+    const leftScore = sortKey === "score" ? comparableIpureScore(leftValue) : parseImportedNumber(leftValue);
+    const rightScore = sortKey === "score" ? comparableIpureScore(rightValue) : parseImportedNumber(rightValue);
     if (leftScore === null) return rightScore === null ? 0 : 1;
     if (rightScore === null) return -1;
     return (leftScore - rightScore) * direction;
@@ -218,7 +234,8 @@ export function filterResults(results, { query = "", status = "all", columnFilte
  query = query.trim().toLocaleLowerCase("zh-CN");
   return results
     .filter((result) => globalStatus === "all" || result.status === globalStatus)
-    .filter((result) => {      if (query && !searchableResultText(result).includes(query)) return false;
+    .filter((result) => {
+      if (query && !searchableResultText(result).includes(query)) return false;
 
       // 列筛选 1: 节点名称
       if (cf.node && !String(result.node || "").toLocaleLowerCase("zh-CN").includes(cf.node.toLocaleLowerCase("zh-CN"))) {
@@ -227,8 +244,8 @@ export function filterResults(results, { query = "", status = "all", columnFilte
 
       // 列筛选 2: 评分
       if (cf.score) {
-        const s = result.score;
-        if (s == null) return false;
+        const s = comparableIpureScore(result.score);
+        if (s === null) return false;
         if (cf.score === "high" && s < 75) return false;
         if (cf.score === "mid" && (s < 45 || s >= 75)) return false;
         if (cf.score === "low" && s >= 45) return false;
@@ -297,4 +314,4 @@ export function filterResults(results, { query = "", status = "all", columnFilte
     })
     .sort((left, right) => compareResults(left, right, sortKey, sortDirection));
 }
-export { IPURE_LEVEL_LABELS, IPURE_SCORE_LABELS, statusLabels };
+export { IPURE_SCORE_LABELS, statusLabels };

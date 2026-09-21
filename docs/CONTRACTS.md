@@ -82,7 +82,13 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   and (once resolved) artifact ID/name. Unresolved run is `dispatching`, run null,
   jobs empty, job total null. Successful run without artifact is `artifact_pending`.
 - GET `/api/scans/{request_id}/artifact?run_id={id}&run_attempt={attempt}`:
-  ZIP bytes only after exact run and artifact checks, maximum 50 MiB.
+  ZIP bytes only after exact run and artifact checks, maximum 50 MiB. GitHub serves the
+  archive behind a 302 to signed blob storage, so the Worker follows the redirect and
+  then verifies the payload really starts with a ZIP signature (`PK\x03\x04`,
+  `PK\x05\x06` or `PK\x07\x08`) before relaying it; a 2xx that is not a ZIP is
+  re-fetched once with redirects followed and then rejected as 502
+  `GitHub artifact 响应不是 ZIP（收到 N 字节）`. An unfollowed redirect can therefore
+  never reach the browser as an empty 200 body.
 - DELETE `/api/scans/{request_id}?run_id={id}`: 202
   `{request_id,run_id,status:"cancelled"}` means cancellation requested to GitHub,
   not proof of completed runner cleanup; unresolved run returns 409.
@@ -122,10 +128,21 @@ Success and partial require a valid IP and confirmed workspace Mihomo proxy
 evidence, loopback HTTP port, no trust_env, and five true base collection checks.
 `ipure_scores` is always a seven-key map — `total` plus the six documented
 scenarios `ai, social, streaming, gaming, ecommerce, email` — where every value is
-an integer 0..100 or null, and `score` must equal `ipure_scores.total`.
-`ipure_scenario_levels` carries the same six scenario ids mapped to IPure level
-codes (or null); levels such as `restricted`, `not_applicable` and `unusable` mean
-the accompanying scenario score must never be presented as availability.
+an integer 0..100, the sentinel `-1`, or null, and `score` must equal
+`ipure_scores.total`. `-1` means IPure marked that total/scenario as
+`restricted` (region-blocked): the value is off the 0..100 scale, is rendered as
+the number `-1` in neutral grey, and must not be read as "zero" or "lowest".
+Nothing else is accepted — `-2` and `101` are rejected by both validators.
+Level codes, verdicts and per-scenario level maps are not part of the record:
+they stay inside `requests.ipure.data` as raw upstream evidence, so the frontend
+has no level text to render. `data.total` and `data.scenarios[].score` keep the
+raw upstream numbers — `null` included — and the `-1` mapping exists only in the
+record, so one document never mixes two conventions for one value.
+Migration: earlier versions wrote `ipure_level`, `ipure_verdict` and
+`ipure_scenario_levels`. Both validators now ignore those three names on read
+(`_RETIRED_NODE_FIELDS`, `retired`) so results and exports written before the
+change still open; they are never written again, and that tolerance can go once
+`RUNTIME_DIR/results` holds no pre-change job.
 IPure requires no API key or Cookie, so no fallback session evidence exists. A score may
 come from the workspace proxy or, when the node egress cannot connect, from a recorded
 host-side query: such a record sets `requests.ipure.direct_fallback:true`,
@@ -150,6 +167,11 @@ Digest covers exact UTF-8 result bytes, including formatting/newline.
 Sanitizer rejects credential keys, credential-bearing URLs and subscription values.
 Browser checks ZIP paths, duplicate entries, stored/deflate methods, CRC and bounded
 sizes (50 MiB compressed, 100 MiB decompressed), digest, identity and aggregate facts.
+A body shorter than 22 bytes is reported as `artifact ZIP 内容不完整：只收到 N 字节`
+as well as a missing end-of-central-directory, both tagged `code: "artifact_truncated"`.
+That code is the only read failure the gateway may refetch (bounded to three attempts
+inside one poll); every other mismatch — including a complete archive whose manifest
+disagrees with its records — still ends the scan on the first attempt.
 
 Validation boundaries:
 
@@ -167,7 +189,7 @@ Validation boundaries:
 | Scope | Variables/defaults |
 | --- | --- |
 | Local | `BEST_IP_MIHOMO_PATH` runtime/mihomo/mihomo(.exe); `BEST_IP_LOCAL_DEV` false; `BEST_IP_LOCAL_FRONTEND_ORIGIN` unset; `BEST_IP_OUTBOUND_INTERFACE` unset |
-| Limits | `BEST_IP_SUBSCRIPTION_MAX_BYTES` 5242880; `BEST_IP_MAX_NODES` 500; `BEST_IP_MAX_PARALLEL_JOBS` 2; `BEST_IP_MAX_PARALLEL_NODES` 8; `BEST_IP_MAX_NODE_ATTEMPTS` 3; `BEST_IP_NODE_RETRY_BACKOFF_MS` 500; `BEST_IP_PAGE_TIMEOUT_MS` 45000; `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` 30 |
+| Limits | `BEST_IP_SUBSCRIPTION_MAX_BYTES` 5242880; `BEST_IP_MAX_NODES` 500; `BEST_IP_MAX_PARALLEL_JOBS` 2; `BEST_IP_MAX_PARALLEL_NODES` min(16, max(8, CPU count)); `BEST_IP_MAX_NODE_ATTEMPTS` 3; `BEST_IP_NODE_RETRY_BACKOFF_MS` 500; `BEST_IP_PAGE_TIMEOUT_MS` 45000; `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` 30 |
 | Download | `BEST_IP_MIHOMO_TAG`, `BEST_IP_MIHOMO_ARCHIVE_SHA256` optional command defaults; workflow pins v1.19.30 and archive SHA-256 |
 | Local verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800; `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in |
 | Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `SITE_PASSWORD`, `SUBSCRIPTION_RELAY_TOKEN`; `ASSETS` binding |

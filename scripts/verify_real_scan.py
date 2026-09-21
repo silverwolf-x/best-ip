@@ -34,7 +34,12 @@ from backend.app.results.store import result_store
 from backend.app.scan.errors import _TRANSPORT_ERROR_TYPES
 from backend.app.sources.coffee import _is_same_ip, _trace_ip
 from backend.app.sources.http import IPURE_HOST
-from backend.app.sources.ipure import IPURE_SCENARIOS, _ipure_url
+from backend.app.sources.ipure import (
+    IPURE_RESTRICTED_LEVEL,
+    IPURE_RESTRICTED_SCORE,
+    IPURE_SCENARIOS,
+    _ipure_url,
+)
 from backend.app.subscription import (
     download_subscription,
     is_subscription_metadata,
@@ -62,38 +67,62 @@ def _validate_local_api_base(api_base: str) -> str:
     return api_base.rstrip("/")
 
 
+def _ipure_value_valid(value: Any) -> bool:
+    """0..100, the -1 restricted sentinel, or null — nothing else survives."""
+
+    if value is None:
+        return True
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and (value == IPURE_RESTRICTED_SCORE or 0 <= value <= 100)
+    )
+
+
 def _node_ipure_score_valid(record: dict[str, Any], ipure: dict[str, Any]) -> bool:
-    """Every node that produced an exit IP must carry a complete IPure report."""
+    """Every node that produced an exit IP must carry a complete IPure report.
+
+    `requests.ipure.data` keeps the raw upstream numbers, so the expected record value is
+    derived here: a restricted level has no place on the 0..100 scale and must be exactly
+    -1, while every other value must match what upstream published. Neither half can be
+    faked — writing -1 for a non-restricted item, or leaving upstream's own number in
+    place for a restricted one, fails.
+    """
 
     data = ipure.get("data")
     scores = record.get("ipure_scores")
-    levels = record.get("ipure_scenario_levels")
-    if not isinstance(data, dict) or not isinstance(scores, dict) or not isinstance(levels, dict):
+    if not isinstance(data, dict) or not isinstance(scores, dict):
         return False
     total = data.get("total")
     scenarios = data.get("scenarios")
     if (
-        not isinstance(total, int)
-        or isinstance(total, bool)
-        or not 0 <= total <= 100
-        or record.get("score") != total
-        or scores.get("total") != total
+        not _ipure_value_valid(total)
         or set(scores) != {"total", *IPURE_SCENARIOS}
-        or set(levels) != set(IPURE_SCENARIOS)
         or not isinstance(scenarios, dict)
         or set(scenarios) != set(IPURE_SCENARIOS)
     ):
         return False
-    if any(value is not None and not isinstance(value, str) for value in levels.values()):
+    expected_total = (
+        IPURE_RESTRICTED_SCORE if data.get("level") == IPURE_RESTRICTED_LEVEL else total
+    )
+    if (
+        expected_total is None
+        or record.get("score") != expected_total
+        or scores.get("total") != expected_total
+    ):
+        return False
+    if any(not _ipure_value_valid(value) for value in scores.values()):
         return False
     for scenario_id in IPURE_SCENARIOS:
         entry = scenarios.get(scenario_id)
-        expected = entry.get("score") if isinstance(entry, dict) else None
-        if expected is not None and (
-            not isinstance(expected, int)
-            or isinstance(expected, bool)
-            or not 0 <= expected <= 100
-        ):
+        if not isinstance(entry, dict):
+            return False
+        expected = entry.get("score")
+        if entry.get("level") == IPURE_RESTRICTED_LEVEL:
+            if scores.get(scenario_id) != IPURE_RESTRICTED_SCORE:
+                return False
+            continue
+        if not _ipure_value_valid(expected):
             return False
         if scores.get(scenario_id) != expected:
             return False

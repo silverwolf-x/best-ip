@@ -1,4 +1,4 @@
-import { filterResults, normalizeIpureScores, IPURE_SCORE_LABELS, ipureScenarioLabel, isIpureScenarioJudgable, statusLabels, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
+import { filterResults, normalizeIpureScores, IPURE_SCORE_LABELS, ipureScoreInlineStyle, statusLabels, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
 export function createTableView(state, elements, document) {
 let renderFrame = null;
 function renderRows() {
@@ -48,51 +48,37 @@ function createResultRow(result) {
     cell.replaceChildren(button);
   });
   appendTextCell(row, "", (cell) => {
-    if (result.score == null) {
-      const unavailable = result.requests?.ipure?.error_type === "EnrichmentUnavailable";
-      const label = unavailable ? "不可用" : "—";
-      const title = unavailable ? (result.requests?.ipure?.error || "IPure 查询暂不可用") : "暂无评分";
+    // 分数列只显示 ipure.dev 给的分数（受限项是 -1），颜色由唯一的色带函数决定。
+    const score = result.score == null || result.score === "" ? null : Number(result.score);
+    const style = ipureScoreInlineStyle(score);
+    if (!style) {
       const badge = document.createElement("span");
       badge.className = "score-pill score-none";
-      badge.title = title;
-      badge.textContent = label;
+      badge.title = "暂无评分";
+      badge.textContent = "—";
       cell.replaceChildren(badge);
-    } else {
-      const score = Number(result.score);
-      const scoreCls = score >= 75 ? "score-great" : score >= 45 ? "score-good" : "score-bad";
-      cell.innerHTML = `<span class="score-pill ${scoreCls}">${score}</span>`;
+      return;
     }
+    const badge = document.createElement("span");
+    badge.className = "score-pill score-band";
+    badge.style.cssText = style;
+    badge.textContent = String(score);
+    cell.replaceChildren(badge);
   });
   appendTextCell(row, "", (cell) => {
     const scores = normalizeIpureScores(result.ipure_scores, result.score);
     const container = document.createElement("div");
     container.className = "tag-chips";
     IPURE_SCORE_LABELS.forEach(([key, label]) => {
-      // 分数可以合法缺席（IPure 对受限场景不给分），但档位仍然存在：
-      // 只有分数与档位都没有时才算“这个场景没有值”。
-      const levelLabel = ipureScenarioLabel(result, key);
-      if (scores[key] == null && !levelLabel) return;
+      const value = scores[key];
+      const style = ipureScoreInlineStyle(value);
+      if (!style) return;
       const chip = document.createElement("span");
-      const judgable = scores[key] != null && isIpureScenarioJudgable(result, key);
-      const scoreClass = !judgable ? "chip-asn" : scores[key] >= 75 ? "chip-ok" : scores[key] >= 45 ? "chip-info" : "chip-warn";
-      chip.className = `chip ${scoreClass}`;
-      if (judgable) chip.textContent = `${label} ${scores[key]}`;
-      else {
-        const shown = levelLabel || "无评分";
-        chip.textContent = `${label} ${shown}`;
-        chip.title =
-          scores[key] == null
-            ? `IPure 判定该场景为「${shown}」，未给出分数`
-            : `IPure 判定该场景为「${shown}」，${scores[key]} 分不代表可用性`;
-      }
+      chip.className = "chip chip-score";
+      chip.style.cssText = style;
+      chip.textContent = `${label} ${value}`;
       container.append(chip);
     });
-    if (!container.children.length && result.requests?.ipure?.error_type === "EnrichmentUnavailable") {
-      const chip = document.createElement("span");
-      chip.className = "chip chip-info";
-      chip.textContent = "查询不可用";
-      container.append(chip);
-    }
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
   });
   appendTextCell(row, "", (cell) => {

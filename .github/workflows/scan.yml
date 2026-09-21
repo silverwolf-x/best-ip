@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Validate dispatch envelope
@@ -44,7 +44,7 @@ jobs:
           [[ -n "$EXPECTED_KEY_ID" && "$KEY_ID" == "$EXPECTED_KEY_ID" ]]
 
       - name: Checkout default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           persist-credentials: false
@@ -74,7 +74,7 @@ jobs:
           uv run --no-sync python -c 'from backend.app.sources.ipure_config import load_ipure_headers; headers = load_ipure_headers(); assert headers.get("cookie"), "IPure verification cookie is required"'
 
       - name: Restore pinned Mihomo archive
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.tool_cache }}/best-ip-mihomo
           key: mihomo-${{ runner.os }}-v1.19.30-cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
@@ -133,7 +133,7 @@ jobs:
           --output-dir "$RUNNER_TEMP/action-artifact"
 
       - name: Upload sanitized result artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: best-ip-result-${{ inputs.request_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/action-artifact

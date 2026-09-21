@@ -3,6 +3,7 @@ const EOCD = 0x06054b50;
 const CENTRAL = 0x02014b50;
 const LOCAL = 0x04034b50;
 const MAX_COMPRESSED = 50 * 1024 * 1024;
+const MIN_ZIP_BYTES = 22;
 const MAX_UNCOMPRESSED = 100 * 1024 * 1024;
 const ALLOWED_FILES = new Set(["status.json", "result.json"]);
 const TEXT_DECODER = new TextDecoder();
@@ -16,9 +17,8 @@ const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
 const SUMMARY_KEYS = [
   "node_index", "node", "type", "selected_proxy", "status", "error",
   "transport_error", "attempt_count", "retry_count", "attempt_errors", "exit_ip",
-  "cidr", "rdns", "ai_verdict", "location", "isp", "score", "is_residential",
-  "ipure_scores", "ipure_level", "ipure_verdict", "ipure_scenario_levels",
-  "ipure_report_url", "is_datacenter", "is_native", "native_status", "native_detail", "is_bogon",
+  "cidr", "rdns", "ai_verdict", "location", "isp", "score", "ipure_scores",
+  "ipure_report_url", "is_residential", "is_datacenter", "is_native", "native_status", "native_detail", "is_bogon",
   "bogon_status", "bogon_reason", "rpki_status", "asn_kind", "asn_kind_display",
   "abuse_level", "honeypot_status", "traffic_profile", "company_type", "is_vpn",
   "is_proxy", "is_tor", "is_crawler", "is_abuser", "security_status", "threat_tags",
@@ -30,12 +30,18 @@ const SUMMARY_KEYS = [
 function u16(view, offset) { return view.getUint16(offset, true); }
 function u32(view, offset) { return view.getUint32(offset, true); }
 
+// “信封不完整”与“信封完整但内容被拒”要分开：前者是传输层少给了字节（空 body、被截断），
+// 换一次就好；后者是结果本身有问题，重取多少次都一样。
+function truncated(message) {
+  return Object.assign(new Error(message), { code: "artifact_truncated" });
+}
+
 function findEnd(view) {
   const start = Math.max(0, view.byteLength - 65_557);
   for (let offset = view.byteLength - 22; offset >= start; offset -= 1) {
     if (offset + 4 <= view.byteLength && u32(view, offset) === EOCD) return offset;
   }
-  throw new Error("artifact ZIP 缺少结束目录");
+  throw truncated("artifact ZIP 缺少结束目录");
 }
 
 function safeName(name) {
@@ -67,6 +73,10 @@ async function inflateRaw(bytes) {
 async function readZip(buffer) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength > MAX_COMPRESSED) {
     throw new Error("artifact ZIP 大小无效");
+  }
+  // 空 body 与坏归档原来共用「缺少结束目录」这一条报错，看不出是谁的问题；这里把字节数直接写出来。
+  if (buffer.byteLength < MIN_ZIP_BYTES) {
+    throw truncated(`artifact ZIP 内容不完整：只收到 ${buffer.byteLength} 字节，至少应有 ${MIN_ZIP_BYTES} 字节`);
   }
   const view = new DataView(buffer);
   const end = findEnd(view);

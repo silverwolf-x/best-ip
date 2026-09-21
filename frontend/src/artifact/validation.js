@@ -1,27 +1,34 @@
 const required = 'schema_version job_id node_index node type selected_proxy status error transport_error started_at finished_at exit_ip elapsed_ms proxy_evidence completeness requests coffee'.split(' ');
-const optional = 'requested_proxy coffee_page_url phase attempt_count retry_count attempt_errors cidr rdns ai_verdict location isp score coffee_score ipure_scores ipure_level ipure_verdict ipure_scenario_levels ipure_report_url is_residential is_datacenter is_native native_status native_detail is_bogon bogon_status bogon_reason rpki_status asn_kind asn_kind_display abuse_level honeypot_status traffic_profile company_type is_vpn is_proxy is_tor is_crawler is_abuser security_status threat_tags asn as_org global_ping port_scan ping_check gpt_check related_domains pages'.split(' ');
+const optional = 'requested_proxy coffee_page_url phase attempt_count retry_count attempt_errors cidr rdns ai_verdict location isp score coffee_score ipure_scores ipure_report_url is_residential is_datacenter is_native native_status native_detail is_bogon bogon_status bogon_reason rpki_status asn_kind asn_kind_display abuse_level honeypot_status traffic_profile company_type is_vpn is_proxy is_tor is_crawler is_abuser security_status threat_tags asn as_org global_ping port_scan ping_check gpt_check related_domains pages'.split(' ');
 const allowed = new Set([...required, ...optional]);
+// 旧版本写过的三个档位字段：落盘契约已收窄，读取时忽略，历史结果仍要能打开。
+const retired = new Set(['ipure_level', 'ipure_verdict', 'ipure_scenario_levels']);
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 // 与 https://ipure.dev/docs/api 的 scenarios[].id 一致，六项评分必须在每个节点上齐备。
+// 取值域：0..100、-1（上游标注地区受限）、null（上游未给分）；-2 / 101 一律拒绝。
 export const IPURE_SCENARIO_KEYS = ['ai', 'social', 'streaming', 'gaming', 'ecommerce', 'email'];
 const scoreKeys = ['total', ...IPURE_SCENARIO_KEYS];
+export const IPURE_RESTRICTED_SCORE = -1;
+function validScore(value) {
+  return value === null || (Number.isInteger(value) && (value === IPURE_RESTRICTED_SCORE || (value >= 0 && value <= 100)));
+}
 function hasExactKeys(value, keys) {
   return isObject(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 function validateIpureScores(record) {
   const scores = record.ipure_scores;
+  const total = record.score ?? null;
+  if (!validScore(total)) throw new Error('节点 IPure 评分取值无效');
   if (scores !== null && scores !== undefined) {
     if (!hasExactKeys(scores, scoreKeys)) throw new Error('节点 IPure 评分字段集合无效');
-    if (scoreKeys.some(key => scores[key] !== null && !(Number.isInteger(scores[key]) && scores[key] >= 0 && scores[key] <= 100))) throw new Error('节点 IPure 评分取值无效');
-    if ((record.score ?? null) !== (scores.total ?? null)) throw new Error('节点总分与 IPure 纯净度不一致');
-  }
+    if (scoreKeys.some(key => !validScore(scores[key]))) throw new Error('节点 IPure 评分取值无效');
+    if (total !== (scores.total ?? null)) throw new Error('节点总分与 IPure 纯净度不一致');
+  } else if (total !== null) throw new Error('节点 IPure 评分字段缺失');
   const ipure = record.requests?.ipure;
   if (isObject(ipure)) {
     if (typeof ipure.direct_fallback !== 'boolean') throw new Error('节点 IPure 直连标记无效');
     if (record.proxy_evidence.ipure_via_direct_fallback !== ipure.direct_fallback || ipure.via_mihomo !== !ipure.direct_fallback) throw new Error('节点 IPure 出口证据无效');
   }
-  const levels = record.ipure_scenario_levels;
-  if (levels !== null && levels !== undefined && (!hasExactKeys(levels, IPURE_SCENARIO_KEYS) || IPURE_SCENARIO_KEYS.some(key => levels[key] !== null && typeof levels[key] !== 'string'))) throw new Error('节点 IPure 场景档位无效');
 }
 function validIp(value) {
   if (typeof value !== 'string' || !value || value.trim() !== value) return false;
@@ -29,7 +36,7 @@ function validIp(value) {
   try { return new URL('http://[' + value + ']/').hostname.startsWith('['); } catch { return false; }
 }
 export function validateRecord(record, jobId, index) {
-  if (!isObject(record) || required.some(key => !Object.hasOwn(record, key)) || Object.keys(record).some(key => !allowed.has(key))) throw new Error('节点记录字段集合无效');
+  if (!isObject(record) || required.some(key => !Object.hasOwn(record, key)) || Object.keys(record).some(key => !allowed.has(key) && !retired.has(key))) throw new Error('节点记录字段集合无效');
   if (record.schema_version !== 1 || record.job_id !== jobId || record.node_index !== index || typeof record.node !== 'string' || !record.node || typeof record.type !== 'string' || !record.type || !Number.isInteger(record.elapsed_ms) || record.elapsed_ms < 0) throw new Error('节点记录结构或身份无效');
   for (const key of ['proxy_evidence', 'completeness', 'requests', 'coffee']) if (!isObject(record[key])) throw new Error('节点记录结构无效');
   const evidence = record.proxy_evidence;

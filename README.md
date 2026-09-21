@@ -48,11 +48,11 @@ npm run dev:no-reload
 - 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开 HTTP/HTTPS 地址。
 - 浏览器使用 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key；明文 URL 不进入 Worker API、GitHub workflow input 或 artifact。
 - Worker 固定调度 `silverwolf-x/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
-- 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 8 个节点并发，每节点最多 3 次尝试。
+- 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 `min(16, max(8, CPU 核数))` 个节点并发（上限为订阅节点数），每节点最多 3 次尝试。
 - Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 没有返回纯净度总分时，节点会如实标记为“部分”。
-- IPure 接入完全按官方 `/docs/api` 契约：`GET /api/lookup?ip={ip}` 无需 API key 或 Cookie。响应解析出 `risk.purity` 纯净度总分、`risk.level` / `risk.label` / `risk.verdict` 档位，以及 `scenarios[]` 的六项场景（`ai`、`social`、`streaming`、`gaming`、`ecommerce`、`email`）评分与档位，另附 `reportUrl`、`source`（fresh / cache / store）与 `stale`。场景档位为 `restricted`、`not_applicable`、`unusable` 时，前端只显示档位而不把该场景分数当作可用性结论。
-- IPure 每次实际 HTTP 请求都会重新读取 `config/ipure.yml` 的 `headers`，修改后无需重启；该文件只用于覆盖请求头（如 User-Agent），已排除出 Git，示例见 `config/ipure.example.yml`。未配置时使用 JSON / `MyIPChecker/1.0` 默认值。`429`（含 `code=open_rate_limited`）最多尝试 3 次，按 1、2 秒退避并遵守秒数形式的 `Retry-After`，等待不会超出查询时间预算，也不切换出口重试；`403`（`code=verification_required`）不盲目重试，而是把官方给出的 `reportUrl` 一并记录。响应头 `x-open-budget-remaining` 会写入 `proxy_evidence.ipure_budget_remaining`。
-- mixed-port 与 controller 只监听 `127.0.0.1`；所有请求固定 `trust_env=False` 并禁用重定向。IPure 不读取也不保存任何凭据，因此不存在直连回退或验证会话。
+- IPure 接入完全按官方 `/docs/api` 契约：`GET /api/lookup?ip={ip}` 无需 API key 或 Cookie。响应解析出 `risk.purity` 纯净度总分、`risk.level` / `risk.label` / `risk.verdict` 档位，以及 `scenarios[]` 的六项场景（`ai`、`social`、`streaming`、`gaming`、`ecommerce`、`email`）评分与档位，另附 `reportUrl`、`source`（fresh / cache / store）与 `stale`。上游档位只用于判断是否写哨兵，**不进入记录**（`ipure_level` / `ipure_verdict` / `ipure_scenario_levels` 已从落盘契约删除，读取时容忍旧 artifact）；前端不为 IPure 分数渲染任何档位或状态文案：六项评分一律显示成带颜色的数字，档位为 `restricted`（地区受限）的项按后端写入的 `-1` 哨兵显示为中性灰的 `-1`，既不参与数值排序也不被分数筛选命中。表格与详情卡里剩下的「受限 / 不可用」文字属于 GPT · Codex 可达性探针（chatgpt.com / api.openai.com 的连通状态），与 IPure 分数无关。
+- IPure 每次实际 HTTP 请求都会重新读取 `config/ipure.yml` 的 `headers`，修改后无需重启；该文件只用于覆盖请求头（如 User-Agent），已排除出 Git，示例见 `config/ipure.example.yml`。未配置时使用 JSON / `MyIPChecker/1.0` 默认值。`429`（含 `code=open_rate_limited`）最多尝试 3 次，按 1、2 秒退避（上限 2 秒）并遵守秒数形式的 `Retry-After`，等待不会超出查询时间预算，也不切换出口重试；`403`（`code=verification_required`）不盲目重试，而是把官方给出的 `reportUrl` 一并记录。响应头 `x-open-budget-remaining` 会写入 `proxy_evidence.ipure_budget_remaining`。
+- mixed-port 与 controller 只监听 `127.0.0.1`；所有请求固定 `trust_env=False` 并禁用重定向。IPure 不读取也不保存任何凭据，因此不存在凭据回退或验证会话；宿主侧直连查询是记录在案的例外，必须与节点出口证据一起落盘（见 `docs/CONTRACTS.md`）。
 - 每个真实节点恰好产生一条 `success`、`partial` 或 `failed` 记录。失败记录的 `exit_ip` 必须为 JSON `null`。
 - 节点文件原子写入；只有节点集合、字段、状态、出口 IP、代理证据、文件大小和 SHA-256 全部通过后才生成 manifest。
 - Actions 运行期间前端只显示 Job/Step，不伪造节点 `0/0` 进度；节点统计以终态 artifact 为唯一事实源。
@@ -110,11 +110,11 @@ DELETE /api/scans/{request_id}?run_id={run_id}
 GET /api/health
 ```
 
-Worker 会精确核对 request ID、workflow path、事件、分支、run/attempt、创建时间窗和唯一 artifact 名称。artifact 只保留 1 天。
+Worker 会精确核对 request ID、workflow path、事件、分支、run/attempt、创建时间窗和唯一 artifact 名称；取件时跟随 GitHub 的 302 到签名 blob，并校验负载确实以 ZIP 魔数（`PK\x03\x04` 等）开头后才转发给浏览器，不是 ZIP 一律按 502 `GitHub artifact 响应不是 ZIP` 失败——所以空 body 不会被当成成功结果送出去。artifact 只保留 1 天。
 
 ## 验证
 
-仓库保留运行源码、部署配置、依赖锁文件和回归测试；本地工具状态、凭据、Mihomo 二进制和扫描结果不进入 Git。本地启动使用 `--no-dev`，不安装 pytest、Ruff 等测试工具。生产 CLI 用法见 [docs/CLI.md](docs/CLI.md)，接口与结果格式见 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+仓库保留运行源码、部署配置与依赖锁文件；本地工具状态、凭据、Mihomo 二进制和扫描结果不进入 Git。测试套件已在提交 `928c770` 中删除、`/tests/` 同时加入 `.gitignore`，因此 `npm test` 与 `uv run pytest` 在干净检出上找不到用例（`ci.yml` 与 `worker.yml` 的测试步骤会因此失败），这一点尚未决定如何处理。本地启动使用 `--no-dev`，不安装 pytest、Ruff 等测试工具。生产 CLI 用法见 [docs/CLI.md](docs/CLI.md)，接口与结果格式见 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
 ```powershell
 uv sync --dev
@@ -145,10 +145,10 @@ uv run pytest tests/test_real_subscription.py::test_real_subscription_download_a
 | `BEST_IP_MIHOMO_PATH` | `runtime/mihomo/mihomo(.exe)` | Mihomo 核心路径 |
 | `BEST_IP_MAX_NODES` | `500` | 单订阅真实节点上限 |
 | `BEST_IP_MAX_PARALLEL_JOBS` | `2` | runner 内同时运行的扫描任务数 |
-| `BEST_IP_MAX_PARALLEL_NODES` | `8` | 单任务并发节点数 |
+| `BEST_IP_MAX_PARALLEL_NODES` | `min(16, max(8, CPU 核数))` | 单任务并发节点数；上限为订阅节点数 |
 | `BEST_IP_MAX_NODE_ATTEMPTS` | `3` | 单节点最大尝试次数 |
 | `BEST_IP_NODE_RETRY_BACKOFF_MS` | `500` | 重试基础退避毫秒数 |
-| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次节点采集预算；IPure 查询单独限制为最多 20 秒并与其他请求并发 |
+| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次节点采集预算；IPure 查询单独限制为最多 30 秒（直连兜底 5 秒）并与其他请求并发 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
 

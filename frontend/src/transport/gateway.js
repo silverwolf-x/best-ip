@@ -4,6 +4,9 @@ import { readArtifact } from "../artifact/reader.js";
 import { buildActionProgress, normalizedRunStatus, positiveInteger } from "./action-progress.js";
 import { snapshot, assertSession, checkDeadline } from "./snapshot.js";
 
+// 归档取件的次数上限：只用来吃掉“传输层少给了字节”这种瞬时情况，不做无限轮询。
+const ARTIFACT_FETCH_ATTEMPTS = 3;
+
 function displayProgress(run, remote) {
   const action = buildActionProgress(run, { available: remote.jobs_available !== false, jobs: Array.isArray(remote.jobs) ? remote.jobs : [], totalCount: remote.jobs_total_count ?? null, warning: remote.jobs_warning || null });
   return {
@@ -68,21 +71,29 @@ export function createGatewayTransport(config, { fetchImpl = globalThis.fetch, n
         return data.terminal;
       }
       if (!remote.artifact_ready) return snapshot({ execution: "completed", phase: "validate", progress: { ...progress, label: "执行已完成，等待终态结果" } });
-      let archive;
-      try {
-        archive = await http.artifact(`${path}/artifact?run_id=${runId}&run_attempt=${attempt}`, data.token);
-      } catch (error) {
-        if (error.code !== "invalid_artifact") throw error;
-        data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error, invalid: true, done: true });
-        data.token = "";
-        return data.terminal;
+      // 归档是终态结果的唯一来源。传输层偶发一个空 body 或被截断的 body 不该让整轮扫描永久作废，
+      // 因此只对“信封不完整”（artifact_truncated）做有界重取；内容不合法的结果照旧一次定终态。
+      let payload = null;
+      let failure = null;
+      for (let fetchIndex = 0; fetchIndex < ARTIFACT_FETCH_ATTEMPTS && !payload; fetchIndex += 1) {
+        let archive;
+        try {
+          archive = await http.artifact(`${path}/artifact?run_id=${runId}&run_attempt=${attempt}`, data.token);
+        } catch (error) {
+          if (error.code !== "invalid_artifact") throw error;
+          data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error, invalid: true, done: true });
+          data.token = "";
+          return data.terminal;
+        }
+        try {
+          payload = await readArtifact(archive, { requestId: data.id, runId, runAttempt: attempt });
+        } catch (error) {
+          failure = error;
+          if (error.code !== "artifact_truncated") break;
+        }
       }
-      try {
-        const payload = await readArtifact(archive, { requestId: data.id, runId, runAttempt: attempt });
-        data.terminal = snapshot({ execution: "completed", phase: "validate", progress, result: payload.result, done: true });
-      } catch (error) {
-        data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error, invalid: true, done: true });
-      }
+      if (payload) data.terminal = snapshot({ execution: "completed", phase: "validate", progress, result: payload.result, done: true });
+      else data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error: failure, invalid: true, done: true });
       data.token = "";
       return data.terminal;
     },

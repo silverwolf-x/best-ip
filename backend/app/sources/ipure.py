@@ -31,16 +31,21 @@ IPURE_SCENARIOS = {
 }
 
 # 官网要求：这些档位下 score 不代表可用性，引用时不能当作结论。
-IPURE_NON_JUDGABLE_LEVELS = frozenset({"restricted", "not_applicable", "unusable"})
+#
+# 其中 restricted（地区受限）不是"分数低"，而是"该地区拿不到分"，因此它不参与
+# 0..100 刻度，改用一个刻度外的哨兵值 -1 落盘；前端把 -1 当成"受限"直接展示数字，
+# 不做任何档位文案映射。not_applicable / unusable 仍然保留上游给的分数。
+IPURE_RESTRICTED_LEVEL = "restricted"
+IPURE_RESTRICTED_SCORE = -1
 
 IPURE_MAX_ATTEMPTS = 4
 
 # 单次尝试的硬上限。未收录 IP 的实时多源查询很慢，若让一次尝试吃满整个时间预算，
 # 卡住的连接会挤掉后面所有重试；限制单次时长才能让重试真正发生。
 IPURE_MAX_ATTEMPT_SECONDS = 10.0
-
-# 直连兜底的硬上限。本机直连 IPure 实测在 1 秒级返回，慢一点也无所谓。
-IPURE_DIRECT_TIMEOUT_SECONDS = 20.0
+# 直连兜底的硬上限。本机直连 IPure 实测在 1 秒级返回：13 次成功兜底全部落在
+# 428–1298ms（中位 596ms），20 秒的旧上限只是在替一个注定超时的请求干等。
+IPURE_DIRECT_TIMEOUT_SECONDS = 5.0
 
 # 未收录 IP 的实时多源查询会偶发被对端直接断开（RemoteProtocolError / IncompleteRead），
 # 这类瞬时错误重试即可恢复，不应当成"拿不到分数"。
@@ -230,12 +235,14 @@ async def _direct_report(
             direct_fallback=True,
             budget_remaining=_budget_remaining(response),
         )
-    except (httpx.HTTPError, ValueError, TimeoutError):
+    except (httpx.HTTPError, ResponseTooLarge, ValueError, TimeoutError):
         return None
 
 
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
-    delay = float(2**attempt)
+    """Bounded retry wait: transient resets recover immediately, 429 keeps Retry-After."""
+
+    delay = min(2**attempt, 2.0)
     retry_after = response.headers.get("Retry-After", "") if response is not None else ""
     if retry_after.isdigit():
         delay = max(delay, float(retry_after))
@@ -287,13 +294,21 @@ def _ipure_url(exit_ip: str) -> str:
 
 
 def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
-    """Normalize one /api/lookup report; the purity total is the only hard requirement."""
+    """Normalize one /api/lookup report; the purity total is the only hard requirement.
+
+    A restricted report may legitimately omit `risk.purity`: upstream marks that level
+    as "not on the 0..100 scale". Everything here stays the raw upstream value — the
+    -1 sentinel is applied in `_ipure_scores`, so `requests.ipure.data` never carries a
+    rewritten number and `risk.purity`/`scenarios[].score` keep one convention.
+    """
 
     if not isinstance(payload, dict):
         return None
     risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
+    level = _clean_text(risk.get("level")) or None
     total = _numeric_score(risk.get("purity"))
-    if total is None:
+    # 受限档真的可能不带 purity；其余档位缺总分才算解析失败。
+    if total is None and level != IPURE_RESTRICTED_LEVEL:
         return None
 
     scenarios = payload.get("scenarios") if isinstance(payload.get("scenarios"), list) else []
@@ -319,7 +334,7 @@ def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
     return {
         "total": total,
         "scenarios": parsed_scenarios,
-        "level": _clean_text(risk.get("level")) or None,
+        "level": level,
         "label": _clean_text(risk.get("label")) or None,
         "verdict": _clean_text(risk.get("verdict")) or None,
         "confidence": _clean_text(risk.get("confidence")) or None,
@@ -334,6 +349,14 @@ def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
     }
 
 
+def _ipure_score(value: Any, level: Any) -> int | None:
+    """Map one upstream score to the record's value, restricted → -1 sentinel."""
+
+    if _clean_text(level) == IPURE_RESTRICTED_LEVEL:
+        return IPURE_RESTRICTED_SCORE
+    return _numeric_score(value)
+
+
 def _ipure_scores(result: dict[str, Any]) -> dict[str, int | None]:
     """Flatten a report into the node record's score map; every key is always present."""
 
@@ -343,24 +366,13 @@ def _ipure_scores(result: dict[str, Any]) -> dict[str, int | None]:
     }
     if data is None:
         return scores
-    scores["total"] = _numeric_score(data.get("total"))
+    scores["total"] = _ipure_score(data.get("total"), data.get("level"))
     scenarios = data.get("scenarios") if isinstance(data.get("scenarios"), dict) else {}
     for scenario_id in IPURE_SCENARIOS:
         item = scenarios.get(scenario_id)
         if isinstance(item, dict):
-            scores[scenario_id] = _numeric_score(item.get("score"))
+            scores[scenario_id] = _ipure_score(item.get("score"), item.get("level"))
     return scores
-
-
-def _ipure_scenario_levels(result: dict[str, Any]) -> dict[str, str | None]:
-    data = result.get("data") if isinstance(result.get("data"), dict) else None
-    nested = data.get("scenarios") if isinstance(data, dict) else None
-    scenarios = nested if isinstance(nested, dict) else {}
-    levels: dict[str, str | None] = {}
-    for scenario_id in IPURE_SCENARIOS:
-        item = scenarios.get(scenario_id)
-        levels[scenario_id] = item.get("level") if isinstance(item, dict) else None
-    return levels
 
 
 def _ipure_field(result: dict[str, Any], key: str) -> Any:

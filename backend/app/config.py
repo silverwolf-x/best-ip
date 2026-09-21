@@ -57,7 +57,15 @@ class Settings:
     subscription_max_bytes: int = int(os.getenv("BEST_IP_SUBSCRIPTION_MAX_BYTES", 5 * 1024 * 1024))
     max_nodes: int = int(os.getenv("BEST_IP_MAX_NODES", "500"))
     max_parallel_jobs: int = int(os.getenv("BEST_IP_MAX_PARALLEL_JOBS", "2"))
-    max_parallel_nodes: int = int(os.getenv("BEST_IP_MAX_PARALLEL_NODES", "8"))
+    # 并发节点数默认取 CPU 核数（夹在 8..16）。实测依据：同一条 25 节点订阅在相同时间窗内
+    # 交错对照 8 vs 16 并发，16 并发把墙钟从 50.9s/70.9s 压到 30.4s/31.2s（失败节点数相同的
+    # 那两轮拿分节点数都是 13），而 8 并发时失败节点只能排在成功节点后面逐个占槽位，尾巴更长。
+    max_parallel_nodes: int = int(
+        os.getenv(
+            "BEST_IP_MAX_PARALLEL_NODES",
+            str(min(16, max(8, os.cpu_count() or 8))),
+        )
+    )
     max_node_attempts: int = int(os.getenv("BEST_IP_MAX_NODE_ATTEMPTS", "3"))
     node_retry_backoff_ms: int = int(os.getenv("BEST_IP_NODE_RETRY_BACKOFF_MS", "500"))
     outbound_interface: str | None = (
