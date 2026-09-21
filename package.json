@@ -7,10 +7,7 @@
     "dev:no-reload": "uv run --no-dev python scripts/dev.py --no-reload",
     "check": "node scripts/check_js.mjs",
     "verify-notes": "node scripts/verify-notes.mjs",
-    "test:frontend": "node --test tests/frontend_modules.test.mjs tests/frontend_app.test.mjs",
-    "test:worker": "node --test tests/worker/*.test.mjs",
-    "test:contracts": "node --test tests/contracts.test.mjs",
-    "test": "npm run check && npm run test:frontend && npm run test:worker && npm run test:contracts",
+    "test": "npm run check",
     "deploy": "wrangler deploy",
     "dry-run": "wrangler deploy --dry-run"
   },

@@ -61,7 +61,7 @@ npm run dev:no-reload
 
 推荐使用 Cloudflare Workers Builds：在现有 Worker 的 Settings → Builds 连接 GitHub 仓库，生产分支选 `main`，根目录留空，Build command 留空，Deploy command 填 `npx wrangler deploy`，Preview deploy command 填 `npx wrangler versions upload`，构建变量设 `NODE_VERSION=22`。依赖安装由构建机处理，本机只需提交并推送代码。
 
-Worker 没有第三方运行时 npm 依赖；密码会话和 GitHub App RS256 签名都使用原生 Web Crypto。`package.json` 与锁文件保留模块声明、测试命令和 Wrangler 部署工具。
+Worker 没有第三方运行时 npm 依赖；密码会话和 GitHub App RS256 签名都使用原生 Web Crypto。`package.json` 与锁文件保留模块声明、语法检查命令和 Wrangler 部署工具。
 
 也可在安装 Node.js 22 和 npm 的电脑上手动部署：
 
@@ -114,29 +114,23 @@ Worker 会精确核对 request ID、workflow path、事件、分支、run/attemp
 
 ## 验证
 
-仓库保留运行源码、部署配置与依赖锁文件；本地工具状态、凭据、Mihomo 二进制和扫描结果不进入 Git。测试套件已在提交 `928c770` 中删除、`/tests/` 同时加入 `.gitignore`，因此 `npm test` 与 `uv run pytest` 在干净检出上找不到用例（`ci.yml` 与 `worker.yml` 的测试步骤会因此失败），这一点尚未决定如何处理。本地启动使用 `--no-dev`，不安装 pytest、Ruff 等测试工具。生产 CLI 用法见 [docs/CLI.md](docs/CLI.md)，接口与结果格式见 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
+仓库保留运行源码、部署配置与依赖锁文件；本地工具状态、凭据、Mihomo 二进制和扫描结果不进入 Git。测试套件已在提交 `928c770` 中删除、`/tests/` 同时加入 `.gitignore`，因此本仓库不再有 Python 或 JavaScript 用例：`npm test` 只做语法检查（`node --check`），CI 不再运行 `pytest`。门禁保留的是一条能真跑通的检查 —— Ruff、`npm test`（语法）、`npm run verify-notes` 和 `wrangler deploy --dry-run`。本地启动使用 `--no-dev`，不安装 pytest、Ruff 等测试工具。生产 CLI 用法见 [docs/CLI.md](docs/CLI.md)，接口与结果格式见 [docs/CONTRACTS.md](docs/CONTRACTS.md)。
 
 ```powershell
 uv sync --dev
 uv run ruff check .
-uv run pytest -q
 npm ci
 npm test
+npm run verify-notes
 npm run dry-run
 git diff --check
 ```
 
 `scan.yml` 的生产运行只安装锁定的运行时依赖，并缓存已固定 SHA-256 的 Mihomo 压缩包；缓存命中后仍重新校验摘要再解压。
 
-真实订阅集成测试不会把订阅地址写入仓库，运行前通过环境变量注入：
+真实订阅不会写入仓库，运行前通过环境变量注入，并走生产同一套脚本。
 
-```powershell
-$env:RUN_REAL_SUBSCRIPTION = "1"
-$env:BEST_IP_REAL_SUBSCRIPTION_URL = "https://example.invalid/subscription?token=..."
-uv run pytest tests/test_real_subscription.py::test_real_subscription_download_and_parse -q
-```
-
-完整本地扫描验收还需要先启动 `127.0.0.1:8000` 的 API，并通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入真实订阅（不要把 token 写入仓库）。IPure 无需任何凭据。
+完整本地扫描验收需要先启动 `127.0.0.1:8000` 的 API，并通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入真实订阅（不要把 token 写入仓库）。IPure 无需任何凭据。生产路径的闭环用 `uv run --no-dev python scripts/verify_real_scan.py`，它按同一个 `BEST_IP_API_BASE` 校验节点、评分与脱敏约束。
 
 ## 配置
 
@@ -156,7 +150,7 @@ uv run pytest tests/test_real_subscription.py::test_real_subscription_download_a
 
 - 只支持顶部含 `proxies` 列表的 Mihomo YAML；不支持 URI 列表或只有远程 `proxy-providers` 的配置。
 - 如果全部节点服务器都是域名且没有可用的字面 IP 引导节点，严格 DNS 隔离可能导致节点明确失败，不会回退宿主代理。
-- Coffee 接口以及 IPure `/api/lookup` 的字段和限流属于外部服务，改版时必须同步 URL allowlist、解析器与契约测试。
+- Coffee 接口以及 IPure `/api/lookup` 的字段和限流属于外部服务，改版时必须同步 URL allowlist 与解析器；仓库不再有契约测试兜底，改版只能靠真实订阅扫描发现。
 - IPure 对未收录 IP 的免验证查询按来源 IP 每天 5 次、全站每分钟 15 次限流；额度用完返回 `403 verification_required`，此时节点会标记为“部分”并记录官方 `reportUrl`，无法在本次扫描中取得分数。
 - `source` 为 `store` 且 `stale` 为真时返回的是历史报告，分数反映当初检测时的状态。
 - Cloudflare Worker 不执行扫描本身；扫描延迟仍包含 GitHub Actions 排队、runner 初始化、Mihomo 启动和节点网络耗时。

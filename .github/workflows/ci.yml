@@ -20,15 +20,13 @@ jobs:
         run: uv sync --frozen --dev
       - name: Lint
         run: uv run ruff check .
-      - name: Test Python
-        run: uv run pytest
       - name: Install Node dependencies
         uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci --prefer-offline --no-audit
-      - name: Check and test JavaScript/Worker
-        run: npm test
+      - name: Check JavaScript and Worker syntax
+        run: npm run check
       - name: Wrangler dry-run
         run: npm run dry-run

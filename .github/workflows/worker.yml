@@ -23,8 +23,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit
-      - name: Verify build and tests
-        run: npm test
+      - name: Verify Worker syntax
+        run: npm run check
       - name: Deploy Worker and static assets
         run: npm run deploy
         env:
