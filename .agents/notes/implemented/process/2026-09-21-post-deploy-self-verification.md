@@ -45,4 +45,4 @@ Status: implemented
 - 本地对生产跑通：`SITE_PASSWORD=… node scripts/verify_deploy.mjs --site https://best-ip.silverwolfx.workers.dev` → 7/7 通过（4 项无凭据 + CSRF/会话 2 项 + `21/21 个文件` 逐字节一致）。
 - 无密码降级路径：同一命令不带 `SITE_PASSWORD` → 4/4 通过，并明确打印「本次**没有**验证线上内容与 commit 一致」，退出码 0。
 - `npm run check` 覆盖 `scripts/*.mjs`（`node --check`），新脚本在语法门禁内。
-- 流水线：`SITE_PASSWORD` secret 已于 2026-09-21T16:14:42Z 设置；随后一次 push 触发的自动发布会在 `Deploy Worker and static assets` 之后执行这一步，结果记在提交说明与后续更新里。
+- 流水线（真实证据）：`SITE_PASSWORD` secret 于 2026-09-21T16:14:42Z 设置；提交 `d764365` 推送后，CI 运行 `35624457863` success，`Deploy Cloudflare Worker` 运行 `35624491765` 于 16:15:57Z 由 `workflow_run` **自动**创建并 success（`Current Version ID: 798e728e-c381-4753-9bd3-449e20c7f831`），其中第 7 步 `Verify deployed release` success：`登录页可达 / CSP 仍放行签名 blob / 未登录访问被会话门挡住 / 静态资源未登录不可读 / 登录页下发 CSRF 令牌 / 登录换取会话 / 线上内容与 HEAD 逐字节一致（21/21 个文件）`，`结果：7/7 项通过`，`SITE_PASSWORD` 在日志里被掩码为 `***`，校验本身耗时约 4.5 秒。
