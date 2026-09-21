@@ -39,9 +39,15 @@ Status: implemented
 `-1` 不在刻度上：按 0 去插值会让受限项落到最刺眼的品红，等于把「地区受限」误报成「分数最低」。
 官网同样不给受限项上色，这条规则与它保持一致。
 
-**唯一着色点。** `ipureScoreInlineStyle(score)` 同时给出 `color` / `border-color` / `background` 三段样式，
-表格分数格、场景 chip、详情 hero 都走它；`.score-band` 与 `.chip-score` 只留字重与等宽数字、不留颜色，
-同一个分数不会在两处渲染出两种颜色。
+> 上表五个颜色值与 `-1` 的中性灰取值**已被取代**：分段数量与插值算法保留，但锚点色调改为按固定亮度带
+> 解出的高对比墨色，`-1` 保留官网色相、只把亮度修到可读。见
+> [IPure 色带改用 Coffee 色调配方，受限项与占位一并补上对比度](../bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
+> 本文关于取值域、哨兵、唯一着色点、排序与筛选的决定仍然成立。
+
+**唯一着色点。** 表格分数格、场景 chip、详情 hero 都只从 `ipureScoreInlineStyle(score)` 拿颜色，
+同一个分数不会在两处渲染出两种颜色。该函数给出的东西后来变了：不再是 `color` / `border-color` /
+`background` 三段样式，而是浅色/深色两组通道（`--sc-l` / `--sc-d`），选色与透明度由 `.score-band` /
+`.chip-score` 按主题完成——原因见 [IPure 色带改用 Coffee 色调配方](../bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
 
 **`-1` 不是数值。** 排序与分数列筛选走 `comparableIpureScore()`，`-1` 返回 `null`，
 既不参与数值排序，也不会被 `<45` 这类筛选命中。
@@ -94,6 +100,12 @@ Status: implemented
 
 ## Testing
 
+> 本段描述的是**已经不在仓库里的** `tests/` 套件：那批测试在 `928c770` 被整体删除
+> （见 [CI 只保留不依赖测试套件的门禁](../process/2026-09-21-ci-gates-without-tests.md)），今天的门禁是
+> `npm run check` 与 `npm run verify-notes`。段内的**颜色期望值也已被取代**——五个锚点与 `-1` 的当前取值见
+> [IPure 色带改用 Coffee 色调配方，受限项与占位一并补上对比度](../bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
+> 仍然成立的是**语义**：五段端点与插值关系、`-2` / `101` 无色、`-1` 不参与排序与分数列筛选。
+> 顺带一句事实更新：`ipureScoreColor` 当前全仓零调用（当时守卫它的那条「只许在 results.js 里被引用」断言随套件一起消失）。
 `tests/frontend_app.test.mjs` 用官网采样点钉住五段端点与插值（0 / 25 / 50 / 75 / 100 与
 32 / 54 / 58 / 59 / 77 / 79 / 82），`-1` → `rgb(139 155 171)`，`-2` / `101` → 无色；
 并断言 chip 里不再出现「不可用」「不适用」「地区受限」，`-1` 不参与排序与分数列筛选。

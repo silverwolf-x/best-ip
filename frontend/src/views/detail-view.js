@@ -9,6 +9,17 @@ function openDetails(summary) {
   elements.detailDialog.showModal();
 }
 
+// 分数通道必须在节点进入 DOM 之后用 CSSOM 写，不能拼进 innerHTML 的 style 属性。
+// 生产的 CSP 是 `style-src 'self'`（不含 'unsafe-inline'，见 worker/responses.js），
+// 它会拦掉由标记解析出来的 style 属性——只有 `element.style` 之类的 CSSOM 赋值不算内联样式。
+// 旧写法正是把 color/border-color/background 拼进 innerHTML，所以在线上从来没生效过；
+// 现在通道改成拼 data 属性、进 DOM 后再写，两种写法都过。
+function applyIpureScoreStyles(container) {
+  container.querySelectorAll("[data-ipure-score]").forEach((element) => {
+    element.style.cssText = ipureScoreInlineStyle(element.dataset.ipureScore);
+  });
+}
+
 function renderDetails(result) {
   const lookup = result.coffee?.lookup || {};
   const intel = lookup.intelligence || {};
@@ -30,8 +41,10 @@ function renderDetails(result) {
   const ipureScores = normalizeIpureScores(result.ipure_scores, result.score);
   const ipureScoreChips = IPURE_SCORE_LABELS
     .filter(([key]) => ipureScoreInlineStyle(ipureScores[key]))
-    .map(([key, label]) => `<span class="chip chip-score" style="${ipureScoreInlineStyle(ipureScores[key])}">${label} ${ipureScores[key]}</span>`)
+    // 通道用 data 属性带进去，style 属性由 applyIpureScoreStyles 在进 DOM 后用 CSSOM 写（CSP 会拦标记里的 style）。
+    .map(([key, label]) => `<span class="chip chip-score" data-ipure-score="${ipureScores[key]}">${label} ${ipureScores[key]}</span>`)
     .join("");
+
   const ipureReportUrl = result.ipure_report_url || "";
 
   headSection.innerHTML = `
@@ -55,7 +68,7 @@ function renderDetails(result) {
         <span class="modal-score-lbl">Coffee 评分</span>
         <strong class="modal-score-num">${coffeeScore ?? "—"}</strong>
       </div>
-      <div class="modal-score-box ${scoreBadgeCls}"${scoreStyle ? ` style="${scoreStyle}"` : ""}>
+      <div class="modal-score-box ${scoreBadgeCls}"${scoreStyle ? ` data-ipure-score="${scoreVal}"` : ""}>
         <span class="modal-score-lbl">IPure 总分</span>
         <strong class="modal-score-num">${scoreVal != null ? scoreVal : "—"}</strong>
       </div>
@@ -172,6 +185,8 @@ function renderDetails(result) {
   content.append(raw);
 
   elements.detailContent.replaceChildren(content);
+  // 节点已经在 DOM 里了，这时候写通道才算 CSSOM 赋值，不会被 CSP 拦。
+  applyIpureScoreStyles(elements.detailContent);
 }
 
 function renderDetailFlags(result) {

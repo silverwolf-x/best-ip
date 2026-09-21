@@ -7,6 +7,9 @@
   --text: #1a1a1a;
   --text-soft: #57606a;
   --text-muted: #8b949e;
+  /* 「暂无评分」占位（.score-none 的「—」）专用：--text-muted 在浅色的 --bg-soft 上
+     只有 2.92:1，低于 AA 4.5:1；这里只把这一处的墨色压到 4.62:1，不动 --text-muted 本身。 */
+  --score-none-ink: #6a727c;
   --border: #e1e4e8;
   --border-strong: #d8dce0;
   --shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
@@ -36,6 +39,7 @@
     --text: #e6edf3;
     --text-soft: #c9d1d9;
     --text-muted: #8b949e;
+    --score-none-ink: #8b949e;
     --border: #30363d;
     --border-strong: #444c56;
     --shadow: 0 1px 4px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -65,6 +69,7 @@
   --text: #e6edf3;
   --text-soft: #c9d1d9;
   --text-muted: #8b949e;
+  --score-none-ink: #8b949e;
   --border: #30363d;
   --border-strong: #444c56;
   --shadow: 0 1px 4px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -681,12 +686,36 @@ h1 {
 .score-great, .score-high { background: var(--good-soft); color: var(--good); border: 1px solid var(--good-border); }
 .score-good, .score-mid { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-border); }
 .score-low, .score-bad { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
-.score-none { background: var(--bg-soft); color: var(--text-muted); border: 1px solid var(--border); }
+/* 「暂无评分」占位：墨色用 --score-none-ink（浅色 4.62:1 / 深色 5.62:1 on --bg-soft），
+   不再用 --text-muted —— 后者在浅色的 --bg-soft 上只有 2.92:1。 */
+.score-none { background: var(--bg-soft); color: var(--score-none-ink); border: 1px solid var(--border); }
 
-/* 色带直显（第2列与场景 chip）：颜色一律由 results.js 的 ipureScoreInlineStyle 以内联样式给出。
-   类名只负责排版不设颜色，避免同一分数在两处显示成两种颜色；-1（地区受限）用中性灰。 */
-.score-band { border: 1px solid transparent; font-variant-numeric: tabular-nums; }
-.chip-score { font-variant-numeric: tabular-nums; font-weight: 700; }
+/* 分数色带（第 2 列分数药丸、场景 chip、详情 hero 总分框）
+   results.js 的 ipureScoreInlineStyle 只写入 --sc-l / --sc-d 两组通道（浅色/深色主题各一套），
+   选哪一套、以及前景/描边/底色的透明度都在这里决定。取色配方与 Coffee 评分
+   （.score-great / .score-good / .score-bad：深色文字 + 浅色同色底 + 同色描边）保持一致，
+   所以同一个分数在表格、chip、详情弹窗里不可能显示成两种颜色。
+   主题分发必须留在 CSS：内联样式拿不到当前主题，切换主题也不会重渲染节点。
+   兜底通道是受限项的中性灰（与 results.js 的 IPURE_RESTRICTED_CHANNELS 是同一份真值，
+   改那边必须同步这两个 var() 的兜底值），任何漏带内联样式的元素都不会退化成无效颜色。 */
+.score-band,
+.chip-score {
+  --sc: var(--sc-l, 85 99 114);
+  color: rgb(var(--sc));
+  background: rgb(var(--sc) / 0.14);
+  border: 1px solid rgb(var(--sc) / 0.45);
+  font-variant-numeric: tabular-nums;
+}
+.chip-score { font-weight: 700; }
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) :is(.score-band, .chip-score) {
+    --sc: var(--sc-d, 147 163 179);
+  }
+}
+:root[data-theme="dark"] :is(.score-band, .chip-score) {
+  --sc: var(--sc-d, 147 163 179);
+}
 
 /* 表格内微型延迟条 (Coffee 全球 Ping & GPT · Codex 严格单行高审美微型条) */
 .mini-ping-bar, .mini-gpt-bar {

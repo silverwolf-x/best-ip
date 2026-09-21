@@ -8,21 +8,48 @@ const IPURE_SCORE_LABELS = [
   ["ecommerce", "电商"],
   ["email", "邮件"],
 ];
-// 分数配色直接复刻 ipure.dev 官网自己的色带（取自 /ip/{ip} 页面内联样式）：
-// 0 品红 → 25 橙红 → 50 黄 → 75 绿 → 100 青，相邻停靠点之间按位置线性插值，逐通道取整。
-// 官网不再有"绿/黄/红"三档断点，前端因此也不再分桶，避免同一个分数在两处显示不同颜色。
-const IPURE_SCORE_STOPS = [
-  [0, [232, 68, 125]],
-  [25, [242, 115, 78]],
-  [50, [242, 193, 78]],
-  [75, [141, 232, 106]],
-  [100, [52, 229, 196]],
-];
+// 分数色带的**色相分段**仍取自 ipure.dev 官网（0 品红 → 25 橙红 → 50 黄 → 75 绿 → 100 青，
+// 相邻停靠点之间按位置线性插值、逐通道取整）；分段数量与插值算法一个字没改。
+// 改的是每个锚点自己的**色调**：官网那五个色是页面主色，饱和度高、亮度也高，
+// 直接拿来当文字色，在白底上只有 1.42–3.2:1（100 分青 1.6:1、75 分绿 1.5:1），读不清。
+// 这里把锚点重调成应用自己的配色配方（与 Coffee 评分的 --good / --warn / --danger 同一套）——
+// 墨色文字 + 同色浅底 + 同色描边：亮度带钉在 oklch L≈0.48–0.51（浅色）与 0.69–0.72（深色），
+// 正好落在 Coffee 的 #1d7a3a（L=0.511）/ #3fb950（L=0.695）同一条带上；
+// chroma 取该亮度下 sRGB 上限的 0.9 倍（浅色均值 0.128，Coffee 三个 token 均值 0.126）。
+// 结果：0–100 全量程最低对比度 5.06:1（浅色）/ 5.14:1（深色），锚点之间不再有色阶塌陷。
+// 两套锚点只差亮度，色相与分段完全相同，因此浅色/深色下同一个分数的色相位置一致。
+const IPURE_SCORE_STOPS = {
+  light: [
+    [0, [179, 32, 89]],
+    [25, [169, 59, 23]],
+    [50, [122, 93, 23]],
+    [75, [51, 110, 23]],
+    [100, [26, 109, 93]],
+  ],
+  dark: [
+    [0, [248, 115, 153]],
+    [25, [248, 122, 85]],
+    [50, [198, 154, 45]],
+    [75, [88, 181, 44]],
+    [100, [49, 179, 153]],
+  ],
+};
+// 内联样式不可能知道当前主题（主题切换也不重渲染），所以每个分数同时写入浅色/深色两组通道，
+// 由 styles.css 按主题选出用哪一组。
+const IPURE_SCORE_THEMES = ["light", "dark"];
+const IPURE_SCORE_DEFAULT_THEME = "light";
+// 主题 → CSS 自定义属性名。必须显式写出来：styles.css 只读 --sc-l / --sc-d 这两个名字，
+// 若用主题名首字母现拼（--sc-${theme[0]}），将来多一个主题只会写出一组没人读的变量，
+// 该主题下静默退回浅色通道。
+const IPURE_SCORE_STYLE_VARS = { light: "--sc-l", dark: "--sc-d" };
 // 地区受限不是"分数低"：-1 在 0..100 刻度之外，硬插值会落到 0 分位的品红，
-// 等于把"该地区受限"谎报成"分数极低"。官网自己也不给受限项上色（用中性灰），
-// 所以 -1 沿用官网的中性灰 --color-ink-dim，仍然以数字形式展示。
+// 等于把"该地区受限"谎报成"分数极低"。官网自己也不给受限项上色（用中性灰 #8B9BAB，
+// 但那个灰在白底上只有 2.85:1），所以保留它的色相与绝对 chroma，只把亮度修到可读。
 export const IPURE_RESTRICTED_SCORE = -1;
-export const IPURE_RESTRICTED_CHANNELS = [139, 155, 171];
+export const IPURE_RESTRICTED_CHANNELS = {
+  light: [85, 99, 114],
+  dark: [147, 163, 179],
+};
 const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
 export function normalizeImportedResult(raw, index, source) {
   if (!isRecord(raw)) throw new Error(`第 ${index + 1} 个节点结果不是对象。`);
@@ -135,15 +162,18 @@ export function formatIpureScores(value) {
 }
 
 // 唯一的分数取色入口：表格、场景 chip、详情弹窗都必须走这里，
-// 否则同一个分数会在两处显示成不同颜色。
-export function ipureScoreChannels(score) {
+// 否则同一个分数会在两处显示成不同颜色。theme 只决定用哪一套墨色，分段与插值两套相同。
+export function ipureScoreChannels(score, theme = IPURE_SCORE_DEFAULT_THEME) {
   const value = parseImportedNumber(score);
   if (value === null) return null;
-  if (value === IPURE_RESTRICTED_SCORE) return IPURE_RESTRICTED_CHANNELS;
+  if (value === IPURE_RESTRICTED_SCORE) {
+    return IPURE_RESTRICTED_CHANNELS[theme] ?? IPURE_RESTRICTED_CHANNELS[IPURE_SCORE_DEFAULT_THEME];
+  }
   if (value < 0 || value > 100) return null;
-  for (let index = 0; index < IPURE_SCORE_STOPS.length - 1; index += 1) {
-    const [low, lowChannels] = IPURE_SCORE_STOPS[index];
-    const [high, highChannels] = IPURE_SCORE_STOPS[index + 1];
+  const stops = IPURE_SCORE_STOPS[theme] ?? IPURE_SCORE_STOPS[IPURE_SCORE_DEFAULT_THEME];
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const [low, lowChannels] = stops[index];
+    const [high, highChannels] = stops[index + 1];
     if (value < low || value > high) continue;
     const ratio = (value - low) / (high - low);
     return lowChannels.map((channel, channelIndex) =>
@@ -152,17 +182,22 @@ export function ipureScoreChannels(score) {
   return null;
 }
 
-export function ipureScoreColor(score) {
-  const channels = ipureScoreChannels(score);
+export function ipureScoreColor(score, theme = IPURE_SCORE_DEFAULT_THEME) {
+  const channels = ipureScoreChannels(score, theme);
   return channels ? `rgb(${channels.join(" ")})` : null;
 }
 
-// 分数药丸的前景/边框/底色全部由同一条色带派生，颜色只在一个地方决定。
+// 分数药丸的着色入口：只写入两组通道（--sc-l / --sc-d），不写具体颜色。
+// 前景、描边与底色都由 styles.css 按主题从同一组通道派生，
+// 所以同一个分数在表格、chip、详情弹窗里不可能出现两种颜色。
 export function ipureScoreInlineStyle(score) {
-  const channels = ipureScoreChannels(score);
-  if (!channels) return "";
-  const [red, green, blue] = channels;
-  return `color:rgb(${red} ${green} ${blue});border-color:rgba(${red},${green},${blue},0.45);background:rgba(${red},${green},${blue},0.14)`;
+  return IPURE_SCORE_THEMES
+    .map((theme) => {
+      const channels = ipureScoreChannels(score, theme);
+      return channels ? `${IPURE_SCORE_STYLE_VARS[theme]}:${channels.join(" ")}` : "";
+    })
+    .filter(Boolean)
+    .join(";");
 }
 
 // -1 不参与数值比较：受限节点既不是"最低分"，也不该被分数筛选当成低分命中。
