@@ -1,6 +1,13 @@
 name: Deploy Cloudflare Worker
 
+# 发布闭环：push 到 main → CI（lint + 语法 + wrangler dry-run）成功 → 自动上线。
+# 保留 workflow_dispatch 作为人工闸：需要绕过 CI 直接重发一次时仍然可用。
+# CI 的 dry-run 就是这个门禁的前置条件，所以部署不会再因为语法/workflow 配置问题而半途失败。
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -12,10 +19,15 @@ permissions:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
     steps:
+      # 发布的就是 CI 验过的那一个 commit，而不是「触发时 main 上最新的那个」：
+      # 连着推两次时，第二次会在 concurrency 组里取消第一次，最终上线的仍是最后那个通过的 commit。
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
