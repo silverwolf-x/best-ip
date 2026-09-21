@@ -52,7 +52,9 @@ errors are defined in `backend/app/scan/errors.py`.
 ## Gateway HTTP and dispatch
 
 All requests, including static assets/config and health, require a password session,
-except GET/POST `/login`, GET/POST `/logout`, and GET `/login.css`.
+except GET/POST `/login`, GET/POST `/logout`, and GET `/login.css`. The subscription
+relay in the next paragraph is a separate server-to-server endpoint guarded by its own
+shared secret instead of the browser session.
 Login accepts a URL-encoded password form (8192-byte cap), returning a 303 to
 `/` and a 12-hour signed `__Host-best-ip-session` cookie with Secure,
 HttpOnly, SameSite=Strict and Path=/. Wrong passwords return 401. Passwords
@@ -86,6 +88,25 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   not proof of completed runner cleanup; unresolved run returns 409.
 - Errors: `{error:stable_code,detail:safe_message}`, no-store; unexpected errors
   become generic `internal_error` 500.
+
+- POST `/api/subscription-relay`: server-to-server subscription fetch, outside the
+  password session and without same-origin checks, because the caller is an Actions
+  runner with no cookie or Origin. It requires header
+  `X-Best-IP-Relay-Token`, compared in constant time against the Worker secret
+  `SUBSCRIPTION_RELAY_TOKEN`; a missing or short secret is 503 `worker_not_configured`
+  and a wrong token is 401 `unauthorized`. Body `{url}` is validated structurally only
+  (length 8..4096, http/https, hostname present, no userinfo, no whitespace or control
+  characters, port 1..65535, and no localhost/`.localhost`/`.internal`/`.local` or
+  private, loopback, link-local and reserved IP literals). The Worker therefore does
+  NOT resolve DNS or judge the target's public reachability; the runner re-validates
+  every hop with `validate_public_url`. Upstream is fetched with `redirect:"manual"`
+  and a 20 second timeout on Cloudflare's egress, capped at 5 MiB. A 200 carries
+  `{status,location,body_b64}`: `location` only for 300..399 (truncated to 4096 chars,
+  with `body_b64:null`) so the runner can re-validate the hop, otherwise `body_b64` is
+  base64 of the upstream body. Errors are `{error:stable_code}` and no-store: 400
+  `invalid_request`, 405 `method_not_allowed`, 413 `response_too_large`, 502
+  `upstream_unreachable`, 504 `upstream_timeout`. The Worker never echoes the target
+  URL, never logs it, and forwards no inbound headers or cookies.
 
 Run title is `Best IP scan {request_id}`. Identity checks bind title, workflow,
 dispatch event, branch, creation window, run and attempt. Artifact name is
@@ -149,8 +170,8 @@ Validation boundaries:
 | Limits | `BEST_IP_SUBSCRIPTION_MAX_BYTES` 5242880; `BEST_IP_MAX_NODES` 500; `BEST_IP_MAX_PARALLEL_JOBS` 2; `BEST_IP_MAX_PARALLEL_NODES` 8; `BEST_IP_MAX_NODE_ATTEMPTS` 3; `BEST_IP_NODE_RETRY_BACKOFF_MS` 500; `BEST_IP_PAGE_TIMEOUT_MS` 45000; `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` 30 |
 | Download | `BEST_IP_MIHOMO_TAG`, `BEST_IP_MIHOMO_ARCHIVE_SHA256` optional command defaults; workflow pins v1.19.30 and archive SHA-256 |
 | Local verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800; `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in |
-| Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `SITE_PASSWORD`; `ASSETS` binding |
-| Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`; variable `SCAN_KEY_ID`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`; run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
+| Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `SITE_PASSWORD`, `SUBSCRIPTION_RELAY_TOKEN`; `ASSETS` binding |
+| Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`, `SCAN_RELAY_TOKEN`; variables `SCAN_KEY_ID`, `SCAN_RELAY_URL`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`, `BEST_IP_SUBSCRIPTION_RELAY_URL`, `BEST_IP_SUBSCRIPTION_RELAY_TOKEN`; run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
 | Deployment CI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 
 ## Frontend transport boundary

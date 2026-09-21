@@ -110,50 +110,20 @@ jobs:
           --request-id "$REQUEST_ID"
           --key-id "$KEY_ID"
 
-      - name: Diagnose subscription reachability
+      - name: Validate subscription relay configuration
+        env:
+          RELAY_URL: ${{ vars.SCAN_RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.SCAN_RELAY_TOKEN }}
         shell: bash
         run: |
-          set +e
-          url="$(cat "$RUNNER_TEMP/subscription-url")"
-          host="$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')"
-          printf 'diag host_labels=%s host_len=%s\n' "$(awk -F. '{print NF}' <<<"$host")" "${#host}"
-          printf 'diag resolv=%s\n' "$(awk '/^nameserver/{printf "%s ",$2}' /etc/resolv.conf)"
-          printf 'diag getent=%s\n' "$(getent ahostsv4 "$host" | awk '{print $1}' | sort -u | tr '\n' ',')"
-          probe() {
-            label="$1"; shift
-            out="$(curl -s -o /dev/null -m 25 -w 'http=%{http_code} redirects=%{num_redirects} bytes=%{size_download} time=%{time_total} ip=%{remote_ip}' "$@")"
-            printf 'diag %s rc=%s %s\n' "$label" "$?" "$out"
-          }
-          probe control-egress -A 'clash.meta' 'https://example.com/'
-          probe prod-ua -A 'clash.meta' "$url"
-          probe browser-ua -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36' "$url"
-          probe no-ua -A '' "$url"
-          uv run --no-sync python - <<'PY'
-          import asyncio, os, sys
-          from pathlib import Path
-          sys.path.insert(0, ".")
-          from backend.app.config import settings
-          from backend.app.subscription import download_subscription, subscription_failure_reason
+          [[ -n "$RELAY_URL" && "$RELAY_URL" == https://* ]]
+          [[ -n "$RELAY_TOKEN" && ${#RELAY_TOKEN} -ge 16 ]]
 
-          url = Path(os.environ["RUNNER_TEMP"], "subscription-url").read_text(encoding="utf-8").strip()
-
-          async def main() -> None:
-              try:
-                  content = await download_subscription(
-                      url,
-                      max_bytes=settings.subscription_max_bytes,
-                      timeout_seconds=settings.subscription_timeout_seconds,
-                  )
-              except Exception as exc:
-                  print(f"diag app-fetch rc=1 reason={subscription_failure_reason(exc)} type={type(exc).__name__}")
-                  return
-              print(f"diag app-fetch rc=0 bytes={len(content)} printable_ascii={content[:1].isascii()}")
-
-          asyncio.run(main())
-          PY
       - name: Run production scan
         env:
           BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
+          BEST_IP_SUBSCRIPTION_RELAY_URL: ${{ vars.SCAN_RELAY_URL }}
+          BEST_IP_SUBSCRIPTION_RELAY_TOKEN: ${{ secrets.SCAN_RELAY_TOKEN }}
           REQUEST_ID: ${{ inputs.request_id }}
         shell: bash
         run: >-

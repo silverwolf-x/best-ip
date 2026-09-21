@@ -159,6 +159,17 @@ def _publish(output: Path, result: bytes, status: bytes) -> None:
             _remove_owned(staging)
 
 
+def _relay_settings() -> tuple[str, str]:
+    """订阅中继配置。两半要么都给，要么都不给；只给一半按配置错误处理，
+    避免 runner 直连被订阅主机拒绝时静默退化。"""
+
+    url = os.environ.get("BEST_IP_SUBSCRIPTION_RELAY_URL", "").strip()
+    token = os.environ.get("BEST_IP_SUBSCRIPTION_RELAY_TOKEN", "").strip()
+    if bool(url) != bool(token):
+        raise ValueError("订阅中继配置不完整")
+    return (url, token)
+
+
 async def run(
     args: argparse.Namespace,
     *,
@@ -183,6 +194,7 @@ async def run(
         from backend.app.scan.jobs import JobNotReadyError, ScanJobManager
         from backend.app.subscription import (
             SubscriptionError,
+            SubscriptionRelay,
             download_subscription,
             subscription_failure_reason,
         )
@@ -191,6 +203,11 @@ async def run(
     app_settings = app_settings or settings
     manager_factory = manager_factory or ScanJobManager
     download = download or download_subscription
+    try:
+        relay_url, relay_token = _relay_settings()
+        relay = SubscriptionRelay(relay_url, relay_token) if relay_url else None
+    except ValueError as exc:
+        raise ScanCLIError("environment_not_ready") from exc
     owned = None
     manager = None
     job_id = None
@@ -202,6 +219,7 @@ async def run(
                     url,
                     max_bytes=app_settings.subscription_max_bytes,
                     timeout_seconds=min(app_settings.subscription_timeout_seconds, args.timeout),
+                    relay=relay,
                 )
             except (SubscriptionError, ValueError) as exc:
                 print(
@@ -209,6 +227,10 @@ async def run(
                     file=sys.stderr,
                 )
                 raise ScanCLIError("input_invalid") from exc
+            print(
+                f"subscription_source: {'relay' if relay is not None else 'direct'}",
+                file=sys.stderr,
+            )
             if not isinstance(content, bytes) or len(content) > app_settings.subscription_max_bytes:
                 raise ScanCLIError("input_invalid")
 
@@ -252,6 +274,8 @@ async def run(
                 raise ScanCLIError("result_invalid")
             exported = manager.export(job_id)
             forbidden = {url, *credential_values(content), *subscription_url_values(url)}
+            if relay is not None:
+                forbidden.add(relay.token)
             result, status = build_artifact(
                 exported, job_id, args.run_id, args.run_attempt, forbidden
             )

@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import ipaddress
+import json
 import re
 import socket
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 import yaml
+
+RELAY_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,512}")
+RELAY_ERROR_REASONS = {
+    401: "relay_unauthorized",
+    413: "relay_response_too_large",
+    502: "relay_unreachable",
+    503: "relay_not_configured",
+    504: "relay_timeout",
+}
 
 
 class SubscriptionError(ValueError):
@@ -26,6 +39,38 @@ def subscription_failure_reason(exc: BaseException) -> str:
     if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,48}", reason):
         return reason
     return "unknown"
+
+
+@dataclass(frozen=True)
+class SubscriptionRelay:
+    """用 Worker 中继抓取订阅：抓取发生在 Worker 出口网络，而不是扫描 runner。
+
+    订阅主机对 GitHub Actions 的 Azure 出口返回 HTTP 403，对 Cloudflare 出口返回 200，
+    因此生产扫描把订阅抓取委托给 Worker；runner 仍逐跳校验目标必须是公网地址。
+    """
+
+    url: str
+    token: str
+
+    def __post_init__(self) -> None:
+        parsed = urlsplit(self.url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(character.isspace() for character in self.url)
+        ):
+            raise SubscriptionError("订阅中继地址无效", reason="relay_url_invalid")
+        if not RELAY_TOKEN_PATTERN.fullmatch(self.token):
+            raise SubscriptionError("订阅中继令牌无效", reason="relay_token_invalid")
+
+
+@dataclass(frozen=True)
+class _RelayResult:
+    status: int
+    location: str | None
+    body: bytes | None
 
 
 MIHOMO_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
@@ -123,7 +168,16 @@ async def download_subscription(
     *,
     max_bytes: int,
     timeout_seconds: float,
+    relay: SubscriptionRelay | None = None,
 ) -> bytes:
+    if relay is not None:
+        return await _download_via_relay(
+            url,
+            max_bytes=max_bytes,
+            timeout_seconds=timeout_seconds,
+            relay=relay,
+        )
+
     current_url = url.strip()
     timeout = httpx.Timeout(timeout_seconds)
     headers = {
@@ -163,6 +217,104 @@ async def download_subscription(
                 return b"".join(chunks)
 
     raise SubscriptionError("订阅地址重定向次数过多", reason="redirect_limit")
+
+
+async def _download_via_relay(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout_seconds: float,
+    relay: SubscriptionRelay,
+) -> bytes:
+    """经 Worker 中继抓取订阅；每一跳都按直连路径同样校验必须是公网地址。"""
+
+    current_url = url.strip()
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout_seconds),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        for _ in range(6):
+            await validate_public_url(current_url)
+            result = await _relay_fetch(client, relay, current_url, max_bytes=max_bytes)
+            if result.location is not None:
+                current_url = urljoin(current_url, result.location)
+                continue
+            if result.status >= 400:
+                raise SubscriptionError(
+                    f"下载订阅失败：HTTP {result.status}",
+                    reason=f"http_status_{result.status}",
+                )
+            if result.body is None:
+                raise SubscriptionError("订阅中继没有返回内容", reason="relay_empty_body")
+            return result.body
+
+    raise SubscriptionError("订阅地址重定向次数过多", reason="redirect_limit")
+
+
+async def _relay_fetch(
+    client: httpx.AsyncClient,
+    relay: SubscriptionRelay,
+    target: str,
+    *,
+    max_bytes: int,
+) -> _RelayResult:
+    limit = max_bytes * 2 + 65536
+    try:
+        async with client.stream(
+            "POST",
+            relay.url,
+            json={"url": target},
+            headers={"X-Best-IP-Relay-Token": relay.token},
+        ) as response:
+            status = response.status_code
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > limit:
+                    raise SubscriptionError(
+                        "订阅中继响应超过允许大小", reason="relay_response_too_large"
+                    )
+                chunks.append(chunk)
+    except httpx.TimeoutException as exc:
+        raise SubscriptionError("订阅中继请求超时", reason="relay_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise SubscriptionError("无法连接订阅中继", reason="relay_unreachable") from exc
+
+    if status != 200:
+        raise SubscriptionError(
+            f"订阅中继返回 HTTP {status}",
+            reason=RELAY_ERROR_REASONS.get(status, "relay_error"),
+        )
+
+    try:
+        payload = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SubscriptionError(
+            "订阅中继响应不是有效 JSON", reason="relay_response_invalid"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise SubscriptionError("订阅中继响应结构无效", reason="relay_response_invalid")
+
+    upstream_status = payload.get("status")
+    location = payload.get("location")
+    encoded = payload.get("body_b64")
+    if type(upstream_status) is not int or not 100 <= upstream_status <= 599:
+        raise SubscriptionError("订阅中继状态码无效", reason="relay_response_invalid")
+    if location is not None and (not isinstance(location, str) or len(location) > 4096):
+        raise SubscriptionError("订阅中继重定向无效", reason="relay_response_invalid")
+    if encoded is None:
+        return _RelayResult(upstream_status, location, None)
+    if not isinstance(encoded, str):
+        raise SubscriptionError("订阅中继内容无效", reason="relay_response_invalid")
+    try:
+        body = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SubscriptionError("订阅中继内容无法解码", reason="relay_response_invalid") from exc
+    if len(body) > max_bytes:
+        raise SubscriptionError("订阅内容超过允许大小", reason="response_too_large")
+    return _RelayResult(upstream_status, None, body)
 
 
 def parse_subscription(content: bytes, *, max_nodes: int) -> list[dict[str, Any]]:

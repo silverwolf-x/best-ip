@@ -54,9 +54,22 @@ the subscription could not be used. `subscription_fetch_reason: <code>` covers t
 CLI's own URL validation and download (`non_http_scheme`, `url_credentials`,
 `localhost_target`, `dns_unresolved`, `dns_not_global`, `doh_unavailable`,
 `dns_no_public_records`, `http_status_<status>`, `redirect_without_location`,
-`redirect_limit`, `response_too_large`, `unknown`); `scan_failure_code: <code>`
-reports the manager's code when a job ends without a ready manifest. Both are
-fixed tokens and never contain the subscription URL, its host, or any credential.
+`redirect_limit`, `response_too_large`, the `relay_*` codes below, `unknown`);
+`scan_failure_code: <code>` reports the manager's code when a job ends without a
+ready manifest. Both are fixed tokens and never contain the subscription URL, its
+host, or any credential.
+
+When `BEST_IP_SUBSCRIPTION_RELAY_URL` and `BEST_IP_SUBSCRIPTION_RELAY_TOKEN` are both
+set, the download is delegated to the Worker subscription relay and a run that
+downloads successfully prints `subscription_source: relay`; with neither set it
+prints `subscription_source: direct`. Setting only one of the pair is a configuration
+error (`environment_not_ready`), so a direct fetch that the host rejects is never
+silently retried through the relay. Relay failures report the fixed codes
+`relay_url_invalid`, `relay_token_invalid`, `relay_unauthorized`,
+`relay_response_too_large`, `relay_unreachable`, `relay_not_configured`,
+`relay_timeout`, `relay_response_invalid`, `relay_empty_body` and `relay_error`. The
+relay settles nothing about reachability: the CLI still re-validates every redirect
+hop against the public-address rule.
 
 Failures print only fixed safe codes/messages, never raw exception text. Offline
 tests with synthetic fixtures prove structure and lifecycle, not public-network

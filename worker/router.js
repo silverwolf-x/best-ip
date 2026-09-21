@@ -4,6 +4,7 @@ import { authenticate, assertSameOrigin } from "./auth.js";
 import { createScan, scanState, cancelScan, resolveScanRun } from "./scans.js";
 import { downloadArtifact } from "./artifacts.js";
 import { loginRoute, loginRedirect } from "./login.js";
+import { SUBSCRIPTION_RELAY_PATH, subscriptionRelay } from "./relay.js";
 
 export async function api(request, env, auth) {
   const url = new URL(request.url);
@@ -31,6 +32,11 @@ export async function api(request, env, auth) {
 
 export async function fetchHandler(request, env, ctx) {
   const url = new URL(request.url);
+  // Server-to-server endpoint: it runs before the site password gate and never
+  // takes the browser same-origin check, because the caller is an Actions runner.
+  if (url.pathname === SUBSCRIPTION_RELAY_PATH) {
+    return secureResponse(await subscriptionRelay(request, env), { noStore: true });
+  }
   const login = await loginRoute(request, env);
   if (login) return secureResponse(login, { noStore: true });
   let auth;
