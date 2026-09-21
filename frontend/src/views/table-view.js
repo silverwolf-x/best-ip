@@ -1,4 +1,4 @@
-import { filterResults, normalizeIpureScores, IPURE_SCORE_LABELS, statusLabels, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
+import { filterResults, normalizeIpureScores, IPURE_SCORE_LABELS, ipureScenarioLabel, isIpureScenarioJudgable, statusLabels, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
 export function createTableView(state, elements, document) {
 let renderFrame = null;
 function renderRows() {
@@ -70,9 +70,15 @@ function createResultRow(result) {
     IPURE_SCORE_LABELS.forEach(([key, label]) => {
       if (scores[key] == null) return;
       const chip = document.createElement("span");
-      const scoreClass = scores[key] >= 75 ? "chip-ok" : scores[key] >= 45 ? "chip-info" : "chip-warn";
+      const judgable = isIpureScenarioJudgable(result, key);
+      const scoreClass = !judgable ? "chip-asn" : scores[key] >= 75 ? "chip-ok" : scores[key] >= 45 ? "chip-info" : "chip-warn";
       chip.className = `chip ${scoreClass}`;
-      chip.textContent = `${label} ${scores[key]}`;
+      if (judgable) chip.textContent = `${label} ${scores[key]}`;
+      else {
+        const levelLabel = ipureScenarioLabel(result, key);
+        chip.textContent = `${label} ${levelLabel}`;
+        chip.title = `IPure 判定该场景为「${levelLabel}」，${scores[key]} 分不代表可用性`;
+      }
       container.append(chip);
     });
     if (!container.children.length && result.requests?.ipure?.error_type === "EnrichmentUnavailable") {

@@ -1,4 +1,4 @@
-import { normalizeIpureScores, IPURE_SCORE_LABELS, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
+import { normalizeIpureScores, IPURE_SCORE_LABELS, ipureScenarioLabel, isIpureScenarioJudgable, formatAsn, escapeHtml, normalizeUnavailableLatencyStatus } from "../results.js";
 export function createDetailView(state, elements, document) {
 function openDetails(summary) {
   state.detailGeneration += 1;
@@ -28,8 +28,17 @@ function renderDetails(result) {
   const ipureScores = normalizeIpureScores(result.ipure_scores, result.score);
   const ipureScoreChips = IPURE_SCORE_LABELS
     .filter(([key]) => ipureScores[key] != null)
-    .map(([key, label]) => `<span class="chip chip-info">${label} ${ipureScores[key]}</span>`)
+    .map(([key, label]) => {
+      const judgable = isIpureScenarioJudgable(result, key);
+      const cls = !judgable ? "chip-asn" : ipureScores[key] >= 75 ? "chip-ok" : ipureScores[key] >= 45 ? "chip-info" : "chip-warn";
+      if (judgable) return `<span class="chip ${cls}">${label} ${ipureScores[key]}</span>`;
+      const levelLabel = escapeHtml(ipureScenarioLabel(result, key));
+      return `<span class="chip ${cls}" title="IPure 判定该场景为「${levelLabel}」，${ipureScores[key]} 分不代表可用性">${label} ${levelLabel}</span>`;
+    })
     .join("");
+  const ipureVerdict = result.ipure_verdict || "";
+  const ipureLevel = result.ipure_level || "";
+  const ipureReportUrl = result.ipure_report_url || "";
 
   headSection.innerHTML = `
     <div class="modal-hero">
@@ -46,6 +55,7 @@ function renderDetails(result) {
           <span class="chip ${String(result.rpki_status || "").includes("Valid") ? "chip-ok" : "chip-bad"}">RPKI: ${escapeHtml(result.rpki_status || "未知")}</span>
         </div>
         ${ipureScoreChips ? `<div class="modal-tag-row">${ipureScoreChips}</div>` : ""}
+        ${ipureVerdict ? `<div class="modal-tag-row"><span class="chip chip-info">IPure 判定 ${escapeHtml(ipureVerdict)}</span>${ipureReportUrl ? `<a class="chip chip-asn" href="${escapeHtml(ipureReportUrl)}" target="_blank" rel="noreferrer noopener">原始报告</a>` : ""}</div>` : ""}
       </div>
       <div class="modal-score-box ${coffeeBadgeCls}">
         <span class="modal-score-lbl">Coffee 评分</span>
@@ -53,7 +63,7 @@ function renderDetails(result) {
       </div>
       <div class="modal-score-box ${scoreBadgeCls}">
         <span class="modal-score-lbl">IPure 总分</span>
-        <strong class="modal-score-num">${scoreVal != null ? scoreVal : "—"}</strong>
+        <strong class="modal-score-num"${ipureLevel ? ` title="IPure 纯净度档位：${escapeHtml(ipureLevel)}"` : ""}>${scoreVal != null ? scoreVal : "—"}</strong>
       </div>
     </div>
   `;

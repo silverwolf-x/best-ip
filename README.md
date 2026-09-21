@@ -49,9 +49,10 @@ npm run dev:no-reload
 - 浏览器使用 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key；明文 URL 不进入 Worker API、GitHub workflow input 或 artifact。
 - Worker 固定调度 `silverwolf-x/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
 - 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 8 个节点并发，每节点最多 3 次尝试。
-- Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 总分或四项场景评分缺失时，节点会如实标记为“部分”。
-- IPure 每次实际 HTTP 请求（包括代理、重试和直连查询）都会重新读取 `config/ipure.yml` 的 `headers`，修改后无需重启。文件保存浏览器请求头与 `ipure_verified` Cookie，已排除出 Git；无凭据示例见 `config/ipure.example.yml`。未配置的请求头使用 JSON / `MyIPChecker/1.0` 默认值；仅在 YAML 未指定 Cookie 时兼容 `BEST_IP_IPURE_COOKIE`。代理查询遇到 `429` 最多尝试 3 次，按 1、2 秒退避并遵守秒数形式的 `Retry-After`，等待不会超出查询时间预算。`429` 不切换出口重试，`403` 不盲目重试。
-- mixed-port 与 controller 只监听 `127.0.0.1`；所有请求固定 `trust_env=False` 并禁用重定向。IPure 对未缓存 IP 要求人机验证；配置 `BEST_IP_IPURE_COOKIE` 后，代理请求被验证墙拒绝时会使用该已验证会话直连查询，并在结果中明确标记 `direct_fallback`。
+- Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 没有返回纯净度总分时，节点会如实标记为“部分”。
+- IPure 接入完全按官方 `/docs/api` 契约：`GET /api/lookup?ip={ip}` 无需 API key 或 Cookie。响应解析出 `risk.purity` 纯净度总分、`risk.level` / `risk.label` / `risk.verdict` 档位，以及 `scenarios[]` 的六项场景（`ai`、`social`、`streaming`、`gaming`、`ecommerce`、`email`）评分与档位，另附 `reportUrl`、`source`（fresh / cache / store）与 `stale`。场景档位为 `restricted`、`not_applicable`、`unusable` 时，前端只显示档位而不把该场景分数当作可用性结论。
+- IPure 每次实际 HTTP 请求都会重新读取 `config/ipure.yml` 的 `headers`，修改后无需重启；该文件只用于覆盖请求头（如 User-Agent），已排除出 Git，示例见 `config/ipure.example.yml`。未配置时使用 JSON / `MyIPChecker/1.0` 默认值。`429`（含 `code=open_rate_limited`）最多尝试 3 次，按 1、2 秒退避并遵守秒数形式的 `Retry-After`，等待不会超出查询时间预算，也不切换出口重试；`403`（`code=verification_required`）不盲目重试，而是把官方给出的 `reportUrl` 一并记录。响应头 `x-open-budget-remaining` 会写入 `proxy_evidence.ipure_budget_remaining`。
+- mixed-port 与 controller 只监听 `127.0.0.1`；所有请求固定 `trust_env=False` 并禁用重定向。IPure 不读取也不保存任何凭据，因此不存在直连回退或验证会话。
 - 每个真实节点恰好产生一条 `success`、`partial` 或 `failed` 记录。失败记录的 `exit_ip` 必须为 JSON `null`。
 - 节点文件原子写入；只有节点集合、字段、状态、出口 IP、代理证据、文件大小和 SHA-256 全部通过后才生成 manifest。
 - Actions 运行期间前端只显示 Job/Step，不伪造节点 `0/0` 进度；节点统计以终态 artifact 为唯一事实源。
@@ -91,7 +92,7 @@ Worker 使用 Static Assets 托管 `frontend/`；当前配置不使用 Cloudflar
    - `SCAN_TOKEN_SECRET`
    - `SITE_PASSWORD`
 
-4. 配置 Actions secrets `SCAN_PRIVATE_KEY_PEM`、`IPURE_CONFIG_YAML`，并配置 Actions variable `SCAN_KEY_ID`。`IPURE_CONFIG_YAML` 保存与本地 `config/ipure.yml` 相同的完整 YAML 内容；Actions 扫描前生成该文件，结束时清理，不上传到结果 artifact。Worker 仅调度扫描，不查询 IPure，也不向前端提供 Cookie。可用 `gh secret set IPURE_CONFIG_YAML --repo silverwolf-x/best-ip < config/ipure.yml` 同步本地配置到云端。Cookie 过期后需更新本地 YAML 并重新同步 Secret；修改本地文件不会自动更新 GitHub Secret。
+4. 配置 Actions secrets `SCAN_PRIVATE_KEY_PEM`、`IPURE_CONFIG_YAML`，并配置 Actions variable `SCAN_KEY_ID`。`IPURE_CONFIG_YAML` 可选，保存与本地 `config/ipure.yml` 相同的请求头覆盖内容；Actions 扫描前生成该文件，结束时清理，不上传到结果 artifact。IPure 不需要凭据，因此该 Secret 为空也不影响评分。Worker 仅调度扫描，不查询 IPure，也不向前端提供任何第三方请求头。可用 `gh secret set IPURE_CONFIG_YAML --repo silverwolf-x/best-ip < config/ipure.yml` 同步本地配置到云端；修改本地文件不会自动更新 GitHub Secret。
 
 打开网站后输入访问密码。登录会话有效期 12 小时，保存在 Secure、HttpOnly、SameSite=Strict 的主机专属 Cookie 中；页面提供退出登录入口。修改 `SITE_PASSWORD` 或 `SCAN_TOKEN_SECRET` 后旧会话失效。退出登录清除当前浏览器 Cookie，其他浏览器的会话不受影响。密码和签名密钥只放 Worker 运行时 Secrets，不放 Build variables 或仓库。
 
@@ -135,7 +136,7 @@ $env:BEST_IP_REAL_SUBSCRIPTION_URL = "https://example.invalid/subscription?token
 uv run pytest tests/test_real_subscription.py::test_real_subscription_download_and_parse -q
 ```
 
-完整本地扫描验收还需要先启动 `127.0.0.1:8000` 的 API，并设置 `RUN_REAL_LOCAL_SCAN=1`；若 IPure 返回人机验证，需额外提供已验证的 `BEST_IP_IPURE_COOKIE`。
+完整本地扫描验收还需要先启动 `127.0.0.1:8000` 的 API，并通过 `BEST_IP_TEST_SUBSCRIPTION_URL` 注入真实订阅（不要把 token 写入仓库）。IPure 无需任何凭据。
 
 ## 配置
 
@@ -147,15 +148,15 @@ uv run pytest tests/test_real_subscription.py::test_real_subscription_download_a
 | `BEST_IP_MAX_PARALLEL_NODES` | `8` | 单任务并发节点数 |
 | `BEST_IP_MAX_NODE_ATTEMPTS` | `3` | 单节点最大尝试次数 |
 | `BEST_IP_NODE_RETRY_BACKOFF_MS` | `500` | 重试基础退避毫秒数 |
-| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次节点采集预算；IPure 查询单独限制为最多 8 秒并与其他请求并发 |
+| `BEST_IP_PAGE_TIMEOUT_MS` | `45000` | 单次节点采集预算；IPure 查询单独限制为最多 20 秒并与其他请求并发 |
 | `BEST_IP_SUBSCRIPTION_MAX_BYTES` | `5242880` | 订阅最大字节数 |
 | `BEST_IP_SUBSCRIPTION_TIMEOUT_SECONDS` | `30` | 订阅下载超时 |
-| `BEST_IP_IPURE_COOKIE` | 空 | 浏览器在 IPure 官网完成人机验证后得到的完整 Cookie 请求头；仅用于查询未缓存 IP，不写入扫描结果 |
 
 ## 已知限制
 
 - 只支持顶部含 `proxies` 列表的 Mihomo YAML；不支持 URI 列表或只有远程 `proxy-providers` 的配置。
 - 如果全部节点服务器都是域名且没有可用的字面 IP 引导节点，严格 DNS 隔离可能导致节点明确失败，不会回退宿主代理。
 - Coffee 接口以及 IPure `/api/lookup` 的字段和限流属于外部服务，改版时必须同步 URL allowlist、解析器与契约测试。
-- IPure 未缓存 IP 的评分依赖官方人机验证会话；未配置有效 `BEST_IP_IPURE_COOKIE` 时无法合法生成该第三方的总分和四项场景评分。
+- IPure 对未收录 IP 的免验证查询按来源 IP 每天 5 次、全站每分钟 15 次限流；额度用完返回 `403 verification_required`，此时节点会标记为“部分”并记录官方 `reportUrl`，无法在本次扫描中取得分数。
+- `source` 为 `store` 且 `stale` 为真时返回的是历史报告，分数反映当初检测时的状态。
 - Cloudflare Worker 不执行扫描本身；扫描延迟仍包含 GitHub Actions 排队、runner 初始化、Mihomo 启动和节点网络耗时。

@@ -34,7 +34,7 @@ from backend.app.results.store import result_store
 from backend.app.scan.errors import _TRANSPORT_ERROR_TYPES
 from backend.app.sources.coffee import _is_same_ip, _trace_ip
 from backend.app.sources.http import IPURE_HOST
-from backend.app.sources.ipure import _ipure_url
+from backend.app.sources.ipure import IPURE_SCENARIOS, _ipure_url
 from backend.app.subscription import (
     download_subscription,
     is_subscription_metadata,
@@ -60,6 +60,44 @@ def _validate_local_api_base(api_base: str) -> str:
     ):
         raise RuntimeError("BEST_IP_API_BASE 必须是带端口的本机 HTTP 地址")
     return api_base.rstrip("/")
+
+
+def _node_ipure_score_valid(record: dict[str, Any], ipure: dict[str, Any]) -> bool:
+    """Every node that produced an exit IP must carry a complete IPure report."""
+
+    data = ipure.get("data")
+    scores = record.get("ipure_scores")
+    levels = record.get("ipure_scenario_levels")
+    if not isinstance(data, dict) or not isinstance(scores, dict) or not isinstance(levels, dict):
+        return False
+    total = data.get("total")
+    scenarios = data.get("scenarios")
+    if (
+        not isinstance(total, int)
+        or isinstance(total, bool)
+        or not 0 <= total <= 100
+        or record.get("score") != total
+        or scores.get("total") != total
+        or set(scores) != {"total", *IPURE_SCENARIOS}
+        or set(levels) != set(IPURE_SCENARIOS)
+        or not isinstance(scenarios, dict)
+        or set(scenarios) != set(IPURE_SCENARIOS)
+    ):
+        return False
+    if any(value is not None and not isinstance(value, str) for value in levels.values()):
+        return False
+    for scenario_id in IPURE_SCENARIOS:
+        entry = scenarios.get(scenario_id)
+        expected = entry.get("score") if isinstance(entry, dict) else None
+        if expected is not None and (
+            not isinstance(expected, int)
+            or isinstance(expected, bool)
+            or not 0 <= expected <= 100
+        ):
+            return False
+        if scores.get(scenario_id) != expected:
+            return False
+    return True
 
 
 def _require_no_failed_nodes(job: dict[str, Any]) -> None:
@@ -362,13 +400,6 @@ async def verify() -> None:
                     raise RuntimeError(f"节点 {index} 缺少 selector 身份确认")
                 if (
                     evidence.get("trust_env") is not False
-                    or (
-                        evidence.get("direct_fallback") is not False
-                        and not (
-                            evidence.get("direct_fallback") is True
-                            and evidence.get("ipure_verification_session_used") is True
-                        )
-                    )
                     or evidence.get("transport") != "workspace_mihomo_mixed_port"
                     or evidence.get("selected_proxy") != record.get("node")
                 ):
@@ -378,7 +409,6 @@ async def verify() -> None:
                 trace = requests.get("trace") if isinstance(requests, dict) else None
                 lookup = requests.get("lookup") if isinstance(requests, dict) else None
                 ipure = requests.get("ipure") if isinstance(requests, dict) else None
-                ipure_direct_fallback = evidence.get("direct_fallback") is True
                 lookup_data = lookup.get("data") if isinstance(lookup, dict) else None
                 if (
                     not isinstance(page, dict)
@@ -398,43 +428,23 @@ async def verify() -> None:
                     or not _is_same_ip(lookup_data.get("ip"), exit_ip)
                 ):
                     raise RuntimeError(f"节点 {index} trace/lookup 证据无效")
+                ipure_direct = ipure.get("direct_fallback") if isinstance(ipure, dict) else None
                 if (
                     not isinstance(ipure, dict)
                     or ipure.get("attempted") is not True
-                    or ipure.get("via_mihomo") is not (not ipure_direct_fallback)
-                    or (
-                        ipure.get("proxy_url") != evidence.get("proxy_url")
-                        if not ipure_direct_fallback
-                        else ipure.get("proxy_url") is not None
-                    )
+                    or not isinstance(ipure_direct, bool)
+                    or ipure.get("via_mihomo") is not (not ipure_direct)
+                    or evidence.get("ipure_via_direct_fallback") is not ipure_direct
+                    or ipure.get("proxy_url") != evidence.get("proxy_url")
                     or ipure.get("target_host") != IPURE_HOST
                     or ipure.get("url") != _ipure_url(exit_ip)
-                    or ipure.get("verification_session_used") is not ipure_direct_fallback
                 ):
                     raise RuntimeError(f"节点 {index} IPure 代理证据无效")
-                ipure_data = ipure.get("data")
-                ipure_scores = record.get("ipure_scores")
-                if ipure.get("ok") is True:
-                    if (
-                        not isinstance(ipure_data, dict)
-                        or not isinstance(ipure_scores, dict)
-                        or any(
-                            not isinstance(ipure_data.get(key), int)
-                            or isinstance(ipure_data.get(key), bool)
-                            or not 0 <= ipure_data[key] <= 100
-                            or ipure_scores.get(key) != ipure_data[key]
-                            for key in ("total", "ai", "streaming", "ecommerce", "email")
-                        )
-                        or record.get("score") != ipure_data["total"]
-                    ):
-                        raise RuntimeError(f"节点 {index} IPure 评分证据无效")
-                elif (
-                    record.get("status") != "partial"
-                    or record.get("score") is not None
-                    or not str(ipure.get("error") or "").strip()
-                    or str(ipure.get("error")) not in str(record.get("error") or "")
-                ):
-                    raise RuntimeError(f"节点 {index} IPure 缺失未标记为部分")
+                if not _node_ipure_score_valid(record, ipure):
+                    reason = " ".join(str(ipure.get("error") or "").split())[:200]
+                    raise RuntimeError(
+                        f"节点 {index} IPure 评分证据无效：{reason or '响应缺少纯净度总分'}"
+                    )
                 completeness = record.get("completeness")
                 checks = completeness.get("checks") if isinstance(completeness, dict) else None
                 if (
@@ -526,6 +536,13 @@ async def verify() -> None:
         if asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError("正式扫描验收超过总时间预算")
         print(f"正式订阅结构闭环通过：{total} 个节点均有终态记录，manifest/export 校验通过")
+        scorable = [
+            record for record in node_records if record.get("status") in {"success", "partial"}
+        ]
+        print(
+            f"IPure 评分覆盖：{len(scorable)}/{total} 个节点获得纯净度总分与六项场景评分"
+            f"（失败节点没有出口 IP，无法查询）"
+        )
         _require_no_failed_nodes(job)
         print(
             "正式订阅可用性验收完成："

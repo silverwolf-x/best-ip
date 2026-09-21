@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import httpx
 import yaml
 
@@ -12,6 +10,8 @@ IPURE_HEADERS = {"Accept": "application/json", "User-Agent": "MyIPChecker/1.0"}
 
 
 def load_ipure_headers() -> httpx.Headers:
+    """Load optional header overrides; IPure 官方接口无需 API key 或 Cookie。"""
+
     try:
         content = IPURE_CONFIG_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -35,8 +35,4 @@ def load_ipure_headers() -> httpx.Headers:
         raise ValueError("IPure headers 必须为不含换行的字符串映射")
     headers = httpx.Headers(IPURE_HEADERS)
     headers.update(configured_headers)
-    if "cookie" not in headers:
-        cookie = os.getenv("BEST_IP_IPURE_COOKIE", "").strip()
-        if cookie and len(cookie) <= 8192 and "\r" not in cookie and "\n" not in cookie:
-            headers["Cookie"] = cookie
     return headers

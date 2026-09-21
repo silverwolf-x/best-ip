@@ -14,7 +14,7 @@ COFFEE_PAGE_URL = f"{COFFEE_ORIGIN}/ip/"
 COFFEE_TRACE_URL = f"{COFFEE_ORIGIN}/cdn-cgi/trace"
 IPURE_HOST = "ipure.dev"
 IPURE_ORIGIN = f"https://{IPURE_HOST}"
-IPURE_TIMEOUT_SECONDS = 8.0
+IPURE_TIMEOUT_SECONDS = 30.0
 IPURE_MAX_RESPONSE_BYTES = 1_000_000
 GPT_PROBE_TARGETS = [
     {"name": "chatgpt.com", "url": "https://chatgpt.com/cdn-cgi/trace"},
@@ -78,23 +78,37 @@ class ProxyTransport:
         budget = timeout.read if isinstance(timeout, httpx.Timeout) else timeout
         async with asyncio.timeout(budget):
             headers = load_ipure_headers() if urlsplit(url).hostname == IPURE_HOST else None
-            async with client.stream("GET", url, timeout=timeout, headers=headers) as response:
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(body) + len(chunk) > max_bytes:
-                        raise ResponseTooLarge(response.status_code)
-                    body.extend(chunk)
-                return httpx.Response(
-                    response.status_code,
-                    headers={
-                        key: value
-                        for key, value in response.headers.items()
-                        if key.lower()
-                        not in {"content-encoding", "content-length", "transfer-encoding"}
-                    },
-                    content=bytes(body),
-                    request=response.request,
-                )
+            return await stream_bounded_get(
+                client, url, timeout=timeout, max_bytes=max_bytes, headers=headers
+            )
+
+
+async def stream_bounded_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    timeout: float | httpx.Timeout,
+    max_bytes: int,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """Read a response with a hard byte ceiling, so no caller can buffer unbounded data."""
+
+    async with client.stream("GET", url, timeout=timeout, headers=headers) as response:
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            if len(body) + len(chunk) > max_bytes:
+                raise ResponseTooLarge(response.status_code)
+            body.extend(chunk)
+        return httpx.Response(
+            response.status_code,
+            headers={
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+            },
+            content=bytes(body),
+            request=response.request,
+        )
 
 
 def _validate_coffee_url(url: str) -> None:
@@ -203,8 +217,10 @@ def _validate_ipure_url(url: str) -> None:
     ):
         raise ValueError(f"拒绝未允许的 IPure 请求：{url}")
     query = parse_qs(parsed.query, keep_blank_values=True)
-    if set(query) != {"ip"} or len(query["ip"]) != 1:
+    if set(query) - {"ip", "refresh"} or len(query.get("ip", [])) != 1:
         raise ValueError(f"IPure 查询必须且只能包含一个 IP 参数：{url}")
+    if query.get("refresh") not in (None, ["1"]):
+        raise ValueError(f"IPure refresh 参数只允许取 1：{url}")
     value = query["ip"][0]
     try:
         ipaddress.ip_address(value)

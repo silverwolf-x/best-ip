@@ -126,7 +126,6 @@ def _failed_node(
             "selection_confirmed": False,
             "target_origin": "https://ip.net.coffee",
             "trust_env": False,
-            "direct_fallback": False,
         },
         "requests": {"gpt_check": []},
         "coffee": {"gpt_check": []},

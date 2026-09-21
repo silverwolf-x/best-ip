@@ -1,10 +1,26 @@
 const resultSearchIndex = new WeakMap();
+// 与 https://ipure.dev/docs/api 的 scenarios[].id 一致。
 const IPURE_SCORE_LABELS = [
   ["ai", "AI"],
+  ["social", "社交"],
   ["streaming", "流媒体"],
+  ["gaming", "游戏"],
   ["ecommerce", "电商"],
   ["email", "邮件"],
 ];
+// 官网要求：这些档位下 score 不代表可用性，不能当作评分结论引用。
+const IPURE_NON_JUDGABLE_LEVELS = new Set(["restricted", "not_applicable", "unusable"]);
+const IPURE_LEVEL_LABELS = {
+  pristine: "极佳",
+  clean: "纯净",
+  neutral: "一般",
+  suspicious: "可疑",
+  risky: "高风险",
+  dangerous: "极高风险",
+  restricted: "地区受限",
+  not_applicable: "不适用",
+  unusable: "不可用",
+};
 const statusLabels = { success: "完整", partial: "部分", failed: "失败" };
 export function normalizeImportedResult(raw, index, source) {
   if (!isRecord(raw)) throw new Error(`第 ${index + 1} 个节点结果不是对象。`);
@@ -113,6 +129,30 @@ export function formatIpureScores(value) {
     .filter(([key]) => scores[key] != null)
     .map(([key, label]) => `${label}:${scores[key]}`)
     .join(" | ");
+}
+
+function scenarioMeta(result, key) {
+  const nested = result?.requests?.ipure?.data?.scenarios;
+  return isRecord(nested) && isRecord(nested[key]) ? nested[key] : null;
+}
+
+export function ipureScenarioLevel(result, key) {
+  const levels = result?.ipure_scenario_levels;
+  const stored = isRecord(levels) ? levels[key] : null;
+  if (typeof stored === "string" && stored) return stored;
+  const level = scenarioMeta(result, key)?.level;
+  return typeof level === "string" && level ? level : null;
+}
+
+export function ipureScenarioLabel(result, key) {
+  const level = ipureScenarioLevel(result, key);
+  if (!level) return null;
+  const apiLabel = scenarioMeta(result, key)?.label;
+  return (typeof apiLabel === "string" && apiLabel) || IPURE_LEVEL_LABELS[level] || level;
+}
+
+export function isIpureScenarioJudgable(result, key) {
+  return !IPURE_NON_JUDGABLE_LEVELS.has(ipureScenarioLevel(result, key));
 }
 
 export function firstImportedValue(...values) {
@@ -257,4 +297,4 @@ export function filterResults(results, { query = "", status = "all", columnFilte
     })
     .sort((left, right) => compareResults(left, right, sortKey, sortDirection));
 }
-export { IPURE_SCORE_LABELS, statusLabels };
+export { IPURE_LEVEL_LABELS, IPURE_SCORE_LABELS, statusLabels };

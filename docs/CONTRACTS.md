@@ -99,9 +99,18 @@ Files are atomically written. Exactly one terminal record per actual node, with
 status success/partial/failed. Failed records require a safe error and null exit IP.
 Success and partial require a valid IP and confirmed workspace Mihomo proxy
 evidence, loopback HTTP port, no trust_env, and five true base collection checks.
-IPure may use an explicitly verified session fallback; such records must set both
-`direct_fallback:true` and `ipure_verification_session_used:true`. Retry metadata,
-when present, must be internally consistent.
+`ipure_scores` is always a seven-key map — `total` plus the six documented
+scenarios `ai, social, streaming, gaming, ecommerce, email` — where every value is
+an integer 0..100 or null, and `score` must equal `ipure_scores.total`.
+`ipure_scenario_levels` carries the same six scenario ids mapped to IPure level
+codes (or null); levels such as `restricted`, `not_applicable` and `unusable` mean
+the accompanying scenario score must never be presented as availability.
+IPure requires no API key or Cookie, so no fallback session evidence exists. A score may
+come from the workspace proxy or, when the node egress cannot connect, from a recorded
+host-side query: such a record sets `requests.ipure.direct_fallback:true`,
+`via_mihomo:false`, and `proxy_evidence.ipure_via_direct_fallback:true`. Both validators
+cross-check that trio, so a direct score can never be presented as proxy evidence.
+Retry metadata, when present, must be internally consistent.
 Required and optional record fields are enforced by Python's ResultStore validator;
 fixtures carry the minimal valid set, not a real enrichment response.
 

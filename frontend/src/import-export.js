@@ -253,7 +253,7 @@ export function mapCsvColumns(headers) {
     gpt_chatgpt: ["gpt_chatgpt", "chatgpt", "chatgpt.com"],
     gpt_codex: ["gpt_codex", "codex", "api.openai.com"],
     score: ["ipure总分", "总分", "评分", "score"],
-    ipure_scores: ["ipure四项评分", "四项评分", "ipure_scores"],
+    ipure_scores: ["ipure六项评分", "六项评分", "ipure四项评分", "四项评分", "ipure_scores"],
     coffee_score: ["coffee评分", "coffee_score", "trustscore", "trust_score"],
     elapsed_ms: ["耗时(ms)", "耗时", "elapsed_ms", "duration"],
   };
@@ -296,7 +296,7 @@ export function downloadBlob(content, filename, contentType) {
   URL.revokeObjectURL(url);
 }
 export function buildCsvExport(results) {
-  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "GPT_ChatGPT", "GPT_Codex", "IPure总分", "IPure四项评分", "Coffee评分", "耗时(ms)"];
+  const headers = ["节点名称", "协议", "状态", "出口IP", "位置", "服务商/ISP", "ASN", "ASN自报类型", "IP原生性", "Bogon", "RPKI", "反向DNS", "运营商类型", "人机流量", "安全状态", "滥用等级", "蜜罐状态", "GPT_ChatGPT", "GPT_Codex", "IPure总分", "IPure六项评分", "Coffee评分", "耗时(ms)"];
   const rows = results.map((result) => {
     const gptList = result.gpt_check || [];
     const chatgptItem = gptList.find((g) => g.name === "chatgpt.com");

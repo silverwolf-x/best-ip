@@ -30,7 +30,7 @@ from .http import (
     IPURE_TIMEOUT_SECONDS,
     ProxyTransport,
 )
-from .ipure import _ipure_scores, _ipure_url
+from .ipure import _ipure_field, _ipure_scenario_levels, _ipure_scores, _ipure_url
 
 
 class CoffeeCollector:
@@ -195,6 +195,10 @@ class CoffeeCollector:
             "coffee_score": coffee_summary["score"],
             "score": ipure_scores["total"],
             "ipure_scores": ipure_scores,
+            "ipure_level": _ipure_field(ipure, "level"),
+            "ipure_verdict": _ipure_field(ipure, "verdict"),
+            "ipure_scenario_levels": _ipure_scenario_levels(ipure),
+            "ipure_report_url": _ipure_field(ipure, "report_url"),
             "gpt_check": gpt_check,
         }
         finished_at = _now()
@@ -229,10 +233,8 @@ class CoffeeCollector:
                 "target_origin": COFFEE_ORIGIN,
                 "enrichment_origin": IPURE_ORIGIN,
                 "trust_env": False,
-                "direct_fallback": bool(ipure.get("direct_fallback")),
-                "ipure_verification_session_used": bool(
-                    ipure.get("verification_session_used")
-                ),
+                "ipure_budget_remaining": ipure.get("budget_remaining"),
+                "ipure_via_direct_fallback": bool(ipure.get("direct_fallback")),
             },
             "completeness": completeness,
             "requests": {

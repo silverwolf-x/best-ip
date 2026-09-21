@@ -6,6 +6,8 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
+from ..sources.ipure import IPURE_SCENARIOS
+
 _SUMMARY_KEYS = (
     "node_index",
     "node",
@@ -24,6 +26,11 @@ _SUMMARY_KEYS = (
     "location",
     "isp",
     "score",
+    "ipure_scores",
+    "ipure_level",
+    "ipure_verdict",
+    "ipure_scenario_levels",
+    "ipure_report_url",
     "is_residential",
     "is_datacenter",
     "is_native",
@@ -88,6 +95,10 @@ _NODE_FIELDS = {
     "score",
     "coffee_score",
     "ipure_scores",
+    "ipure_level",
+    "ipure_verdict",
+    "ipure_scenario_levels",
+    "ipure_report_url",
     "is_residential",
     "is_datacenter",
     "is_native",
@@ -224,13 +235,6 @@ def validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
             or parsed_proxy.username
             or parsed_proxy.password
             or evidence.get("trust_env") is not False
-            or (
-                evidence.get("direct_fallback") is not False
-                and not (
-                    evidence.get("direct_fallback") is True
-                    and evidence.get("ipure_verification_session_used") is True
-                )
-            )
             or not isinstance(checks, dict)
             or not all(
                 checks.get(key) is True
@@ -244,6 +248,8 @@ def validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
             )
         ):
             raise ResultStoreError("成功节点记录的采集或代理证据无效")
+        validate_ipure_scores(record)
+        validate_ipure_evidence(record["proxy_evidence"], record["requests"])
         validate_exit_ip(record.get("exit_ip"))
     elif status == "failed":
         if record.get("exit_ip") is not None:
@@ -256,6 +262,46 @@ def validate_node(job_id: str, index: int, record: dict[str, Any]) -> None:
 
 def summary(record: dict[str, Any]) -> dict[str, Any]:
     return {key: record.get(key) for key in _SUMMARY_KEYS}
+
+
+def validate_ipure_scores(record: dict[str, Any]) -> None:
+    """Keep the IPure score map shape stable so every node exposes the same six scenarios."""
+
+    scores = record.get("ipure_scores")
+    if scores is not None:
+        if not isinstance(scores, dict) or set(scores) != {"total", *IPURE_SCENARIOS}:
+            raise ResultStoreError("节点 IPure 评分字段集合无效")
+        for value in scores.values():
+            if value is not None and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 0 <= value <= 100
+            ):
+                raise ResultStoreError("节点 IPure 评分取值无效")
+        if record.get("score") != scores.get("total"):
+            raise ResultStoreError("节点总分与 IPure 纯净度不一致")
+    levels = record.get("ipure_scenario_levels")
+    if levels is not None and (
+        not isinstance(levels, dict)
+        or set(levels) != set(IPURE_SCENARIOS)
+        or not all(value is None or isinstance(value, str) for value in levels.values())
+    ):
+        raise ResultStoreError("节点 IPure 场景档位无效")
+
+
+def validate_ipure_evidence(evidence: dict[str, Any], requests: dict[str, Any]) -> None:
+    """A score may come from the workspace proxy or, as a recorded exception, from the host."""
+
+    ipure = requests.get("ipure") if isinstance(requests, dict) else None
+    if not isinstance(ipure, dict):
+        return
+    direct = ipure.get("direct_fallback")
+    if not isinstance(direct, bool):
+        raise ResultStoreError("节点 IPure 直连标记无效")
+    if evidence.get("ipure_via_direct_fallback") is not direct:
+        raise ResultStoreError("节点 IPure 直连证据与请求记录不一致")
+    if ipure.get("via_mihomo") is not (not direct):
+        raise ResultStoreError("节点 IPure 出口证据无效")
 
 
 def validate_exit_ip(value: Any) -> None:
