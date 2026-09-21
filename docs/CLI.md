@@ -49,6 +49,15 @@ legacy meaning (no failed or partial nodes), so a valid partial artifact may hav
 | 8 | `output_failed` | Destination exists or publication failed |
 | 130 | `scan_cancelled` | Interrupted/cancelled; no artifact published |
 
+Beyond the fixed code, a failing run prints one machine-readable line naming why
+the subscription could not be used. `subscription_fetch_reason: <code>` covers the
+CLI's own URL validation and download (`non_http_scheme`, `url_credentials`,
+`localhost_target`, `dns_unresolved`, `dns_not_global`, `doh_unavailable`,
+`dns_no_public_records`, `http_status_<status>`, `redirect_without_location`,
+`redirect_limit`, `response_too_large`, `unknown`); `scan_failure_code: <code>`
+reports the manager's code when a job ends without a ready manifest. Both are
+fixed tokens and never contain the subscription URL, its host, or any credential.
+
 Failures print only fixed safe codes/messages, never raw exception text. Offline
 tests with synthetic fixtures prove structure and lifecycle, not public-network
 Mihomo execution or Worker→Actions end-to-end acceptance.

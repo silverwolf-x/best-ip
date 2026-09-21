@@ -181,7 +181,11 @@ async def run(
         )
         from backend.app.results.store import ResultStore, ResultStoreError
         from backend.app.scan.jobs import JobNotReadyError, ScanJobManager
-        from backend.app.subscription import SubscriptionError, download_subscription
+        from backend.app.subscription import (
+            SubscriptionError,
+            download_subscription,
+            subscription_failure_reason,
+        )
     except Exception as exc:
         raise ScanCLIError("environment_not_ready") from exc
     app_settings = app_settings or settings
@@ -200,6 +204,10 @@ async def run(
                     timeout_seconds=min(app_settings.subscription_timeout_seconds, args.timeout),
                 )
             except (SubscriptionError, ValueError) as exc:
+                print(
+                    f"subscription_fetch_reason: {subscription_failure_reason(exc)}",
+                    file=sys.stderr,
+                )
                 raise ScanCLIError("input_invalid") from exc
             if not isinstance(content, bytes) or len(content) > app_settings.subscription_max_bytes:
                 raise ScanCLIError("input_invalid")
@@ -238,6 +246,7 @@ async def run(
                         if job.get("status") == "cancelled"
                         else "scan_unavailable"
                     )
+                print(f"scan_failure_code: {code}", file=sys.stderr)
                 raise ScanCLIError(code)
             if job.get("manifest_ready") is not True:
                 raise ScanCLIError("result_invalid")
