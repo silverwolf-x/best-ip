@@ -41,5 +41,12 @@ Status: implemented
 ## Testing
 
 - 结构验证（本地）：三个 workflow YAML 解析通过；`worker.yml` 的 `on` 块确认为 `workflow_run{workflows:[CI],types:[completed],branches:[main]}` + `workflow_dispatch`；deploy 步骤列表为 Checkout → Setup Node → Install dependencies → Verify Worker syntax → Deploy Worker and static assets。
-- 线上验证：push 到 `main` 后，CI 成功后应自动出现一次 `Deploy Cloudflare Worker` 运行；需确认它 success、线上版本 ID 变化、发布后部署新鲜度预检 10 项全 OK。本节结论在首次自动发布跑完后补进本篇。
+- 线上验证：见下面的「首次自动发布」一节（真实运行、真实版本 ID、发布后的预检结果）。
 - 人工路径：`workflow_dispatch` 仍然可用，用于绕过 CI 直接重发一次。
+
+## 首次自动发布
+
+- 触发提交 `384259d`。CI 运行 `35621234826`（15:46:40Z 创建）completed / success；`Deploy Cloudflare Worker` 运行 `35621278768` 于 15:47:03Z **自动**创建（不是手动派发），completed / success，逐步核对 Checkout → Setup Node → Install dependencies → Verify Worker syntax → Deploy Worker and static assets 全部 success。
+- 部署日志：`Total Upload: 48.21 KiB / gzip: 12.92 KiB`、`Uploaded best-ip (9.50 sec)`、`Current Version ID: a562e1f3-5a9a-4144-af1e-461148db41e9`。它与上一次手工发布的 `d9881797-7224-4676-b309-9b837c21c927` 不同，说明线上确实被这次自动发布换掉了。
+- 发布之后立刻跑部署新鲜度预检（浏览器侧同一套：拿 `/site-config.js`、`/src/...`、`/styles.css`、首页）：登录 303 且拿到 `__Host-best-ip-session`，10 项检查全 OK。
+- 结论：`push → CI → 发布 → 线上自证新鲜` 这条链不再需要人；本地 `npx wrangler deploy` 不再是上线路径，只是排查时的旁路手段。
