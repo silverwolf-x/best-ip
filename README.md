@@ -59,24 +59,27 @@ npm run dev:no-reload
 
 ## 部署
 
-推荐使用 Cloudflare Workers Builds：在现有 Worker 的 Settings → Builds 连接 GitHub 仓库，生产分支选 `main`，根目录留空，Build command 留空，Deploy command 填 `npx wrangler deploy`，Preview deploy command 填 `npx wrangler versions upload`，构建变量设 `NODE_VERSION=22`。依赖安装由构建机处理，本机只需提交并推送代码。
+发布是流水线的一部分，不需要人在本地跑部署命令：push 到 `main` → CI（Ruff、`npm test` 语法检查、`wrangler deploy --dry-run`）成功后，`Deploy Cloudflare Worker` 工作流通过 `workflow_run` 自动发布，且发布的就是 CI 验过的那一个 commit。需要绕过 CI 直接重发一次时，手动派发该工作流（`workflow_dispatch`）。
+
+发布之后同一个工作流会跑 `npm run verify:deploy` 做部署后自证，分两层：无凭据检查（登录页可达、CSP 仍放行签名 blob、静态资源仍被会话门挡住），以及有凭据的逐字节比对（用 `SITE_PASSWORD` 登录后，把 `frontend/` 下每个被 git 跟踪的文件与它在该 commit 里的 blob 比对）。`wrangler deploy` 只报「上传成功」，它不说线上提供的是不是这一个 commit 的内容；这一步才是那个静默漂移的门。
+
+`.github/workflows/worker.yml` 需要以下 GitHub Actions secrets：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `SITE_PASSWORD`（部署后自证用；缺失时该步骤直接失败，不会降级成「绿灯但没验」）
 
 Worker 没有第三方运行时 npm 依赖；密码会话和 GitHub App RS256 签名都使用原生 Web Crypto。`package.json` 与锁文件保留模块声明、语法检查命令和 Wrangler 部署工具。
 
-也可在安装 Node.js 22 和 npm 的电脑上手动部署：
+在装了 Node.js 22 和 npm 的机器上手动 `npm run deploy` 只是排查时的旁路手段，不再是上线路径——历史上正是这条手工路径让线上跑着旧资产：
 
 ```powershell
 npm ci
 npm test
 npm run dry-run
-npm run deploy
+npm run deploy          # 旁路：排查用，不是发布
+$env:SITE_PASSWORD="…"; npm run verify:deploy   # 可选：核对线上内容与当前 commit 一致
 ```
-
-备用部署工作流 `.github/workflows/worker.yml` 仅支持手动触发，避免与 Workers Builds 重复部署。使用该备用工作流需要以下 GitHub Actions secrets：
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
 Worker 使用 Static Assets 托管 `frontend/`；当前配置不使用 Cloudflare Pages 或 GitHub Pages。
 
 ## 平台配置

@@ -34,6 +34,7 @@ Status: implemented
 - 收益：发布不再依赖任何人的本地机器；线上版本与 `main` 上通过 CI 的提交对齐，仓库与生产不会继续漂移。
 - 收益：发布沿用同一条 CI（lint + 语法 + dry-run）作为前置，坏提交进不了生产。
 - 代价：`main` 上任何通过 CI 的 push 都会直接进生产，没有人工确认闸。若将来需要「发布以人的判断为准」，要么退回手动派发，要么给 job 加 GitHub Environment 的审批保护——那是有意为之的另一个决定。
+- 事实：这条链现在还包括**发布后的自证**——`Verify deployed release` 步骤用 `npm run verify:deploy` 核对线上内容与该 commit 的 blob 是否逐字节一致，坏发布当场变红。这是另一个决定，见 [发布后自证](2026-09-21-post-deploy-self-verification.md)。
 - 代价：发布依赖 GitHub secrets `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`。轮换 token 时本地与线上要同时改；token 权限不足时失败面从「本地命令报错」变成「CI 红」。
 - 事实：`scan.yml` 不受影响——扫描运行的是订阅扫描本身，不参与发布。
 - 事实：`workflow_run` 用的是**默认分支上**的那份 workflow 定义，所以这条改动必须先落到 `main` 才会生效。

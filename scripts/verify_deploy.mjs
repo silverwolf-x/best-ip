@@ -1,0 +1,165 @@
+// 发布闭环的最后一步：对刚上线的生产站点做自证。
+//
+// 只做两件事，且都不依赖部署方的自述：
+//   1. 无凭据可达性——登录页可达、CSP 仍放行签名 blob、静态资源仍被会话门挡住；
+//   2. 有凭据字节比对——用 SITE_PASSWORD 登录后，把 frontend/ 下**每一个**被 git 跟踪的
+//      文件与它在该 commit 里的 blob 逐字节比对。
+// 第 2 步是真正的漂移门：`wrangler deploy` 只报「上传成功」，它不说线上提供的是不是这一个
+// commit 的内容；而历史上确实发生过线上跑旧资产的静默漂移。
+//
+// 没有 SITE_PASSWORD 时只跑第 1 步并明确标注「未做字节比对」，不会假装验过。
+//
+// 用法：
+//   node scripts/verify_deploy.mjs --site https://best-ip.silverwolfx.workers.dev
+//   SITE_PASSWORD=... node scripts/verify_deploy.mjs --site <url> --commit <sha>
+// 退出码：0 全通过；1 有失败项。
+
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+
+const argv = process.argv.slice(2);
+const argOf = (name, fallback = "") => {
+  const index = argv.indexOf(`--${name}`);
+  return index >= 0 && argv[index + 1] ? argv[index + 1] : fallback;
+};
+
+const SITE = argOf("site", "https://best-ip.silverwolfx.workers.dev").replace(/\/+$/u, "");
+const COMMIT = argOf("commit", "HEAD");
+const PASSWORD = argOf("password", process.env.SITE_PASSWORD || "");
+const UA = "best-ip-deploy-verify";
+const ATTEMPTS = 3;
+const TIMEOUT_MS = 20_000;
+const BLOB_CSP = "connect-src 'self' https://*.blob.core.windows.net";
+const SESSION_COOKIE = "__Host-best-ip-session";
+
+const failures = [];
+const results = [];
+
+function record(ok, label, detail = "") {
+  results.push({ ok, label, detail });
+  if (!ok) failures.push(`${label}${detail ? ` — ${detail}` : ""}`);
+  console.log(`${ok ? "OK  " : "FAIL"}  ${label}${detail ? `  (${detail})` : ""}`);
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function request(path, { method = "GET", headers = {}, body } = {}) {
+  let lastError = "";
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(SITE + path, {
+        method,
+        headers: { "User-Agent": UA, ...headers },
+        body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      // 5xx 是 Cloudflare/上游的瞬时面，重试；4xx 是确定答复，直接返回。
+      if (response.status >= 500 && attempt < ATTEMPTS) {
+        lastError = `HTTP ${response.status}`;
+        await sleep(1500 * attempt);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error?.message || String(error);
+      if (attempt < ATTEMPTS) await sleep(1500 * attempt);
+    }
+  }
+  throw new Error(`${method} ${path} 连续 ${ATTEMPTS} 次失败：${lastError}`);
+}
+
+function cookiesOf(response) {
+  const raw = typeof response.headers.getSetCookie === "function"
+    ? response.headers.getSetCookie()
+    : [response.headers.get("set-cookie")].filter(Boolean);
+  return raw.map((entry) => entry.split(";")[0].trim()).filter(Boolean);
+}
+
+function blobAt(path) {
+  // blob 原始字节，绕开本地 checkout 的换行转换（core.autocrlf）。
+  return execFileSync("git", ["show", `${COMMIT}:${path}`], { maxBuffer: 64 * 1024 * 1024 });
+}
+
+function trackedFrontendFiles() {
+  return execFileSync("git", ["ls-files", "frontend"], { encoding: "utf8" })
+    .split("\n").map((line) => line.trim()).filter(Boolean)
+    .map((path) => path.slice("frontend/".length));
+}
+
+async function main() {
+  console.log(`站点：${SITE}`);
+  console.log(`比对基准：${COMMIT}（frontend/ 下全部被跟踪文件）\n`);
+
+  // ---- 第 1 步：无凭据可达性 ----
+  const loginPage = await request("/login");
+  const loginHtml = await loginPage.text();
+  record(loginPage.status === 200 && /name="password"/u.test(loginHtml), "登录页可达", `HTTP ${loginPage.status}`);
+
+  const csp = loginPage.headers.get("content-security-policy") || "";
+  record(csp.includes(BLOB_CSP), "CSP 仍放行签名 blob", csp ? "connect-src 已核对" : "缺少 CSP 头");
+
+  const root = await request("/");
+  const rootBody = await root.text();
+  let gated = false;
+  try {
+    gated = root.status === 401 && JSON.parse(rootBody).error === "login_required";
+  } catch {
+    gated = false;
+  }
+  record(gated, "未登录访问被会话门挡住", `HTTP ${root.status}`);
+
+  const asset = await request("/src/results.js");
+  record(asset.status === 401, "静态资源未登录不可读", `HTTP ${asset.status}`);
+
+  // ---- 第 2 步：有凭据字节比对 ----
+  if (!PASSWORD) {
+    console.log("\n未提供 SITE_PASSWORD：跳过字节比对，本次**没有**验证线上内容与 commit 一致。");
+  } else {
+    const csrf = /name="csrf" value="([A-Za-z0-9_-]{32})"/u.exec(loginHtml)?.[1] || "";
+    const csrfCookie = cookiesOf(loginPage).find((entry) => entry.includes("login-csrf")) || "";
+    record(Boolean(csrf && csrfCookie), "登录页下发 CSRF 令牌");
+    if (!csrf || !csrfCookie) return;
+
+    const loginResponse = await request("/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: SITE,
+        Cookie: csrfCookie,
+      },
+      body: new URLSearchParams({ csrf, password: PASSWORD }).toString(),
+    });
+    const session = cookiesOf(loginResponse).find((entry) => entry.startsWith(`${SESSION_COOKIE}=`)) || "";
+    record(loginResponse.status === 303 && Boolean(session), "登录换取会话", `HTTP ${loginResponse.status}`);
+    if (!session) return;
+
+    const files = trackedFrontendFiles();
+    const mismatches = [];
+    for (const path of files) {
+      const served = path === "index.html" ? "/" : `/${path}`; // 首页只挂在根路径上
+      const response = await request(served, { headers: { Cookie: session } });
+      if (response.status !== 200) {
+        mismatches.push(`${path} -> HTTP ${response.status}`);
+        continue;
+      }
+      const live = Buffer.from(await response.arrayBuffer());
+      const expected = blobAt(`frontend/${path}`);
+      if (!live.equals(expected)) {
+        mismatches.push(`${path} -> ${live.length}B sha=${createHash("sha256").update(live).digest("hex").slice(0, 12)} ≠ ${expected.length}B sha=${createHash("sha256").update(expected).digest("hex").slice(0, 12)}`);
+      }
+    }
+    record(mismatches.length === 0, `线上内容与 ${COMMIT} 逐字节一致`, mismatches.length === 0 ? `${files.length}/${files.length} 个文件` : mismatches.slice(0, 5).join("; "));
+    if (mismatches.length > 5) console.log(`     …另有 ${mismatches.length - 5} 处不一致`);
+  }
+
+  const passed = results.filter((entry) => entry.ok).length;
+  console.log(`\n结果：${passed}/${results.length} 项通过`);
+  if (failures.length) {
+    console.log("失败项：");
+    for (const failure of failures) console.log(`  - ${failure}`);
+    process.exitCode = 1;
+  }
+}
+
+await main();
