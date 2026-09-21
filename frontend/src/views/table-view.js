@@ -68,16 +68,22 @@ function createResultRow(result) {
     const container = document.createElement("div");
     container.className = "tag-chips";
     IPURE_SCORE_LABELS.forEach(([key, label]) => {
-      if (scores[key] == null) return;
+      // 分数可以合法缺席（IPure 对受限场景不给分），但档位仍然存在：
+      // 只有分数与档位都没有时才算“这个场景没有值”。
+      const levelLabel = ipureScenarioLabel(result, key);
+      if (scores[key] == null && !levelLabel) return;
       const chip = document.createElement("span");
-      const judgable = isIpureScenarioJudgable(result, key);
+      const judgable = scores[key] != null && isIpureScenarioJudgable(result, key);
       const scoreClass = !judgable ? "chip-asn" : scores[key] >= 75 ? "chip-ok" : scores[key] >= 45 ? "chip-info" : "chip-warn";
       chip.className = `chip ${scoreClass}`;
       if (judgable) chip.textContent = `${label} ${scores[key]}`;
       else {
-        const levelLabel = ipureScenarioLabel(result, key);
-        chip.textContent = `${label} ${levelLabel}`;
-        chip.title = `IPure 判定该场景为「${levelLabel}」，${scores[key]} 分不代表可用性`;
+        const shown = levelLabel || "无评分";
+        chip.textContent = `${label} ${shown}`;
+        chip.title =
+          scores[key] == null
+            ? `IPure 判定该场景为「${shown}」，未给出分数`
+            : `IPure 判定该场景为「${shown}」，${scores[key]} 分不代表可用性`;
       }
       container.append(chip);
     });
@@ -106,7 +112,8 @@ function createResultRow(result) {
       badge.title = result.error;
     }
     cell.replaceChildren(badge);
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     if (result.exit_ip) {
       const ipWrap = document.createElement("div");
       ipWrap.className = "ip-cell";
@@ -122,7 +129,8 @@ function createResultRow(result) {
     } else {
       cell.innerHTML = '<span class="failure-reason">' + escapeHtml(result.error || "连接失败") + '</span>';
     }
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     const ispText = result.isp || result.as_org || "";
     if (ispText) {
       const span = document.createElement("span");
@@ -133,7 +141,8 @@ function createResultRow(result) {
     } else {
       cell.textContent = "—";
     }
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     if (result.status === "failed" && !result.asn && !result.is_native && !result.company_type) {
       cell.textContent = "—";
       return;
@@ -184,7 +193,8 @@ function createResultRow(result) {
     }
 
     cell.replaceChildren(container.children.length ? container : document.createTextNode("—"));
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     if (result.status === "failed") {
       cell.textContent = "—";
       return;
@@ -224,11 +234,14 @@ function createResultRow(result) {
     }
 
     cell.replaceChildren(container);
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     cell.replaceChildren(createMiniGptBar(result.gpt_check));
-  });  appendTextCell(row, "", (cell) => {
+  });
+  appendTextCell(row, "", (cell) => {
     cell.replaceChildren(createMiniPingBar(result.global_ping));
-  });  appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
+  });
+  appendTextCell(row, result.elapsed_ms ? `${(result.elapsed_ms / 1000).toFixed(1)}s` : "—");
 
   return row;
 }
