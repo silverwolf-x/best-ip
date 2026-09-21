@@ -10,7 +10,7 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
       └─ Cloudflare Worker + Static Assets
           └─ GitHub App → GitHub Actions scan.yml
               ├─ Mihomo 节点扫描
-              └─ sanitized artifact → Worker → 浏览器
+              └─ sanitized artifact → Worker 换取签名地址 → 浏览器直取字节
 ```
 
 生产扫描由 `scan.yml` 直接运行 `scripts/run_scan.py`，不启动 FastAPI。FastAPI 仅用于本地 loopback API：独立静态服务提供页面，前后端分离。仓库不提供 Docker、Compose 或 GitHub Pages 模式。
@@ -110,7 +110,7 @@ DELETE /api/scans/{request_id}?run_id={run_id}
 GET /api/health
 ```
 
-Worker 会精确核对 request ID、workflow path、事件、分支、run/attempt、创建时间窗和唯一 artifact 名称；取件时跟随 GitHub 的 302 到签名 blob，并校验负载确实以 ZIP 魔数（`PK\x03\x04` 等）开头后才转发给浏览器，不是 ZIP 一律按 502 `GitHub artifact 响应不是 ZIP` 失败——所以空 body 不会被当成成功结果送出去。artifact 只保留 1 天。
+Worker 会精确核对 request ID、workflow path、事件、分支、run/attempt、创建时间窗和唯一 artifact 名称。取件接口只返回 GitHub 的短期签名地址（`artifact_url`，必须落在 `*.blob.core.windows.net` 上），那 ~90KB 字节由浏览器自己跨域直取；Worker 不下载归档，因为 Cloudflare 出口到这一族 blob 主机在实测中有很大比例会挂死并被边缘改写成 522。地址缺失或不在这一族主机上时按 502 `GitHub artifact 下载地址缺失` 失败。浏览器侧仍然只接受通过 ZIP 目录、CRC、SHA-256、运行身份与 manifest 校验的归档。artifact 只保留 1 天。
 
 ## 验证
 

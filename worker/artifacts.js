@@ -1,6 +1,6 @@
 import { ARTIFACT_PREFIX, MAX_ARTIFACT_BYTES, GITHUB_OWNER, GITHUB_REPOSITORY, positiveInteger } from "./config.js";
-import { HttpError, GitHubError, secureResponse } from "./responses.js";
-import { githubJson, githubRawArtifact } from "./github.js";
+import { HttpError, json } from "./responses.js";
+import { githubJson, githubArtifactUrl } from "./github.js";
 
 export async function findArtifact(env, run, requestId) {
   const runId = positiveInteger(run?.id);
@@ -45,17 +45,8 @@ export async function downloadArtifact(env, run, requestId) {
   if (!artifact || !positiveInteger(artifact.id)) {
     throw new HttpError(409, "扫描结果 artifact 尚未发布", "artifact_pending");
   }
-  const archive = await githubRawArtifact(env, artifact.id);
-  if (!archive.body) throw new GitHubError(502, "GitHub artifact 响应为空");
-  return secureResponse(
-    new Response(limitStream(archive.body), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${ARTIFACT_PREFIX}-${requestId}.zip"`,
-        "Cache-Control": "no-store",
-      },
-    }),
-    { noStore: true },
-  );
+  // 只交签名地址，不搬字节：Worker 出口到 blob 主机不可靠，浏览器直连是健康的（见 github.js）。
+  // artifact_id / artifact_name 与 GET /api/scans/:id 一致，保留是为了让取件方能把这份归档和
+  // 具体 run/artifact 对上（闭环验证就用它另取同一份做逐字节比对）。
+  return json({ artifact_id: artifact.id, artifact_name: artifact.name, artifact_url: await githubArtifactUrl(env, artifact.id) });
 }

@@ -39,11 +39,11 @@ Status: implemented
 - 收益：`ubuntu-24.04` 让扫描镜像可预期，Ubuntu 26 迁移通知不再适用于本仓库。
 - 代价：`ubuntu-24.04` 退役时需要人工再改一次；GitHub 若下线该标签，扫描会直接失败而不是静默降级——这是刻意的取舍，可复现性优先于自动跟随。
 - 代价：`upload-artifact` 跨了两个大版本（v4 → v6）。本次运行只在 v4 上验证过，v6 需要在下一次真实运行里复核运行页不再告警且 artifact 仍可被 Worker 取到。
-- 事实：本仓库在 `928c770 chore(tests): delete test suite and ignore tests directory`（2026-09-09，HEAD 的祖先）之后**没有任何测试文件**，`/tests/` 也在 `.gitignore` 里。因此 `ci.yml` 的 `uv run pytest` 收集不到用例（exit 5）、`npm test` 找不到 `tests/frontend_modules.test.mjs`，`worker.yml` 里作为部署前置的 `npm test` 同样会失败。这是本次改动之前就存在的状态，与 action 版本无关；本次只做了版本与镜像替换，没有顺带恢复或删除这些门禁——那需要单独决定。
+- 事实：本仓库在 `928c770 chore(tests): delete test suite and ignore tests directory`（2026-09-09，HEAD 的祖先）之后**没有任何测试文件**，`/tests/` 也在 `.gitignore` 里。因此 `ci.yml` 的 `uv run pytest` 收集不到用例（exit 5）、`npm test` 找不到 `tests/frontend_modules.test.mjs`，`worker.yml` 里作为部署前置的 `npm test` 同样会失败。这是本次改动之前就存在的状态，与 action 版本无关；本次只做了版本与镜像替换，没有顺带恢复或删除这些门禁。**后续**：这批门禁已按用户决定单独处理，见 [CI 门禁不再引用已删除的测试用例](2026-09-21-ci-gates-without-tests.md)。
 
 ## Testing
 
 - 逐 tag 核对 `runs.using`：`checkout@v5`、`cache@v5`、`setup-node@v5`、`upload-artifact@v6` 均为 `node24`；`upload-artifact@v5` 仍是 `node20`，因此没有选它。
 - 逐 tag 核对我们实际使用的输入是否存在。
 - `node --check` 与 `npm run check` 覆盖改动过的 JS 文件。
-- 运行页验证要在下一次 dispatch 后确认：两条 annotation 消失、artifact 仍能上传并被 Worker 取到（后者见 [artifact 转发笔记](../architecture/2026-09-21-artifact-relay-integrity.md)）。
+- 运行页验证要在下一次 dispatch 后确认：两条 annotation 消失、artifact 仍能上传并被取到（取件路径见 [artifact 字节改由浏览器直取](../architecture/2026-09-21-artifact-bytes-delegated-to-browser.md)）。

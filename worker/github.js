@@ -1,6 +1,6 @@
 import { base64UrlEncode, text } from "./auth.js";
 import { HttpError, GitHubError } from "./responses.js";
-import { GITHUB_API, GITHUB_OWNER, GITHUB_REPOSITORY, APP_ID_PATTERN, INSTALLATION_ID_PATTERN, MAX_ARTIFACT_BYTES, isRecord } from "./config.js";
+import { GITHUB_API, GITHUB_OWNER, GITHUB_REPOSITORY, APP_ID_PATTERN, INSTALLATION_ID_PATTERN, isRecord } from "./config.js";
 
 let installationTokenCache = null;
 
@@ -157,61 +157,67 @@ export async function githubJson(env, path, options = {}, retry = true) {
   return payload;
 }
 
-// ZIP 的三种起始魔数：本地文件头、空存档的结束目录、分卷标记。
-// upload-artifact 产出的归档一定以本地文件头开头，因此空 body 或 JSON/HTML 错误页会被下面拦下。
-const ZIP_MAGIC = [
-  Uint8Array.of(0x50, 0x4b, 0x03, 0x04),
-  Uint8Array.of(0x50, 0x4b, 0x05, 0x06),
-  Uint8Array.of(0x50, 0x4b, 0x07, 0x08),
-];
+// 取字节这一跳不再由 Worker 承担。Cloudflare 出口到 GitHub artifact 的 blob
+// （*.blob.core.windows.net）实测约 40%~60% 的请求会挂死到超时、被边缘改写成 522，
+// 而同一个签名地址由浏览器直连是健康的（Azure 侧回 Access-Control-Allow-Origin: *）。
+// Worker 只保留它独有的能力：用 GitHub App token 把那个签名地址换出来。
+const ARTIFACT_HOST_SUFFIX = ".blob.core.windows.net";
 
-export function hasZipMagic(bytes) {
-  if (!bytes || bytes.byteLength < 4) return false;
-  return ZIP_MAGIC.some((magic) => magic.every((byte, index) => bytes[index] === byte));
+function describeHop(label, response) {
+  const opaque = response.type === "opaqueredirect" ? "(opaque)" : "";
+  return `${label}=${response.status}${opaque}`;
 }
 
-// 读掉第一个分片做内容判定，再把完整字节重新拼成流交给调用方转发。
-// 少了这一步，一个空 200（重定向没被跟随、或 blob 刚 finalize 还没就绪）会被原样转发给浏览器，
-// 浏览器只会看到「artifact ZIP 缺少结束目录」，看不出是传输层给空 body 还是归档真的坏了。
-export async function inspectArchiveResponse(response) {
-  if (!response.body) return { zip: false, received: 0, body: null };
-  const reader = response.body.getReader();
-  const first = await reader.read();
-  const head = first.done ? null : first.value;
-  const body = new ReadableStream({
-    start(controller) {
-      if (head) controller.enqueue(head);
-    },
-    async pull(controller) {
-      const next = await reader.read();
-      if (next.done) {
-        controller.close();
-        return;
-      }
-      controller.enqueue(next.value);
-    },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
-  return { zip: hasZipMagic(head), received: head ? head.byteLength : 0, body };
-}
-
-function assertArchiveSize(response) {
-  const contentLength = Number(response.headers.get("Content-Length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_ARTIFACT_BYTES) {
-    throw new HttpError(413, "扫描 artifact 超出安全上限", "artifact_too_large");
+function artifactDownloadUrl(value) {
+  if (typeof value !== "string" || !value) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
   }
+  // 只把 GitHub 自己的 artifact blob 交给浏览器，别的一律不认。
+  if (url.protocol !== "https:" || !url.hostname.endsWith(ARTIFACT_HOST_SUFFIX)) return null;
+  return url.toString();
 }
 
-async function resolveArchiveRedirect(response, zipUrl, headers) {
-  if (response.status < 300 || response.status >= 400) return response;
-  const location = response.headers.get("Location");
-  // 拿不到 Location 说明该运行时对 manual 的语义不同：退回默认重定向再取一次，而不是直接放弃。
-  return location ? fetch(location, { redirect: "follow" }) : fetch(zipUrl, { headers, redirect: "follow" });
+// cancel 在已经出错或已被消费的流上会 reject；这里只关心「别继续挂着连接」，不关心结果。
+async function dropBody(response) {
+  if (!response?.body) return;
+  await response.body.cancel().catch(() => {});
 }
 
-export async function githubRawArtifact(env, artifactId, retry = true) {
+// redirect: "manual" 是首选：只读 302 头，不搬字节。
+// 但 manual 的语义各运行时并不一致，所以两条退路都留着，并立刻丢掉 body：
+// 已经给出 200（运行时自己跟了重定向）就用 response.url；什么都不给就退回默认重定向反推。
+async function resolveArtifactUrl(manual, zipUrl, headers) {
+  const trace = [describeHop("manual", manual)];
+  const fromLocation = manual.status >= 300 && manual.status < 400
+    ? artifactDownloadUrl(manual.headers.get("Location"))
+    : null;
+  if (fromLocation) {
+    await dropBody(manual);
+    return { url: fromLocation, trace };
+  }
+  const inline = manual.ok ? artifactDownloadUrl(manual.url) : null;
+  if (inline) {
+    await dropBody(manual);
+    return { url: inline, trace };
+  }
+  const followed = await fetch(zipUrl, { headers, redirect: "follow", signal: AbortSignal.timeout(10_000) })
+    .catch(() => null);
+  await dropBody(manual);
+  if (!followed) {
+    trace.push("follow=timeout");
+    return { url: null, trace };
+  }
+  trace.push(describeHop("follow", followed));
+  const landed = artifactDownloadUrl(followed.url);
+  await dropBody(followed);
+  return { url: landed, trace };
+}
+
+export async function githubArtifactUrl(env, artifactId, retry = true) {
   const token = await installationToken(env);
   const zipUrl = githubUrl(`/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}/actions/artifacts/${artifactId}/zip`);
   const headers = {
@@ -220,22 +226,20 @@ export async function githubRawArtifact(env, artifactId, retry = true) {
     "User-Agent": "best-ip-cloudflare-worker",
     Authorization: `Bearer ${token}`,
   };
-  const response = await fetch(zipUrl, { headers, redirect: "manual" });
-  if (response.status === 401 && retry) {
+  // 这一跳也可能挂在网络上。必须自己兜住，否则会以 500 `internal_error` 冒出去：
+  // 既丢掉跳转轨迹，也绕过下面的 401 重试。
+  let manual;
+  try {
+    manual = await fetch(zipUrl, { headers, redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  } catch (error) {
+    throw new GitHubError(502, `GitHub artifact 下载地址缺失（manual=${error?.name || error?.message || error}）`, "artifact_location_missing");
+  }
+  if (manual.status === 401 && retry) {
     installationTokenCache = null;
-    return githubRawArtifact(env, artifactId, false);
+    await dropBody(manual);
+    return githubArtifactUrl(env, artifactId, false);
   }
-  const archive = await resolveArchiveRedirect(response, zipUrl, headers);
-  if (!archive.ok) throw new GitHubError(502, "GitHub artifact 下载失败");
-  assertArchiveSize(archive);
-  const inspected = await inspectArchiveResponse(archive);
-  if (inspected.zip) return new Response(inspected.body, { status: 200 });
-  // 只兜底一次：既覆盖“重定向没被跟随”，也覆盖 blob 刚 finalize 还没就绪的瞬时情况。
-  const fallback = await fetch(zipUrl, { headers, redirect: "follow" });
-  if (fallback.ok) {
-    assertArchiveSize(fallback);
-    const retried = await inspectArchiveResponse(fallback);
-    if (retried.zip) return new Response(retried.body, { status: 200 });
-  }
-  throw new GitHubError(502, `GitHub artifact 响应不是 ZIP（收到 ${inspected.received} 字节）`);
+  const { url, trace } = await resolveArtifactUrl(manual, zipUrl, headers);
+  if (!url) throw new GitHubError(502, `GitHub artifact 下载地址缺失（${trace.join(" → ")}）`, "artifact_location_missing");
+  return url;
 }

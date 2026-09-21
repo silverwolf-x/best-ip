@@ -34,7 +34,9 @@ export function secureResponse(response, { noStore = false } = {}) {
   if (headers.get("Content-Type")?.includes("text/html")) {
     headers.set(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      // connect-src 必须放行 GitHub artifact 的签名 blob：那 95KB 字节由浏览器直连取，
+      // 不再经过 Worker（原因见 worker/github.js 顶部）。范围限定在这一族主机上。
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://*.blob.core.windows.net; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     );
   }
   return new Response(response.body, {

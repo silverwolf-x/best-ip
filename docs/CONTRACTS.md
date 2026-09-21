@@ -82,13 +82,13 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   and (once resolved) artifact ID/name. Unresolved run is `dispatching`, run null,
   jobs empty, job total null. Successful run without artifact is `artifact_pending`.
 - GET `/api/scans/{request_id}/artifact?run_id={id}&run_attempt={attempt}`:
-  ZIP bytes only after exact run and artifact checks, maximum 50 MiB. GitHub serves the
-  archive behind a 302 to signed blob storage, so the Worker follows the redirect and
-  then verifies the payload really starts with a ZIP signature (`PK\x03\x04`,
-  `PK\x05\x06` or `PK\x07\x08`) before relaying it; a 2xx that is not a ZIP is
-  re-fetched once with redirects followed and then rejected as 502
-  `GitHub artifact 响应不是 ZIP（收到 N 字节）`. An unfollowed redirect can therefore
-  never reach the browser as an empty 200 body.
+  `{artifact_id,artifact_name,artifact_url}` only after exact run and artifact checks.
+  `artifact_url` must be an `https` URL on `*.blob.core.windows.net`; it is GitHub's
+  short-lived signed location, and the browser fetches those bytes itself with a plain
+  cross-origin GET that carries no custom headers (so no preflight). Cloudflare egress
+  to that blob family hangs or is rewritten to 522 on a large share of requests, so the
+  Worker never downloads the archive. A missing or foreign location is 502
+  `GitHub artifact 下载地址缺失（...）` with `code: "artifact_location_missing"`.
 - DELETE `/api/scans/{request_id}?run_id={id}`: 202
   `{request_id,run_id,status:"cancelled"}` means cancellation requested to GitHub,
   not proof of completed runner cleanup; unresolved run returns 409.

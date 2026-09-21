@@ -21,6 +21,8 @@ Status: implemented
 
 转发边界必须自证完整性；前端必须能区分“信封不完整”和“信封完整但内容有问题”，两者处置不同。
 
+> **已被取代**：「worker 侧」这一半（Worker 自己取字节、校验 ZIP 魔数再转发）已由 [artifact 字节改由浏览器直取](2026-09-21-artifact-bytes-delegated-to-browser.md) 撤销——Cloudflare 出口到那一族 blob 主机不可靠，Worker 现在只换取签名地址。下面「前端侧」与「取件侧」两条继续有效：归档完整性校验没有消失，只是全部落在浏览器 `readArtifact` 上。
+
 **worker 侧（`worker/github.js`）**：`githubRawArtifact` 在把 body 交出去之前先读掉第一个分片，判定它是否以 ZIP 魔数开头（`PK\x03\x04` / `PK\x05\x06` / `PK\x07\x08`），再把首片拼回流里交给调用方。
 
 - 是 ZIP：正常返回，只多一次 `read()`（`inspectArchiveResponse`）。

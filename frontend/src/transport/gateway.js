@@ -71,8 +71,9 @@ export function createGatewayTransport(config, { fetchImpl = globalThis.fetch, n
         return data.terminal;
       }
       if (!remote.artifact_ready) return snapshot({ execution: "completed", phase: "validate", progress: { ...progress, label: "执行已完成，等待终态结果" } });
-      // 归档是终态结果的唯一来源。传输层偶发一个空 body 或被截断的 body 不该让整轮扫描永久作废，
-      // 因此只对“信封不完整”（artifact_truncated）做有界重取；内容不合法的结果照旧一次定终态。
+      // 归档是终态结果的唯一来源。取件链路上有两类“再来一次就好”的失败：信封不完整
+      // （artifact_truncated），以及换一个签名地址/换一次出口就可能成功的瞬时传输失败（retryable）。
+      // 内容不合法的结果照旧一次定终态。
       let payload = null;
       let failure = null;
       for (let fetchIndex = 0; fetchIndex < ARTIFACT_FETCH_ATTEMPTS && !payload; fetchIndex += 1) {
@@ -80,10 +81,14 @@ export function createGatewayTransport(config, { fetchImpl = globalThis.fetch, n
         try {
           archive = await http.artifact(`${path}/artifact?run_id=${runId}&run_attempt=${attempt}`, data.token);
         } catch (error) {
-          if (error.code !== "invalid_artifact") throw error;
-          data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error, invalid: true, done: true });
-          data.token = "";
-          return data.terminal;
+          if (error.code === "invalid_artifact") {
+            data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error, invalid: true, done: true });
+            data.token = "";
+            return data.terminal;
+          }
+          if (error.retryable !== true) throw error;
+          failure = error;
+          continue;
         }
         try {
           payload = await readArtifact(archive, { requestId: data.id, runId, runAttempt: attempt });
@@ -93,6 +98,11 @@ export function createGatewayTransport(config, { fetchImpl = globalThis.fetch, n
         }
       }
       if (payload) data.terminal = snapshot({ execution: "completed", phase: "validate", progress, result: payload.result, done: true });
+      // 字节这一跳在浏览器侧彻底取不到（例如网络屏蔽了 blob 主机）：这是传输失败，不是结果无效，
+      // 重取三次结果也一样。再按 retryable 交给外层重试，只会一路轮询到 31 分钟上限，最后给出一条
+      // 与真实原因无关的「扫描超过 31 分钟」。签名地址拿不到（Worker 侧偶发）仍然按 retryable 重试。
+      else if (failure?.code === "artifact_unavailable") data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error: failure, done: true });
+      else if (failure?.retryable === true) throw failure;
       else data.terminal = snapshot({ execution: "completed", phase: "validate", progress, error: failure, invalid: true, done: true });
       data.token = "";
       return data.terminal;
