@@ -217,7 +217,10 @@ export async function exportSnapshot(format, context) {
   const summary = buildSummary({ total, shown, state });
 
   const now = new Date();
-  const filename = `best-ip-snapshot-${timestampSlug(now)}.${spec.extension}`;
+  // 文件名要能自证来源：「真实扫描」与设计示例的产物只差时间戳的话，在下载列表里根本分不开
+  // （标题里的来源要打开才看得见）。示例路径不加后缀，产物名与上一轮完全一致。
+  const sourceTag = typeof state.source === "string" && state.source.trim() && state.source.trim() !== "示例数据" ? "real-" : "";
+  const filename = `best-ip-snapshot-${sourceTag}${timestampSlug(now)}.${spec.extension}`;
   const documentUrl = `${location.href.split("#")[0].split("?")[0]}`;
 
   if (format === "mhtml") {
