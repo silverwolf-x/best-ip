@@ -1,0 +1,37 @@
+name: Debug live assets
+
+on:
+  pull_request:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Probe live site
+        env:
+          SITE: https://best-ip.silverwolfx.workers.dev
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          set -u
+          jar=$(mktemp)
+          login=$(curl -sS --max-time 20 -c "$jar" -H 'Accept: text/html' "$SITE/login")
+          csrf=$(printf '%s' "$login" | grep -o 'name="csrf" value="[A-Za-z0-9_-]\{32\}"' | sed 's/.*value="//;s/"$//')
+          echo "csrf_len=${#csrf}"
+          code=$(curl -sS --max-time 20 -b "$jar" -c "$jar" -o /dev/null -w '%{http_code}' -X POST \
+            -H "Origin: $SITE" -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data "csrf=$csrf&password=$SITE_PASSWORD" "$SITE/login")
+          echo "login_post=$code"
+          probe() {
+            p="$1"
+            out=$(curl -sS --max-time 20 -b "$jar" -o /tmp/body -w '%{http_code} | ct=%{content_type} | bytes=%{size_download}' "$SITE$p" || echo 'curl-failed')
+            echo "=== $p -> $out"
+            head -c 160 /tmp/body | tr -d '\r' | tr '\n' ' '; echo
+          }
+          for p in / /index.html /styles.css /app/api.js /app/main.js /export/mhtml.js /tools/mhtml-roundtrip.mjs /src/results.js /site-config.js /definitely-missing.txt /app/ /app; do
+            probe "$p"
+          done
+          echo "--- 等 30 秒再看一次（排除边缘传播延迟）---"
+          sleep 30
+          for p in /app/api.js /styles.css; do probe "$p"; done
+          echo "--- 未登录时 /app/api.js 的响应 ---"
+          curl -sS --max-time 20 -o /tmp/b2 -w '%{http_code} | ct=%{content_type}\n' "$SITE/app/api.js"; head -c 160 /tmp/b2; echo
