@@ -21,12 +21,14 @@ const STATUS_LABELS = { success: "完整", partial: "部分", failed: "失败" }
 /* --------------------------------------------------------------- 列定义 --- */
 // width 是列宽的**唯一**来源，值来自真实浏览器的实测（见 styles.css 表格段的注释）：
 // 每列按「内容自然宽度」给，谁也不许白占地方——窄列攒下的 77px 正好够「节点」列
-// 从 184 涨到 258（原来 7/12 行的协议 tag 与状态药丸被省略号吃掉）。
+// 从 184 涨到 268（原来 7/12 行的协议 tag 与状态药丸被省略号吃掉）。268 是这样来的：
+// 最长的一行（洛杉矶 ColoCrossing-03 + 状态药丸）实测要 275.83px，该格左右内边距
+// 从 9px 收到 5px 后再省 8px → 266.83px，取 268 留 1px 余量。
 // width 为空表示吃掉剩余宽度；align=center 用于分数列，等宽数字右对齐反而不齐。
 // 注意：col 元素不支持 min-width，「IPure 场景评分」那列不允许折行的硬下限写在 CSS 里。
 export const COLUMNS = [
   { key: "rank", label: "#", width: "40px" },
-  { key: "ident", label: "节点", width: "258px" },
+  { key: "ident", label: "节点", width: "268px" },
   { key: "ip", label: "出口 IP", width: "168px" },
   { key: "geo", label: "国家 / 地区", width: "116px" },
   { key: "isp", label: "服务商 / ISP", width: "168px" },
@@ -141,11 +143,14 @@ function identCell(document, result) {
   if (result.status === "partial") td.append(chip(document, STATUS_LABELS.partial, "warn"));
   else if (result.status === "failed") td.append(chip(document, STATUS_LABELS.failed, "bad"));
 
-  // 这一列是十列里唯一还会省略号的（列宽 258px，最长的一个节点名连状态药丸要 276px）：
-  // 被省略号吃掉的正是末尾的状态药丸，所以整格也带上 title，鼠标停上去还能读到状态。
+  // 这一列是十列里唯一还可能省略号的（最长的一行要 275.83px，列宽 268px）：会被吃掉
+  // 的是末尾状态药丸，所以整格带上 title，鼠标停上去（不论停在哪一段）都能读到状态。
   td.title = result.status && result.status !== "success"
     ? `${result.node || "未命名节点"}（${STATUS_LABELS[result.status]}）`
     : result.node || "未命名节点";
+  // 节点名自己也有 title，而它盖在整格上面：两处写一样的内容，否则鼠标停在节点名上
+  // （最自然的悬停位置）反而读不到状态——实测 elementFromPoint 命中的是 span.node。
+  name.title = td.title;
 
   return td;
 }
