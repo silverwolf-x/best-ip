@@ -459,7 +459,10 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .scn-none { display: inline-flex; align-items: center; color: var(--ink-3); font-size: 11px; }
 
 /* --- 失败行不留白：原因与卡住的步骤占住本该显示网络信息的跨列单元格 --- */
-.cell-absent { color: var(--ink-3); }
+/* 失败行与数据行同一个行高：数据行是两行（服务商 + ASN·公司类型）自然撑到 51px，
+   失败行只有一行解释，不给下限就塌到 37px——真实数据里 25 行有 11 行失败，表的
+   横线在失败行处突然收紧，读起来像两种表拼在一起。height 在 td 上是「至少这么高」。 */
+.cell-absent { color: var(--ink-3); height: 51px; }
 .cell-absent .failure {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--danger); font-size: 12.5px; font-weight: 600;
@@ -564,6 +567,8 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   }
   /* 卡片模式宽度够，服务商名与 ASN 不必再截断。 */
   .grid .row .isp, .grid .row .isp-sub { white-space: normal; }
+  /* 卡片模式是纵向堆叠，高度由内容决定，必须撤掉表格模式给失败行的 51px 下限。 */
+  .grid .row > td.cell-absent { height: auto; }
 }
 
 @media (max-width: 620px) {

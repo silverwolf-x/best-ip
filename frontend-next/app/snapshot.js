@@ -182,10 +182,19 @@ function download(blob, filename) {
 /* --------------------------------------------------------------- 对外接口 --- */
 
 function buildSummary({ total, shown, state }) {
+  // 快照会被归档、被转发，所以真实扫描的来源要跟着文件走：标题与摘要各写一次，
+  // 否则一份真实结果和一个设计示例在文件列表里长得一模一样。
+  // 「示例数据」不加前缀——它本来就是设计示例，不必在自己的标题里反复声明。
+  const source = typeof state.source === "string" ? state.source.trim() : "";
+  const realSource = source && source !== "示例数据" ? source : "";
+  const sourceTag = realSource ? `${escapeHtml(realSource)} · ` : "";
+  const sourceHtml = realSource
+    ? `来源：<b>${escapeHtml(realSource)}</b> <span class="sep">·</span> `
+    : "";
   return {
-    title: `节点质量榜 · 离线快照 · ${state.generatedAt}`,
+    title: `${sourceTag}节点质量榜 · 离线快照 · ${state.generatedAt}`,
     statsHtml: `<b>${total}</b> 个节点 <span class="sep">·</span> 完整 <b>${state.success}</b> <span class="sep">·</span> 部分 <b>${state.partial}</b> <span class="sep">·</span> 失败 <b>${state.failed}</b>`,
-    stateHtml: `筛选：<b>${escapeHtml(state.query || "无")}</b> <span class="sep">·</span> 状态：<b>${escapeHtml(state.statusLabel)}</b> <span class="sep">·</span> 排序：<b>${escapeHtml(state.sortLabel)}</b> <span class="sep">·</span> 视图内 <b>${shown}</b> / ${total} 个节点 <span class="sep">·</span> 导出于 <b>${escapeHtml(state.exportedAt)}</b>`,
+    stateHtml: `${sourceHtml}筛选：<b>${escapeHtml(state.query || "无")}</b> <span class="sep">·</span> 状态：<b>${escapeHtml(state.statusLabel)}</b> <span class="sep">·</span> 排序：<b>${escapeHtml(state.sortLabel)}</b> <span class="sep">·</span> 视图内 <b>${shown}</b> / ${total} 个节点 <span class="sep">·</span> 导出于 <b>${escapeHtml(state.exportedAt)}</b>`,
     countHtml: `当前视图 <b>${shown}</b> 个节点，共 ${total} 个`,
   };
 }

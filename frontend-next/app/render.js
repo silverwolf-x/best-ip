@@ -208,9 +208,14 @@ function kindCell(document, result) {
 
 function nativeCell(document, result) {
   const td = textCell(document, "native", "cell-native");
-  if (result.is_native === true) td.append(chip(document, "原生", "good"));
-  else if (result.is_native === false) td.append(chip(document, "广播", "warn"));
-  else td.append(chip(document, "未知", "neutral"));
+  const chipEl = result.is_native === true ? chip(document, "原生", "good")
+    : result.is_native === false ? chip(document, "广播", "warn")
+      : chip(document, "未知", "neutral");
+  // 三态 chip 只有三个词，而 native_status 是上游原话（如「广播 IP (AE)」「任播服务」）。
+  // 挂在 title 上：既是「未知」时的解释，也让三个词背后的判据可查，但不占一列宽度。
+  const status = typeof result.native_status === "string" ? result.native_status.trim() : "";
+  if (status) chipEl.title = status;
+  td.append(chipEl);
   return td;
 }
 
