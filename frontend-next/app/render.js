@@ -30,7 +30,11 @@ export const COLUMNS = [
   { key: "rank", label: "#", width: "40px" },
   { key: "ident", label: "节点", width: "268px" },
   { key: "ip", label: "出口 IP", width: "168px" },
-  { key: "geo", label: "国家 / 地区", width: "116px" },
+  // 国家那列写过「国家 · 城市」，现在只写国家：真实数据里城市常与国家同名
+  // （Hong Kong Hong Kong），一列写两遍不增信息，116px 还被城市吃掉一半。
+  // 96px 的来历：62 行真实+示例数据里最长的国家是 "United States"，含左右内边距实测
+  // 83.94px，留 12px 余量。城市仍在检索索引里（main.js），只是不占列宽。
+  { key: "geo", label: "国家", width: "96px" },
   { key: "isp", label: "服务商 / ISP", width: "168px" },
   { key: "kind", label: "接入", width: "58px" },
   { key: "native", label: "原生性", width: "58px" },
@@ -80,10 +84,13 @@ export function verdictOf(result) {
   if (result.status === "partial") return "mixed";
   return result.is_residential === true && result.is_native === true ? "good" : "mixed";
 }
-
+/**
+ * 归属地只写国家。原先是「国家 · 城市」，但真实数据里城市经常和国家同名
+ * （`Hong Kong Hong Kong`），一列里出现两次同样的字只占宽度不增信息；这一列
+ * 本来只有 116px 还被城市吃掉一半。城市仍然可搜（见 main.js 的检索索引），只是不占列宽。
+ */
 function locationText(result) {
-  const parts = [result.country, result.city].filter(Boolean);
-  if (parts.length) return parts.join(" · ");
+  if (result.country) return result.country;
   return result.exit_ip ? "归属地未知" : "位置未知";
 }
 
@@ -173,7 +180,11 @@ function ipCell(document, result) {
 
 function geoCell(document, result) {
   const td = textCell(document, "geo", "cell-geo");
-  td.textContent = locationText(result);
+  const text = locationText(result);
+  td.textContent = text;
+  // 这一列是固定 96px 且不许折行，超过的部分由 CSS 的 ellipsis 裁掉（`.cell-geo` 的
+  // max-width:0）。裁掉的字只能靠 title 读回来，这也是这里写 title 的唯一理由。
+  td.title = result.country || text;
   return td;
 }
 
@@ -270,7 +281,10 @@ function scenarioCell(document, result) {
   const list = el(document, "ul", "scenarios");
   const scores = result.ipure_scores;
 
-  if (!scores || typeof scores !== "object") {
+  // 只有「根本没连上」的行才不画格子：那行的另外五列已经换成失败原因，这里补一句
+  // 「无场景评分」比摆六个 -1 更直白。判据是「有没有出口 IP」而不是「有没有评分对象」——
+  // 上游漏发 ipure_scores 时也要按缺项显示 -1，不能悄悄换成另一种文案。
+  if (!result.exit_ip) {
     const none = el(document, "li", "scn-none");
     none.textContent = result.status === "failed" ? "无场景评分（未连接成功）" : "无场景评分";
     list.append(none);
@@ -278,17 +292,23 @@ function scenarioCell(document, result) {
     return td;
   }
 
-  let missing = 0;
+  // 连上的行六项永远齐：没测到的项按 -1 显示。原来缺项直接不画、末尾挂一句「另有 N 项无数据」，
+  // 那句注记的长度随数据变化，把「IPure 场景评分」这一列的宽度一起带着抖；而且同一行
+  // 少一项时六格变五格，横着比对两个节点的同一个场景要先数位次。统一成 -1 之后六格恒定、
+  // 与「该地区受限」共用同一个中性灰通道，也不参与数值排序。
+  //
+  // 但两种 -1 的成因不同，不能都说成「该地区受限」：上游没返回值是「无数据」，
+  // 上游明确回 -1 才是受限。差别放在 title 里说，格子里只出现一个数字。
+  const six = scores && typeof scores === "object" ? scores : {};
   SCENARIO_LABELS.forEach(([key, label]) => {
-    const value = scores[key];
-    if (value === null || value === undefined) {
-      missing += 1;
-      return;
-    }
+    const raw = six[key];
+    const missing = raw === null || raw === undefined;
+    const value = missing ? -1 : raw;
     const item = el(document, "li", "scn");
-    // -1 是「该地区受限」的哨兵：色带函数给出中性灰通道，也不参与数值排序。
     item.dataset.ipureScore = String(value);
-    item.title = value === -1 ? `${label}：该地区受限` : `${label} 场景评分 ${value}`;
+    if (missing) item.title = `${label}：无数据（显示为 -1）`;
+    else if (value === -1) item.title = `${label}：该地区受限`;
+    else item.title = `${label} 场景评分 ${value}`;
     const lbl = el(document, "span", "scn-lbl");
     lbl.textContent = label;
     const num = el(document, "span", "scn-num");
@@ -296,13 +316,6 @@ function scenarioCell(document, result) {
     item.append(lbl, num);
     list.append(item);
   });
-
-  // 缺项必须说出来，否则「只有 4 项」会被读成「这 4 项就是全部」。
-  if (missing > 0) {
-    const note = el(document, "li", "scn-none");
-    note.textContent = `另有 ${missing} 项无数据`;
-    list.append(note);
-  }
 
   td.append(list);
   return td;

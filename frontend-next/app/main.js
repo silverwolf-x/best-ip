@@ -183,15 +183,25 @@ function statSep() {
  * 导出按钮的可用性由「有没有数据」单独决定，不能散在 render 与 runExport 两处：
  * 没有任何行时点导出只会产出一个空表快照（且不含来源），在文件列表里跟
  * 「这次扫描确实没扫到节点」分不开。加载中/加载失败/真空结果三种情况都落在这一条上。
+ *
+ * 按钮的 title 是 index.html 写的（.mhtml 双击可打开 / .html 是兜底），禁用时换成原因，
+ * 恢复可用时必须**写回原文案**：原来这里用 removeAttribute，而 render() 每次都会调到这里，
+ * 于是页面一加载这两条说明就被永久删掉了（没有任何代码会再写回去）。
  */
+const EXPORT_TITLES = {
+  mhtml: elements.exportMhtml ? elements.exportMhtml.title : "",
+  html: elements.exportHtml ? elements.exportHtml.title : "",
+};
+
 function syncExportAvailability() {
   const empty = dataset.nodes.length === 0;
-  const reason = empty ? "还没有可导出的扫描结果" : "";
-  for (const button of [elements.exportMhtml, elements.exportHtml]) {
+  for (const [button, original] of [
+    [elements.exportMhtml, EXPORT_TITLES.mhtml],
+    [elements.exportHtml, EXPORT_TITLES.html],
+  ]) {
     if (!button) continue;
     button.disabled = empty;
-    if (reason) button.title = reason;
-    else button.removeAttribute("title");
+    button.title = empty ? "还没有可导出的扫描结果" : original;
   }
 }
 

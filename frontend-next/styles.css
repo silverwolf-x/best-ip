@@ -265,21 +265,23 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 
 .grid {
   width: 100%;
-  /* 1354px 是列宽**实测和**的硬下限（每列都按内容的自然宽度给，省下来的地方
+  /* 1322px 是列宽**实测和**的硬下限（每列都按内容的自然宽度给，省下来的地方
      全给了「节点」列）。低于这个数，浏览器就从「IPure 场景评分」那列挖宽度，
      6 个 chip 一折行，行高从 50.5px 膨胀到 57/80/149px，密度当场归零。
-     所以窄屏宁可横向滚动，也不压缩列宽。1440 视口可用 1358px，留 4px 余量。 */
-  min-width: 1354px;
+     所以窄屏宁可横向滚动，也不压缩列宽。1440 视口可用 1358px，留 36px 余量。
+     原为 1354px：国家列只写国家后从 116 收到 96（-20），场景列下限从 358 收到 346（-12）。 */
+  min-width: 1322px;
   border-collapse: separate;
   border-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
 
 /* 唯一一条写在 CSS 里的列宽：col 元素不支持 min-width，而「这一列绝不许折行」本身
-   是密度契约的一部分——实测最宽的一行（多伦多，含「另有 1 项无数据」注记）内容
-   338.06px，加 18px 内边距要 356.06px，取 358px。 */
+   是密度契约的一部分——实测最宽的一行（真实数据里三项 3 位数的那行）六个 chip 合计
+   326px，加左右内边距 18px 与 2px 余量，取 346px。原为 358px，那是按带「另有 N 项
+   无数据」注记的行量的；注记删掉、缺项统一显示 -1 之后，这一列恒定就是六个 chip。 */
 .grid .cell-scn,
-.grid thead th.col-scn { min-width: 358px; }
+.grid thead th.col-scn { min-width: 346px; }
 
 .grid thead th {
   padding: 8px 9px;
@@ -396,7 +398,16 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .copy-btn[data-state="error"] { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
 
 /* --- 地区 / 服务商 --- */
-.cell-geo { white-space: nowrap; }
+/* 归属地只写国家，列宽 96px 是按最长观测值（United States，含内边距 83.94px）定的预算。
+   这里让 96px 成为**上限**而不是期望值：不设 max-width 的话，遇到更长的国名这一格会向
+   表格算法索取更多宽度，被压的是「节点」列——那列本来就比内容窄 8px，再窄就会开始吃
+   状态药丸。裁掉的那截由 title 给全称，这也是这一列写 title 的唯一理由。 */
+.cell-geo {
+  max-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cell-isp .isp {
   display: block; color: var(--ink); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -550,6 +561,8 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   /* 卡片模式必须放开 .ident 的单行裁切：max-width:0 是为表格算法准备的，
      到了 block 布局它会把整格内容裁成 0 宽——节点名与协议 tag 直接消失。 */
   .grid .row > td.ident { max-width: none; overflow: visible; white-space: normal; }
+  /* 同上：max-width:0 只服务于表格算法，block 布局里会把国名裁成 0 宽。 */
+  .grid .row > td.cell-geo { max-width: none; overflow: visible; white-space: normal; }
   /* 卡片模式整行都是块级元素，这条给表格算列宽的硬下限必须撤销，否则窄屏会被它
      撑出横向滚动（375px 下实测 18px），chip 照样折行。 */
   .grid .row > td.cell-scn { min-width: 0; }

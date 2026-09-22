@@ -165,7 +165,7 @@ export const NODES = [
     is_native: false,
     coffee_score: 71,
     score: 64,
-    // 电商受限、邮件无数据：行里只显示有值的项，并标注缺了几项
+    // 电商是上游真值的 -1（该地区受限）、邮件是缺项：六格恒在，两者都显示 -1，成因只在 title 里区分
     ipure_scores: { ai: 70, social: 66, streaming: 72, gaming: 61, ecommerce: -1, email: null },
   },
   {

@@ -47,6 +47,21 @@ function integer(value) {
   return Number.isFinite(number) ? Math.trunc(number) : null;
 }
 
+/**
+ * IPure 取值的合法域：`-1` 是「该地区受限」哨兵，`0..100` 的**整数**是真实分数，其余当无值。
+ * 不能只靠 integer() 的截断：`-1.4` 会被截成 `-1`，于是渲染器把「上游回了个域外值」谎报成
+ * 「该地区受限」——那正是这一列语义最重的值；`-0.5` 会被截成 `0`，凭空造出一个 0 分；
+ * `-2` / `101` 更糟，会直接显示成「场景评分 -2」。所以先要求整数，再要求落在域内，
+ * 不合格的退回 null，走「无数据（显示为 -1）」那条路，不猜。
+ */
+function ipureValue(value) {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+  const number = Number(value);
+  if (!Number.isInteger(number)) return null;
+  if (number === -1) return -1;
+  return number >= 0 && number <= 100 ? number : null;
+}
+
 /** 三态布尔：只有真的布尔才透传，其余一律 null（含 "true" / 0 / "no" 这类脏值）。 */
 function triState(value) {
   return value === true || value === false ? value : null;
@@ -125,18 +140,15 @@ function errorStepOf(record) {
 }
 
 /**
- * 六项场景评分。全空等于「IPure 没测到任何一项」，此时返回 null 交给渲染器的
- * 「无场景评分」分支——否则行里会出现一句读不通的「另有 6 项无数据」。
+ * 六项场景评分。上游给了对象就一律按六项画：缺项（null / 域外值）由渲染器显示 -1，
+ * 这样「IPure 场景评分」列在每一行都是固定的六格。只有上游根本没这个键（不是对象）
+ * 时才返回 null——渲染器对「没有出口 IP 的行」会用一句「无场景评分」代替六格。
  */
 function scenarioScoresOf(source) {
   if (!source || typeof source !== "object" || Array.isArray(source)) return null;
   const scores = {};
-  let measured = 0;
-  for (const key of SCENARIO_KEYS) {
-    scores[key] = integer(source[key]);
-    if (scores[key] !== null) measured += 1;
-  }
-  return measured === 0 ? null : scores;
+  for (const key of SCENARIO_KEYS) scores[key] = ipureValue(source[key]);
+  return scores;
 }
 
 /* ----------------------------------------------------------------- 映射 --- */
@@ -146,7 +158,8 @@ function toRow(record) {
   const failed = status === "failed";
   const geo = countryCityOf(record);
   const asn = integer(record?.asn);
-  const score = failed ? null : integer(record?.score);
+  // 总分与六项同一取值域：越界小数不能被截成 -1，否则药丸会把它说成「该地区受限」。
+  const score = failed ? null : ipureValue(record?.score);
 
   return {
     node: text(record?.node),

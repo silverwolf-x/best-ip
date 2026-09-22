@@ -20,12 +20,12 @@ Status: proposed
 
 页面结构：
 
-- `.table-wrap > table.grid#grid > caption.sr-only + colgroup#gridColumns + thead#gridHead + tbody#rows`。十列依次是：排名 `#`、节点（名称 + 协议 tag）、出口 IP（带复制按钮）、国家 / 地区、服务商 / ISP（次行给 `AS…` 与公司类型）、接入（住宅 / 机房）、原生性（原生 / 广播）、Coffee 评分、IPure 总分、IPure 六项场景评分（六个紧凑 chip）。
+- `.table-wrap > table.grid#grid > caption.sr-only + colgroup#gridColumns + thead#gridHead + tbody#rows`。十列依次是：排名 `#`、节点（名称 + 协议 tag）、出口 IP（带复制按钮）、国家、服务商 / ISP（次行给 `AS…` 与公司类型）、接入（住宅 / 机房）、原生性（原生 / 广播）、Coffee 评分、IPure 总分、IPure 六项场景评分（六个紧凑 chip）。归属地一列只写国家，理由与代价见 [归属地列只写国家、场景缺项统一显示 -1](../../implemented/feature/2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。
 - 表头是**静态列名**，`thead` 内不得有任何 `input` / `select` / `button`。页面上只留 5 个控件：`#query`、`#statusFilter`（全部/完整/部分/失败）、`#sortSelect`、`#exportMhtml`、`#exportHtml`，外加每行的 `.copy-btn`。
 - 首列的 3px 左边框当导轨，编码"值不值得用"：`data-verdict="good|mixed|bad"` → 绿 / 琥珀 / 红。它不是文字，不占列宽也不加对比度负担。
 - 前三名只在"按分数降序"时高亮（`data-tier="top"` → 金色）。按名字排序时给第 1 名戴金牌是撒谎。
 - 行状态药丸只在非"完整"时出现：完整是常态，每行挂一个"完整"就是噪声。失败行用 `td.cell-absent[colspan=5]` 占掉"出口 IP / 地区 / 服务商 / 接入 / 原生性"五列，写明失败原因与卡在哪一步，**不留白**。
-- 响应式两段 + 一个兜底：宽度够（可用宽度 ≥1354px，即视口 ≥1440px）就十列平铺；不够就整张横向滚动，**只滚不删列、也不压列宽**；≤900px 折成卡片，每个单元格用 `td[data-label]::before` 自报家门，`thead` 与 `colgroup` 隐藏（卡片模式要撤销所有为表格算宽度设的 `min-width`，并放开 `.ident` 上的 `max-width: 0`，否则节点名会被裁成 0 宽）。
+- 响应式两段 + 一个兜底：宽度够（可用宽度 ≥1322px，即视口 ≥1440px）就十列平铺；不够就整张横向滚动，**只滚不删列、也不压列宽**；≤900px 折成卡片，每个单元格用 `td[data-label]::before` 自报家门，`thead` 与 `colgroup` 隐藏（卡片模式要撤销所有为表格算宽度设的 `min-width`，并放开 `.ident` 上的 `max-width: 0`，否则节点名会被裁成 0 宽）。
 
 ## 单一真值：列定义
 
@@ -41,9 +41,9 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 ## 列宽是量出来的预算，不是画出来的
 
-十列的宽度不是设计稿标的，是在真实 Chromium 里量出来的：把 `#grid` 克隆进 `width:max-content` 的容器并**摘掉 `colgroup`**，浏览器给出的每列宽度就是"内容自然需要多宽"。照这个数重排（`rank 40 / ident 268 / ip 168 / geo 116 / isp 168 / kind 58 / native 58 / coffee 62 / ipure 58`），把 `kind`/`native`/`coffee`/`ipure` 四列白占的 77px 全转给「节点」列（184 → 268）——原先 12 行里有 7 行的协议 tag 与状态药丸被省略号静默吃掉（连"部分"这个状态本身都吃）。1440 视口可用 1358px，十列实测和 1354px，放得下，且行高从 53–57px 收到统一的 50.5px（整表 705 → 645px）。
+十列的宽度不是设计稿标的，是在真实 Chromium 里量出来的：把 `#grid` 克隆进 `width:max-content` 的容器并**摘掉 `colgroup`**，浏览器给出的每列宽度就是"内容自然需要多宽"。照这个数重排（`rank 40 / ident 268 / ip 168 / geo 96 / isp 168 / kind 58 / native 58 / coffee 62 / ipure 58`），把 `kind`/`native`/`coffee`/`ipure` 四列白占的 77px 全转给「节点」列（184 → 268）——原先 12 行里有 7 行的协议 tag 与状态药丸被省略号静默吃掉（连"部分"这个状态本身都吃）。1440 视口可用 1358px，十列实测和 1322px，放得下，且行高从 53–57px 收到统一的 51px（整表 705 → 645px）。`geo` 原为 116px（那时写「国家 · 城市」），只写国家后按最长的 `United States`（含内边距 83.94px）收到 96px。
 
-「IPure 场景评分」是唯一不许折行的列（实测最宽的一行内容 338.06px，加 18px 内边距取 358px 作下限），它的硬下限只能写在 CSS 里：`<col>` 元素不支持 `min-width`，于是宽度写在 `COLUMNS`、下限写在 `.grid .cell-scn`。同理 `.grid { min-width: 1354px }` 是"列宽实测和的硬下限"，低于它浏览器就从场景列挖宽度，6 个 chip 折行后行高膨胀到 57/80/149px。窄屏宁可横向滚动也不压列宽；卡片模式下这两条下限都必须撤销（`.cell-scn { min-width: 0 }`），否则窄屏会被它们撑出横向滚动。
+「IPure 场景评分」是唯一不许折行的列（实测最宽的一行内容 326px，加 18px 内边距与 2px 余量取 346px 作下限；原为 358px，那是按带「另有 N 项无数据」注记的行量的），它的硬下限只能写在 CSS 里：`<col>` 元素不支持 `min-width`，于是宽度写在 `COLUMNS`、下限写在 `.grid .cell-scn`。同理 `.grid { min-width: 1322px }` 是"列宽实测和的硬下限"，低于它浏览器就从场景列挖宽度，6 个 chip 折行后行高膨胀到 57/80/149px。窄屏宁可横向滚动也不压列宽；卡片模式下这两条下限都必须撤销（`.cell-scn { min-width: 0 }`），否则窄屏会被它们撑出横向滚动。
 
 两处只有真实浏览器加上"逐元素量几何"才会暴露的坑，记在这里免得下次重踩：
 
@@ -59,7 +59,7 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 顺带记下真实数据的形状，免得下次又按示例数据想当然：节点名可以是 emoji 旗标 + 私用区字符（`🇭🇰香港•移联01`）、订阅里会混进 `群组：@NekoCloud1` 这种非节点条目（它以失败行出现）、`ipure_scores` 的真实取值跨度远大于示例（实测 6 到 91，而示例全在 80–92，低压段落也在用）、`company_type` 是英文原值（`Hosting`/`ISP`），不翻译。
 
-**覆盖缺口（如实记录）**：真实产物里**从未出现** `ipure_scores` 的 `-1`「该地区受限」哨兵，也从未出现 `score` 为 `null` 却有出口 IP 的行。这两条路径目前只有合成数据与本层单测覆盖，浏览器里没被真实数据走过。
+**覆盖缺口与已改正的判断（如实记录）**：本轮真扫**抽到了**上游真值 `-1`（3 条记录的 `ai` 项），所以这里原先写的"真实产物里**从未出现** `-1`「该地区受限」哨兵"是错的——`-1` 在真实数据里确实存在。仍未出现的只剩「`score` 为 `null` 却有出口 IP」的行。另外，「上游没返回场景值」在真实数据里只与失败行同时出现（60 个缺项全部来自 10 个失败行的 6 项），**连上的行缺项**这条路径仍只有合成数据覆盖。
 
 ## 快照里的脚本会被 Chrome 沙箱拦掉
 
@@ -91,7 +91,7 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 十列表格里的分数是药丸（`.score[data-band=…]`），IPure 总分与六个场景 chip 带 `data-ipure-score`，由 `applyScoreStyles` 在元素进 DOM **之后**用 CSSOM 写 `--sc-l` / `--sc-d` 通道，CSS 只负责决定前景/描边/底色的比例（`rgb(var(--sc))` / `rgb(var(--sc) / 0.10)` / `rgb(var(--sc) / 0.42)`）。生产 CSP 是 `style-src 'self'`，标记里的 `style` 属性会被静默拦掉，所以色带绝不出现在标记里，只能这样分两步走——见 [生产 CSP 只认 CSSOM](../../implemented/architecture/2026-09-22-frontend-csp-blocks-markup-styles.md)。色带本身取自已验证的配方，见 [IPure 色带改用 Coffee 色调配方](../../implemented/bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
 
-`-1` 是"该地区受限"的哨兵值，不是低分：它走中性灰通道，且**不参与数值排序**（升序时也不许被顶到最高分）。`score: null` 显示"—"并给出 `score_note` 原因；场景缺项显示"另有 N 项无数据"。无值不伪装——见 [IPure 受限档改记 -1](../../implemented/architecture/2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
+`-1` 是"该地区受限"的哨兵值，不是低分：它走中性灰通道，且**不参与数值排序**（升序时也不许被顶到最高分）。`score: null` 显示"—"并给出 `score_note` 原因；场景**缺项也显示 `-1`**（原先那句「另有 N 项无数据」注记已废弃），两种 `-1` 的成因只在 `title` 里区分——见 [归属地列只写国家、场景缺项统一显示 -1](../../implemented/feature/2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。无值不伪装——见 [IPure 受限档改记 -1](../../implemented/architecture/2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
 
 ## Alternatives considered
 
