@@ -14,12 +14,12 @@ Status: implemented
 
 ## Decision
 
-`frontend-next/` 是**无弹窗、无展开、无二级页的单视图十列宽表**：建成时是静态示例（内置合成数据、零网络请求），随后接上两条真实链路——本机 loopback 的 `?job=`（见 [新前端接上本机真实链路](2026-09-22-frontend-next-real-data-path.md)）与线上的只读通路（见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）。
+`frontend-next/` 是**无弹窗、无展开、无二级页的单视图十列宽表**：建成时是静态示例（内置合成数据、零网络请求），随后接上三条真实链路——本机 loopback 的 `?job=`（见 [新前端接上本机真实链路](2026-09-22-frontend-next-real-data-path.md)）、线上的只读通路（见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）与页面内发起扫描（见 [在线上页面里发起扫描（A2）](2026-09-22-frontend-next-in-page-scan-trigger.md)）。
 
 页面结构：
 
 - `.table-wrap > table.grid#grid > caption.sr-only + colgroup#gridColumns + thead#gridHead + tbody#rows`。十列依次是：排名 `#`、节点（名称 + 协议 tag）、出口 IP（带复制按钮）、国家、服务商 / ISP（次行给 `AS…` 与公司类型）、接入（住宅 / 机房）、原生性（原生 / 广播）、Coffee 评分、IPure 总分、IPure 六项场景评分（六个紧凑 chip）。归属地一列只写国家，理由与代价见 [归属地列只写国家、场景缺项统一显示 -1](2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。
-- 表头是**静态列名**，`thead` 内不得有任何 `input` / `select` / `button`。页面上只留 5 个控件：`#query`、`#statusFilter`（全部/完整/部分/失败）、`#sortSelect`、`#exportMhtml`、`#exportHtml`，外加每行的 `.copy-btn`。
+- 表头是**静态列名**，`thead` 内不得有任何 `input` / `select` / `button`——列名是数据标签、不是操作区，这条没有随 2026-09-22 的放开而改变。页面的控件（DOM 顺序）：`#subscriptionUrl`、`#startScan`、`#stopScan`（扫描栏，默认隐藏、只有网关模式才露出）、`#query`、`#statusFilter`（全部/完整/部分/失败）、`#sortSelect`、`#exportMhtml`、`#exportHtml`，外加每行的 `.copy-btn`。建成时那份「只留 5 个控件（搜索、状态、排序、两个导出）」的白名单已被用户的直接指令当场作废，见 [在线上页面里发起扫描（A2）](2026-09-22-frontend-next-in-page-scan-trigger.md)。
 - 首列的 3px 左边框当导轨，编码"值不值得用"：`data-verdict="good|mixed|bad"` → 绿 / 琥珀 / 红。它不是文字，不占列宽也不加对比度负担。
 - 前三名只在"按分数降序"时高亮（`data-tier="top"` → 金色）。按名字排序时给第 1 名戴金牌是撒谎。
 - 行状态药丸只在非"完整"时出现：完整是常态，每行挂一个"完整"就是噪声。失败行用 `td.cell-absent[colspan=5]` 占掉"出口 IP / 地区 / 服务商 / 接入 / 原生性"五列，写明失败原因与卡在哪一步，**不留白**。
@@ -125,10 +125,10 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 ## Testing
 
-- **示例与减法**：`frontend-next/index.html` 经本地静态服务打开即完整渲染，加载**零外部网络请求**；对 `frontend-next/` 的检查输出证明顶部导航栏、页面说明段、个人网关模式提示、页脚、主题切换按钮、逐列表头筛选行、`<dialog>` / `<details>`、二级页跳转全部 0 命中；输入控件只剩 `#query`、`#statusFilter`、`#sortSelect`、`#exportMhtml`、`#exportHtml` 与行内 `.copy-btn`。
+- **示例与减法**：`frontend-next/index.html` 经本地静态服务打开即完整渲染，加载**零外部网络请求**；对 `frontend-next/` 的检查输出证明顶部导航栏、页面说明段、个人网关模式提示、页脚、主题切换按钮、逐列表头筛选行、`<dialog>` / `<details>`、二级页跳转全部 0 命中；控件为 `#subscriptionUrl`、`#startScan`、`#stopScan`、`#query`、`#statusFilter`、`#sortSelect`、`#exportMhtml`、`#exportHtml` 与行内 `.copy-btn`（建成时只有前 5 个里的后 4 个，2026-09-22 后加了扫描栏 3 个，见 [在线上页面里发起扫描（A2）](2026-09-22-frontend-next-in-page-scan-trigger.md)）。
 - **一屏与交互（真实 Chromium）**：1440 视口无横向滚动（十列实测和 1322px）、行高统一 51px、对比度 0 违规；搜索「日本」、切状态、切排序即时生效；任意一行不点击即可看到 9 项内容，失败节点呈现失败原因而不是空白。
 - **导出与离线（真实 Chromium + 系统剪贴板）**：Node 侧序列化往返测试（`frontend-next/tools/mhtml-roundtrip.mjs`）把产物解析回分片后与源 HTML/CSS 逐字节一致；断网条件下从 `file://` 打开 `.mhtml` 与 `.html`，行数/表头/控件/色带/对比度与在线视图一致；`.html` 兜底里去掉 `navigator.clipboard` 后走 `execCommand` 回退，系统剪贴板实测内容正确；`.mhtml` 版因 Chrome 沙箱拦脚本，改由「单击出口 IP 全选 + Ctrl/⌘+C」承担，有头 Chromium + 真鼠标 + `Page.bringToFront` 拿到焦点后系统剪贴板实测拿到出口 IP。
-- **真实数据两轮闭环**：`?job=` 本机真实链路 42/42（正式订阅真扫一次 + 真实 Chromium，另把两份 `partial` 较多的历史产物挂进内存逐字段核对）；线上只读通路 51/51（真实产物字节 + 生产同款 CSP，见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）。
+- **真实数据两轮闭环**：`?job=` 本机真实链路 42/42（正式订阅真扫一次 + 真实 Chromium，另把两份 `partial` 较多的历史产物挂进内存逐字段核对）；线上只读通路 51/51（真实产物字节 + 生产同款 CSP，见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）；页面内发起扫描的闭环 41/41（真实 Chromium + 生产同款 CSP + 生产 `validateEnvelope` + 真实产物字节，见 [在线上页面里发起扫描（A2）](2026-09-22-frontend-next-in-page-scan-trigger.md)）。
 - **门禁**：`npm run check`（扫描范围含 `frontend-next/`）、`npm run verify-notes`、`npx wrangler deploy --dry-run` 全绿。
 
 ## Consequences

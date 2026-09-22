@@ -18,6 +18,7 @@
 import { NODES, SNAPSHOT_META } from "./data.js";
 import { resolveTarget, fetchExport } from "./api.js";
 import { fetchLatestScan } from "./gateway.js";
+import { startScan, pollScan, cancelScan, validateSubscriptionUrl, SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS } from "./scan.js";
 import { toRows, toSnapshotMeta } from "./records.js";
 import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
 import { comparableScore } from "./score-color.js";
@@ -407,6 +408,235 @@ async function runExport(format, button) {
   }
 }
 
+/* ------------------------------------------------------------ 扫描入口 --- */
+// 页面上的扫描只有三样东西：一个订阅地址输入、一个开始按钮、一行进度。整条链路的实现都在
+// app/scan.js（加密、派发、轮询、取产物），这里只管「什么时候调它」和「把话说给谁看」。
+const scanElements = {
+  form: document.getElementById("scanForm"),
+  url: document.getElementById("subscriptionUrl"),
+  start: document.getElementById("startScan"),
+  stop: document.getElementById("stopScan"),
+  progress: document.getElementById("scanProgress"),
+};
+
+// 同一时刻只允许一次扫描：generation 用来作废上一轮还在路上的轮询与重试（旧前端
+// scan-controller 的做法）。刷新页面就丢掉一切——扫描凭证只存在内存，见 app/scan.js 的文件头。
+const scan = {
+  session: null,
+  generation: 0,
+  timer: null,
+  delay: SCAN_POLL_FIRST_MS,
+  // starting 是同步闸：加密 + POST 那一整段里 session 还是 null（它要等 202 才有），
+  // 只靠 session 挡不住连点两次提交。
+  starting: false,
+  cancelling: false,
+  pendingCancel: false,
+};
+
+/** 进度那一行：空字符串就藏掉，别留一条空白的行高顶着顶部条。 */
+function setScanProgress(text) {
+  if (!scanElements.progress) return;
+  scanElements.progress.textContent = text;
+  scanElements.progress.hidden = !text;
+}
+
+function setScanBusy(busy) {
+  if (scanElements.start) scanElements.start.disabled = busy;
+  if (scanElements.url) scanElements.url.disabled = busy;
+  if (scanElements.stop) {
+    scanElements.stop.hidden = !busy;
+    scanElements.stop.disabled = false;
+  }
+}
+
+function stopPolling() {
+  if (scan.timer !== null) clearTimeout(scan.timer);
+  scan.timer = null;
+}
+
+function finishScan() {
+  stopPolling();
+  scan.session = null;
+  scan.starting = false;
+  scan.cancelling = false;
+  scan.pendingCancel = false;
+  setScanBusy(false);
+}
+
+/**
+ * 收口一次扫描失败。
+ *
+ * keepSession 只给「等不到确认」那两种情形用（cancel_timeout / scan_deadline，见 pollOnce）：
+ * 任务可能还在后台跑着，把会话和「停止」按钮一起收走，用户就再也没有那个按钮可按了——
+ * 而 scan.js 的那句文案恰好是「请再点一次「停止」」。留下会话就等于把那句话兑现。
+ *
+ * keepTable 给「派发就没被接受」那一种用：那时表里还是上一轮的结果，没理由连带丢掉它。
+ */
+function failScan(message, { keepSession = false, keepTable = false } = {}) {
+  if (keepSession && scan.session) {
+    stopPolling();
+    scan.starting = false;
+    scan.cancelling = false;
+    scan.pendingCancel = false;
+    setScanBusy(true);
+    setScanProgress(message);
+    toast(`扫描失败：${message}`);
+    return;
+  }
+  finishScan();
+  setScanProgress(message);
+  if (!keepTable) beginRealSource("gateway", "扫描没有成功", `${message}。稍后可以再点一次「开始扫描」。`);
+  toast(`扫描失败：${message}`);
+}
+
+/**
+ * 启动时决定这一块显不显示：只有「本站有网关」才谈得上发起扫描。
+ * 公钥指纹（SCAN_KEY_ID）缺失时把按钮关掉并说明原因——摆一个点了必然被 400/503 拒掉的
+ * 按钮，比明说「这里发不了扫描」更糟。
+ */
+function revealScanBar() {
+  if (!scanElements.form) return;
+  scanElements.form.hidden = false;
+  const keyId = String(globalThis.BEST_IP_CONFIG?.keyId || "");
+  if (/^[a-f0-9]{64}$/u.test(keyId)) return;
+  if (scanElements.start) scanElements.start.disabled = true;
+  setScanProgress("本站没有配置扫描公钥（SCAN_KEY_ID），这个页面暂时发不了扫描。");
+}
+
+async function beginScan() {
+  const url = String(scanElements.url?.value || "").trim();
+  try {
+    validateSubscriptionUrl(url);
+  } catch (error) {
+    // 地址本身写错时不动表格：清掉一屏已有结果去换一句「格式不对」不划算。
+    toast(error.message);
+    setScanProgress(error.message);
+    scanElements.url?.focus();
+    return;
+  }
+  scan.generation += 1;
+  const generation = scan.generation;
+  stopPolling();
+  scan.delay = SCAN_POLL_FIRST_MS;
+  scan.starting = true;
+  scan.cancelling = false;
+  scan.pendingCancel = false;
+  scan.session = null;
+  setScanBusy(true);
+  setScanProgress("正在加密订阅地址并交给扫描网关…");
+  let session;
+  try {
+    session = await startScan(url, globalThis.BEST_IP_CONFIG, {});
+  } catch (error) {
+    if (generation !== scan.generation) return;
+    // 派发就没被接受：表里还是上一轮的结果，留着它，只把原因说出来。
+    failScan(error.message, { keepTable: true });
+    return;
+  }
+  if (generation !== scan.generation) return;
+  scan.session = session;
+  scan.starting = false;
+  // 派发被接受（202）之后才清表：地址合法但网关拒了（403/503、指纹不符、POST 超时）不该让
+  // 用户连带丢掉上一屏还能看的结果。清表与填表之间也没有「同框」窗口——一次扫描要么还没清，
+  // 要么整屏换成这一轮的结果。
+  beginRealSource("gateway", "正在扫描…", "扫描完成后这张表会自动填上刚扫出来的节点。");
+  // 首轮等 SCAN_POLL_FIRST_MS 再问：刚拿到 202 时运行往往还没建立，立刻问只是白问一次。
+  schedulePoll(generation, SCAN_POLL_FIRST_MS);
+}
+
+/** 下一次轮询的间隔：每次 ×1.5，上限 SCAN_POLL_MAX_MS。 */
+function nextDelay() {
+  scan.delay = Math.min(SCAN_POLL_MAX_MS, Math.round(scan.delay * 1.5));
+  return scan.delay;
+}
+
+function schedulePoll(generation, delay) {
+  stopPolling();
+  scan.timer = setTimeout(() => {
+    // pollOnce 自己已经把可预期的失败转成了界面文案；这里兜住的是「不该发生的那一种」，
+    // 让它以一句真话收口，而不是变成一条没人看的未捕获拒绝。
+    pollOnce(generation).catch((error) => {
+      if (generation !== scan.generation) return;
+      failScan(error?.message || "扫描状态读取失败");
+    });
+  }, delay);
+}
+
+async function pollOnce(generation) {
+  if (generation !== scan.generation || !scan.session) return;
+  let state;
+  try {
+    state = await pollScan(scan.session, {});
+  } catch (error) {
+    if (generation !== scan.generation) return;
+    // 明确不是瞬时故障（任务对不上 / 超过等待上限 / 取消等不到确认）就不再刷请求，把真话
+    // 说出来；其余（网络抖动、边缘 5xx、200 却不是 JSON）保留一次退避重试，别让一次抖动
+    // 把整次扫描判死。
+    if (error.retryable !== true) {
+      // 「等不到确认」这两种，任务可能还在后台跑：会话留着，用户才有「停止」可按。
+      const keepSession = error.code === "cancel_timeout" || error.code === "scan_deadline";
+      failScan(error.message, { keepSession });
+      return;
+    }
+    setScanProgress(`读取扫描状态失败，正在重试：${error.message}`);
+    schedulePoll(generation, nextDelay());
+    return;
+  }
+  if (generation !== scan.generation) return;
+  setScanProgress(state.detail ? `${state.label} · ${state.detail}` : state.label);
+  if (state.done) {
+    if (state.failure) {
+      // 用户自己点的停止：说「已按你的请求停止」比转述上游的 conclusion 值更像人话。
+      const stopped = Boolean(scan.session?.cancelRequestedAt) && state.status === "cancelled";
+      failScan(stopped ? "已按你的请求停止这次扫描，没有可显示的结果" : state.failure);
+      return;
+    }
+    finishScan();
+    applyRealPayload(state.payload, "gateway",
+      "这次扫描没有任何节点记录", "那次运行是完成的，但产物里的 results 是空的。");
+    toast(`扫描完成：已显示刚扫出来的 ${dataset.nodes.length} 个节点。`);
+    return;
+  }
+  // 还在跑。点过「停止」但那时运行还没建立，就在这里补发一次。
+  if (scan.pendingCancel) { await requestStop(generation); return; }
+  schedulePoll(generation, nextDelay());
+}
+
+async function requestStop(generation) {
+  if (!scan.session) return;
+  scan.pendingCancel = false;
+  try {
+    const result = await cancelScan(scan.session, {});
+    if (generation !== scan.generation || !scan.session) return;
+    if (result.requested === false) {
+      // 运行还没出现：Worker 侧无运行可取消，等下一轮轮询看到 run 再补发。
+      scan.pendingCancel = true;
+      setScanProgress("扫描运行还没建立，停止请求会在它出现后立刻补发…");
+    } else {
+      setScanProgress("已请求停止，等待执行端确认结束（取消不等于清理已完成）…");
+    }
+  } catch (error) {
+    if (generation !== scan.generation || !scan.session) return;
+    // 一次停止请求没发出去不能把按钮废掉：复位这两个标志，用户才点得动第二次——
+    // scan.js 的「请再点一次「停止」」正是这么承诺的。
+    scan.cancelling = false;
+    scan.pendingCancel = true;
+    setScanProgress(`停止失败：${error.message}`);
+  }
+  if (generation !== scan.generation || !scan.session) return;
+  schedulePoll(generation, nextDelay());
+}
+
+function onStopClick() {
+  if (!scan.session || scan.cancelling) return;
+  // 先掐掉已经排好的那一次轮询：不然它和这次停止请求同时在路上，白多一轮状态请求。
+  stopPolling();
+  scan.cancelling = true;
+  scan.pendingCancel = true;
+  setScanProgress("正在请求停止…");
+  requestStop(scan.generation);
+}
+
 /* ------------------------------------------------------------------ 接线 --- */
 elements.query.addEventListener("input", () => {
   state.query = elements.query.value;
@@ -428,6 +658,18 @@ elements.sort.addEventListener("change", () => {
 elements.exportMhtml.addEventListener("click", () => runExport("mhtml", elements.exportMhtml));
 elements.exportHtml.addEventListener("click", () => runExport("html", elements.exportHtml));
 
+// 表单默认提交会让浏览器导航（这里没有 action，会重载当前地址，凭证与进度全丢），
+// 所以必须拦下来；扫描进行中重复提交也只认第一次。判据是 session 或 starting——
+// 加密 + POST 那一段里 session 还是 null，光看它会漏掉「连点两下」。
+if (scanElements.form) {
+  scanElements.form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (scan.session || scan.starting) return;
+    beginScan();
+  });
+}
+if (scanElements.stop) scanElements.stop.addEventListener("click", onStopClick);
+
 /* ------------------------------------------------------------ 表格骨架/启动 --- */
 // 表头文案与列宽都由 render.js 的 COLUMNS 生成，只在这里建一次；之后每帧只换 tbody，
 // 表头不重建，避免每次输入都重排整张表。
@@ -443,6 +685,10 @@ const target = resolveTarget({
 // 先判 jobId 就会把它当成演示路径，给出一条满屏合成 IP、零提示的深链。
 // 在线模式排在最前面：它的「没有数据」和「读失败」都只有一条路（本站 Worker），
 // 拿本机那套 ?api= 文案去解释它只会把人指向一个在生产里根本不存在的地址。
+// 扫描入口只属于在线部署：那里才有本站的 Worker 网关与扫描公钥。它与下面三条分支无关——
+// 那三条决定这张表显示什么，这一块决定「能不能在本页发起一次扫描」。
+if (target.mode === "gateway") revealScanBar();
+
 if (target.error) {
   // 两处失败能走的退路不同，所以按来源分岔，而不是共用一句「加载失败」。
   if (target.mode === "gateway") failGateway(target.error);

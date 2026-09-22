@@ -94,6 +94,15 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * `hidden` 必须真的隐藏。UA 那条 `[hidden] { display: none }` 只是「作者样式表里没有
+ * display 声明时」的默认值——本文件给 .scanbar 写了 display:flex、给 .btn 写了 display:flex，
+ * 于是 el.hidden = true 只改属性、画面照旧（实测：离线打开时扫描栏照样出现，没扫描时
+ * 「停止」按钮陪着「开始扫描」一起显示）。用 !important 把属性语义钉死，别让后续每条
+ * 给元素加 display 的规则都变成一次隐藏失效。
+ */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; }
 
 body {
@@ -242,6 +251,21 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .export-group { display: flex; align-items: center; gap: 0; }
 .export-group .btn-primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .export-group .btn-ghost { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+/* -------------------------------------------------------------- 扫描入口 --- */
+/* 顶部条里的第三块，只在在线部署出现（其余路径整块 hidden）。它排在查看控件之前：
+   先有数据，才谈得上筛和导。进度独占一行——步骤名可以很长，挤在按钮旁边只会把
+   输入框压窄，而订阅链接是长串，截断之后肉眼没法确认粘对没粘对。 */
+.scanbar { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+.scan-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scan-row .field { flex: 1 1 380px; }
+.scan-progress {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 
 /* ------------------------------------------------------------ 结果计数行 --- */
 .result-count {

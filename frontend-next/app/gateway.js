@@ -1,7 +1,8 @@
 /* ============================================================================
    生产网关通路 —— 从本站自己的 Cloudflare Worker 读取「最近一次扫描」的结果
    ----------------------------------------------------------------------------
-   这条路只读、不发扫描：站点页面没有订阅输入框，也没有开始按钮（触发由页面之外发起）。
+   这里读「最近一次扫描」。页面自己发起的那次扫描走 app/scan.js，但「拿签名地址、直连 blob、
+   逐字节校验」这三步两条路共用本文件导出的 readArtifactFrom —— 一份实现，一处错误口径。
    所以这里做三件事，一件都不多：
      1. GET /api/scans/latest —— 问 Worker「最近一次扫描是哪一次、产物在不在」；
      2. 拿它给的签名地址直连 blob 取回 ZIP 字节（Worker 不搬字节，见
@@ -33,7 +34,7 @@ const ARTIFACT_HOST_SUFFIX = ".blob.core.windows.net";
 const STATUS_REPORT = {
   none: {
     title: "本站还没有跑过扫描",
-    text: "扫描不在这个页面上发起（由 Actions 的 workflow_dispatch 或脚本发起），跑完之后这里会显示结果。",
+    text: "这个页面上就能发起一次：把订阅地址粘到顶部那个输入框，点「开始扫描」，跑完之后这里会自动填上结果。",
   },
   artifact_expired: {
     title: "最近一次扫描的产物已经过期",
@@ -89,7 +90,7 @@ function timeoutSignal(ms) {
  * 签名产物地址只允许 https + GitHub 产物主机；不符合就抛错而不是硬取。
  * 空值也算错：artifact_ready 为 true 却没有地址，是网关自相矛盾的响应。
  */
-function artifactUrlOf(raw) {
+export function artifactUrlOf(raw) {
   let parsed;
   try {
     parsed = new URL(String(raw || ""));
@@ -189,23 +190,27 @@ async function downloadArtifact(url, fetchImpl) {
 }
 
 /**
- * 读一次「最近一次扫描」，返回与 ?job= 本地导出同形的 payload。
- * 任何一步不成立都抛错（带 code 与可选 title），由 main.js 决定显示哪一种空状态。
+ * 取一份产物：每轮都重新问一次「这次要取哪个地址、以及它是哪一次运行的一部分」。
+ * 为什么不是先问一次地址再重试下载：签名地址有有效期，重试必须用新的一张，否则第二次
+ * 必然还是拿同一份坏字节。为什么只有「字节没读完」值得重来：取不到（跨源被拦 / 404 /
+ * 超时）重试一次也不会变好，只会让用户多等一轮才看到那句真话。
  *
- * @returns {Promise<{id: string, status: string, results: object[], manifest: object}>}
+ * 「最近一次扫描」（本文件）与「页面上刚发起的那次扫描」（app/scan.js）共用这一段：
+ * 两条路的差别只在 rounds() 怎么问出地址，取字节、校验、报错口径都只有一份。
+ *
+ * @param {() => Promise<{url:string, requestId:string, runId:number, runAttempt:number}>} rounds
+ * @returns {Promise<object>} 校验通过的 result.json
  */
-export async function fetchLatestScan({ fetchImpl = globalThis.fetch } = {}) {
+export async function readArtifactFrom(rounds, { fetchImpl = globalThis.fetch } = {}) {
   if (typeof fetchImpl !== "function") throw error("no_fetch", "当前环境没有可用的 fetch");
   for (let attempt = 1; attempt <= ARTIFACT_ATTEMPTS; attempt += 1) {
-    // 每一轮都重新问一次 /api/scans/latest 而不是复用上一轮那个地址：签名地址有有效期，
-    // 重试要用新的那一张，否则第二次必然还是拿同一份坏字节。
-    const latest = await fetchLatestState(fetchImpl);
+    // 身份与地址必须取自同一轮响应：拿上一轮的身份去校验这一轮取回的字节，等于把
+    // 「地址换了一批内容」这种漂移判成「产物被改动过」。
+    const round = await rounds();
     let bytes;
     try {
-      bytes = await downloadArtifact(latest.url, fetchImpl);
+      bytes = await downloadArtifact(round.url, fetchImpl);
     } catch (cause) {
-      // 只有「字节没读完」值得重来：取不到（跨源被拦 / 404 / 超时）重试一次也不会变好，
-      // 只会让用户多等一轮才看到那句真话。
       if (cause?.code !== "artifact_truncated") throw cause;
       if (attempt === ARTIFACT_ATTEMPTS) {
         throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, cause);
@@ -214,12 +219,17 @@ export async function fetchLatestScan({ fetchImpl = globalThis.fetch } = {}) {
       continue;
     }
     try {
-      return (await readArtifact(bytes, {
-        requestId: latest.requestId,
-        runId: latest.runId,
-        runAttempt: latest.runAttempt,
-      })).result;
+      return (await readArtifact(bytes, round)).result;
     } catch (cause) {
+      // 读者层自己也会解出「没读完」这一种（短 body / 找不到结束目录，reader.js 给的 code 就是
+      // artifact_truncated）：它和传输截断同因同解，必须一起重试，否则一次半截响应会被说成
+      // 「产物被改动过」，而且没有第二发。
+      if (cause?.code === "artifact_truncated") {
+        if (attempt === ARTIFACT_ATTEMPTS) {
+          throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, cause);
+        }
+        continue;
+      }
       // 校验失败不是「没有数据」：产物要么被改动过，要么和这次运行对不上，必须说出来。
       // 这里不重试：字节已经完整到手，内容不对是确定的结论。
       throw error("artifact_invalid", `扫描产物校验失败：${cause.message}`, cause);
@@ -228,4 +238,15 @@ export async function fetchLatestScan({ fetchImpl = globalThis.fetch } = {}) {
   // 循环只可能 return 或 throw；走到这里说明上面的分支被改坏了——宁可报「没读完」，
   // 也不要静默返回 undefined 让调用方以为数据到手。
   throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`);
+}
+
+/**
+ * 读一次「最近一次扫描」，返回与 ?job= 本地导出同形的 payload。
+ * 任何一步不成立都抛错（带 code 与可选 title），由 main.js 决定显示哪一种空状态。
+ *
+ * @returns {Promise<{id: string, status: string, results: object[], manifest: object}>}
+ */
+export async function fetchLatestScan({ fetchImpl = globalThis.fetch } = {}) {
+  // 每轮都重新问一次 /api/scans/latest：签名地址与运行身份都取自同一轮响应。
+  return readArtifactFrom(() => fetchLatestState(fetchImpl), { fetchImpl });
 }
