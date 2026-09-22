@@ -2,10 +2,14 @@
 //
 // 只做两件事，且都不依赖部署方的自述：
 //   1. 无凭据可达性——登录页可达、CSP 仍放行签名 blob、静态资源仍被会话门挡住；
-//   2. 有凭据字节比对——用 SITE_PASSWORD 登录后，把 frontend/ 下**每一个**被 git 跟踪的
-//      文件与它在该 commit 里的 blob 逐字节比对。
+//   2. 有凭据字节比对——用 SITE_PASSWORD 登录后，把**当前 assets 目录**下每一个被 git
+//      跟踪的文件与它在该 commit 里的 blob 逐字节比对。
 // 第 2 步是真正的漂移门：`wrangler deploy` 只报「上传成功」，它不说线上提供的是不是这一个
 // commit 的内容；而历史上确实发生过线上跑旧资产的静默漂移。
+//
+// assets 目录不写死：从 wrangler.jsonc 的 assets.directory 读（`--assets` 可覆盖）。写死成某一个
+// 目录会变成一个绿着的假门禁——部署根换了、校验还在比老目录，每个「线上文件」都 404，而 404 与
+// 内容不一致在结论里长得一模一样，只是更难查。
 //
 // 没有 SITE_PASSWORD 时只跑第 1 步并明确标注「未做字节比对」，不会假装验过。
 //
@@ -16,6 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
 const argOf = (name, fallback = "") => {
@@ -23,9 +28,25 @@ const argOf = (name, fallback = "") => {
   return index >= 0 && argv[index + 1] ? argv[index + 1] : fallback;
 };
 
+function stripJsonComments(text) {
+  // wrangler.jsonc 是 JSONC：先删块注释，再删整行注释。这个配置里没有含 // 的字符串值。
+  return text.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/^[ \t]*\/\/.*$/gmu, "");
+}
+
+/** assets.directory → 仓库相对路径（`./frontend-next/` → `frontend-next`）。 */
+function assetDirectoryOfWrangler(configPath = "wrangler.jsonc") {
+  const config = JSON.parse(stripJsonComments(readFileSync(configPath, "utf8")));
+  const directory = config?.assets?.directory;
+  if (typeof directory !== "string" || !directory.trim()) {
+    throw new Error(`${configPath} 里没有 assets.directory，无法确定该拿哪个目录当比对基准`);
+  }
+  return directory.trim().replace(/^\.\//u, "").replace(/\/+$/u, "");
+}
+
 const SITE = argOf("site", "https://best-ip.silverwolfx.workers.dev").replace(/\/+$/u, "");
 const COMMIT = argOf("commit", "HEAD");
 const PASSWORD = argOf("password", process.env.SITE_PASSWORD || "");
+const ASSETS_DIR = argOf("assets", assetDirectoryOfWrangler());
 const UA = "best-ip-deploy-verify";
 const ATTEMPTS = 3;
 const TIMEOUT_MS = 20_000;
@@ -81,15 +102,26 @@ function blobAt(path) {
   return execFileSync("git", ["show", `${COMMIT}:${path}`], { maxBuffer: 64 * 1024 * 1024 });
 }
 
-function trackedFrontendFiles() {
-  return execFileSync("git", ["ls-files", "frontend"], { encoding: "utf8" })
+/** 当前 assets 目录下被 git 跟踪的全部文件，路径已去掉目录前缀。 */
+function trackedAssetFiles() {
+  return execFileSync("git", ["ls-files", ASSETS_DIR], { encoding: "utf8" })
     .split("\n").map((line) => line.trim()).filter(Boolean)
-    .map((path) => path.slice("frontend/".length));
+    .map((path) => path.slice(ASSETS_DIR.length + 1));
+}
+
+/**
+ * 未登录可达性探测用的那条静态资源路径：取目录里真实存在的一个文件。
+ * 不写死某个具体路径——换了 assets 根之后写死的路径根本不存在，而那条断言测的是「会话门挡不挡」，
+ * 不管文件在不在，会一直绿着。
+ */
+function assetProbePath() {
+  const files = trackedAssetFiles();
+  return files.find((path) => path !== "index.html" && !path.endsWith(".pem")) || "styles.css";
 }
 
 async function main() {
   console.log(`站点：${SITE}`);
-  console.log(`比对基准：${COMMIT}（frontend/ 下全部被跟踪文件）\n`);
+  console.log(`比对基准：${COMMIT}（${ASSETS_DIR}/ 下全部被跟踪文件）\n`);
 
   // ---- 第 1 步：无凭据可达性 ----
   const loginPage = await request("/login");
@@ -109,7 +141,8 @@ async function main() {
   }
   record(gated, "未登录访问被会话门挡住", `HTTP ${root.status}`);
 
-  const asset = await request("/src/results.js");
+  const probePath = assetProbePath();
+  const asset = await request(`/${probePath}`);
   record(asset.status === 401, "静态资源未登录不可读", `HTTP ${asset.status}`);
 
   // ---- 第 2 步：有凭据字节比对 ----
@@ -134,7 +167,9 @@ async function main() {
     record(loginResponse.status === 303 && Boolean(session), "登录换取会话", `HTTP ${loginResponse.status}`);
     if (!session) return;
 
-    const files = trackedFrontendFiles();
+    // /site-config.js 不在这份清单里：它由 worker/router.js 现算（注入 mode 与公钥指纹），
+    // 不是仓库里的文件，没有可比对的 blob。
+    const files = trackedAssetFiles();
     const mismatches = [];
     for (const path of files) {
       const served = path === "index.html" ? "/" : `/${path}`; // 首页只挂在根路径上
@@ -144,7 +179,7 @@ async function main() {
         continue;
       }
       const live = Buffer.from(await response.arrayBuffer());
-      const expected = blobAt(`frontend/${path}`);
+      const expected = blobAt(`${ASSETS_DIR}/${path}`);
       if (!live.equals(expected)) {
         mismatches.push(`${path} -> ${live.length}B sha=${createHash("sha256").update(live).digest("hex").slice(0, 12)} ≠ ${expected.length}B sha=${createHash("sha256").update(expected).digest("hex").slice(0, 12)}`);
       }
