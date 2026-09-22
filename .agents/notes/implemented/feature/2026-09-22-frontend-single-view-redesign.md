@@ -1,6 +1,6 @@
 # Agent Note: 新前端改成单视图十列宽表，并把整页存成可离线打开的 mhtml 快照
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
@@ -12,15 +12,13 @@ Status: proposed
 
 另有一次中间改稿的教训：把每行做成卡片（rank/身份一行、网络与评分折行）确实去掉了弹窗，却把**信息密度做得比旧版宽表还低**——12 行要 700px 以上，扫读一列数值时眼睛要走 Z 字。密度是这类榜单的第一价值，卡片不是答案。
 
-## Proposal
+## Decision
 
-新建 `frontend-next/`，做一版**无弹窗、无展开、无二级页的单视图十列宽表**，本轮只交付静态示例（内置合成数据、零网络请求），不接真实链路。
-
-> 第二步（把本机真实扫描的导出接进这条单视图通路）已落地，见 [新前端接上本机真实链路](../../implemented/feature/2026-09-22-frontend-next-real-data-path.md)。
+`frontend-next/` 是**无弹窗、无展开、无二级页的单视图十列宽表**：建成时是静态示例（内置合成数据、零网络请求），随后接上两条真实链路——本机 loopback 的 `?job=`（见 [新前端接上本机真实链路](2026-09-22-frontend-next-real-data-path.md)）与线上的只读通路（见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）。
 
 页面结构：
 
-- `.table-wrap > table.grid#grid > caption.sr-only + colgroup#gridColumns + thead#gridHead + tbody#rows`。十列依次是：排名 `#`、节点（名称 + 协议 tag）、出口 IP（带复制按钮）、国家、服务商 / ISP（次行给 `AS…` 与公司类型）、接入（住宅 / 机房）、原生性（原生 / 广播）、Coffee 评分、IPure 总分、IPure 六项场景评分（六个紧凑 chip）。归属地一列只写国家，理由与代价见 [归属地列只写国家、场景缺项统一显示 -1](../../implemented/feature/2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。
+- `.table-wrap > table.grid#grid > caption.sr-only + colgroup#gridColumns + thead#gridHead + tbody#rows`。十列依次是：排名 `#`、节点（名称 + 协议 tag）、出口 IP（带复制按钮）、国家、服务商 / ISP（次行给 `AS…` 与公司类型）、接入（住宅 / 机房）、原生性（原生 / 广播）、Coffee 评分、IPure 总分、IPure 六项场景评分（六个紧凑 chip）。归属地一列只写国家，理由与代价见 [归属地列只写国家、场景缺项统一显示 -1](2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。
 - 表头是**静态列名**，`thead` 内不得有任何 `input` / `select` / `button`。页面上只留 5 个控件：`#query`、`#statusFilter`（全部/完整/部分/失败）、`#sortSelect`、`#exportMhtml`、`#exportHtml`，外加每行的 `.copy-btn`。
 - 首列的 3px 左边框当导轨，编码"值不值得用"：`data-verdict="good|mixed|bad"` → 绿 / 琥珀 / 红。它不是文字，不占列宽也不加对比度负担。
 - 前三名只在"按分数降序"时高亮（`data-tier="top"` → 金色）。按名字排序时给第 1 名戴金牌是撒谎。
@@ -49,6 +47,7 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 - **列宽给到"自然宽度"仍然可能差几个像素**。「节点」列按最长的节点名给 258px，看着合理，实测那一行（`洛杉矶 ColoCrossing-03` + 「部分」药丸）需要 275.83px，药丸右侧 8.83px 被硬切（文字只损 0.83px，但圆角与描边断掉）。修法不是把列加宽到 276px（十列实测和会变成 1362px > 1440 视口的 1358px，等于用横向滚动换一个圆角），而是把这一格的左右内边距从 9px 收到 5px：内容整体左移 4px、右沿让出 4px，8px 就够了。
 - **`.row:hover > td` 对失败行是死规则**。它和 `.row[data-status="failed"] > td` 特异性相同（0,2,1），谁在后面谁赢；原来 hover 写在前面，失败行（自带 `--surface-2` 底色）hover 时一动不动。把 hover 挪到失败行规则之后即可。这条在静态截图里永远看不出来。
+
 ## 真实数据闭环实测（第二步）
 
 第二步把正式订阅真扫的产物直接喂进这张表之后，静态示例掩盖不住的地方才露出来。三条改动都是被真实数据逼出来的：
@@ -89,9 +88,9 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 ## 分数取色仍然只能走 CSSOM
 
-十列表格里的分数是药丸（`.score[data-band=…]`），IPure 总分与六个场景 chip 带 `data-ipure-score`，由 `applyScoreStyles` 在元素进 DOM **之后**用 CSSOM 写 `--sc-l` / `--sc-d` 通道，CSS 只负责决定前景/描边/底色的比例（`rgb(var(--sc))` / `rgb(var(--sc) / 0.10)` / `rgb(var(--sc) / 0.42)`）。生产 CSP 是 `style-src 'self'`，标记里的 `style` 属性会被静默拦掉，所以色带绝不出现在标记里，只能这样分两步走——见 [生产 CSP 只认 CSSOM](../../implemented/architecture/2026-09-22-frontend-csp-blocks-markup-styles.md)。色带本身取自已验证的配方，见 [IPure 色带改用 Coffee 色调配方](../../implemented/bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
+十列表格里的分数是药丸（`.score[data-band=…]`），IPure 总分与六个场景 chip 带 `data-ipure-score`，由 `applyScoreStyles` 在元素进 DOM **之后**用 CSSOM 写 `--sc-l` / `--sc-d` 通道，CSS 只负责决定前景/描边/底色的比例（`rgb(var(--sc))` / `rgb(var(--sc) / 0.10)` / `rgb(var(--sc) / 0.42)`）。生产 CSP 是 `style-src 'self'`，标记里的 `style` 属性会被静默拦掉，所以色带绝不出现在标记里，只能这样分两步走——见 [生产 CSP 只认 CSSOM](../architecture/2026-09-22-frontend-csp-blocks-markup-styles.md)。色带本身取自已验证的配方，见 [IPure 色带改用 Coffee 色调配方](../bug-fix/2026-09-22-ipure-score-band-coffee-tone.md)。
 
-`-1` 是"该地区受限"的哨兵值，不是低分：它走中性灰通道，且**不参与数值排序**（升序时也不许被顶到最高分）。`score: null` 显示"—"并给出 `score_note` 原因；场景**缺项也显示 `-1`**（原先那句「另有 N 项无数据」注记已废弃），两种 `-1` 的成因只在 `title` 里区分——见 [归属地列只写国家、场景缺项统一显示 -1](../../implemented/feature/2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。无值不伪装——见 [IPure 受限档改记 -1](../../implemented/architecture/2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
+`-1` 是"该地区受限"的哨兵值，不是低分：它走中性灰通道，且**不参与数值排序**（升序时也不许被顶到最高分）。`score: null` 显示"—"并给出 `score_note` 原因；场景**缺项也显示 `-1`**（原先那句「另有 N 项无数据」注记已废弃），两种 `-1` 的成因只在 `title` 里区分——见 [归属地列只写国家、场景缺项统一显示 -1](2026-09-22-frontend-next-country-column-and-unified-minus-one.md)。无值不伪装——见 [IPure 受限档改记 -1](../architecture/2026-09-21-ipure-restricted-sentinel-and-score-band.md)。
 
 ## Alternatives considered
 
@@ -123,25 +122,24 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 
 `cid:` 是 MHTML 规范里关联部件的正统写法，理论上更标准。否掉的原因是实测跟随主流实现更可靠：Chrome 自身"保存页面"用的是 `Content-Location` + 相对 `href`，浏览器的样式部件匹配逻辑就是按这条路径实现的，用标准写法反而可能命中不了。
 
-## Acceptance criteria
 
-1. **分支与隔离**：`git branch --show-current` 输出 `design/new-frontend`；`git rev-parse main^{tree}` 与开工前一致（main 未被改动）；`git log main..design/new-frontend --oneline` 至少 1 条提交。不 push、不合并。
-2. **示例可查看且自包含**：`frontend-next/index.html` 经本地静态服务打开即完整渲染；页面加载**零外部网络请求**（无 CDN、无外部字体、无图标库、无第三方 JS 依赖），数据为内嵌合成数据。
-3. **减法到位（机械可复现）**：对 `frontend-next/` 的检查输出证明下列项 0 命中——顶部导航栏、页面说明段、个人网关模式提示、页脚、主题切换按钮、逐列表头筛选行、`<dialog>`/弹窗、`<details>` 原始 JSON 折叠块、二级页跳转。页面输入控件只剩搜索框、状态筛选、排序切换、导出按钮、复制按钮。
-4. **有用内容一屏可见、零点击**：搜索（如输入"日本"）、切状态、切换排序（Coffee / IPure 总分）均即时生效；任意一行在**不点击行**的情况下同时呈现 9 项内容。失败节点不呈现为空白（显示失败原因）。
-5. **导出 mhtml 且离线可用**：产物是单个 `.mhtml`，`Content-Type` 为 `multipart/related`，CSS 以独立部件靠 `Content-Location` 命中（QP 解码 + CRLF 归一化后与仓库 `styles.css` 逐字节一致——两边的基准都是 `normalizeToCrlf`，裸比对必然差 599 字节，差的正是 599 个 LF），正文不含任何 `http(s)://` 外链；Node 侧序列化往返测试通过；断网条件下从 `file://` 打开，`.mhtml` 与 `.html` 两个产物在行数、表头、控件、色带、对比度上与在线视图一致。**剪贴板条款**：Chrome 把 `file://` 的 `.mhtml` 放进不设 `allow-scripts` 的沙箱 frame，快照内脚本一律不执行，`navigator.clipboard` 与 `execCommand` 在 `.mhtml` 里都不可达——这条改由「单击出口 IP 即全选 + Ctrl/⌘+C」承担（有头 Chromium、真鼠标、`Page.bringToFront` 拿到焦点后，系统剪贴板实测拿到 `192.0.2.18`），快照顶部同时写明按钮不可用并指向 `.html`。`.html` 兜底脚本可用：去掉 `navigator.clipboard` 后走 `execCommand` 回退，系统剪贴板实测内容正确。
-6. **笔记门禁**：本笔记落在 `.agents/notes/proposed/feature/`，含 `## Problem` / `## Proposal` / `## Alternatives considered` / `## Acceptance criteria` / `## Risks`，`npm run verify-notes` 退出码 0；既有笔记不做删除或迁移。
-7. **语法门禁**：`npm run check` 退出码 0，且扫描范围已包含 `frontend-next/`（唯一的既有文件改动是 `scripts/check_js.mjs` 的目录列表）。
-8. **交付说明**：给出新前端示例的查看方式（命令 + 地址）并实际打开演示；给出上述各项验收的实际运行证据；写明第二步"接真实链路"的范围；列明仍存在的限制。
+## Testing
 
-## Risks
+- **示例与减法**：`frontend-next/index.html` 经本地静态服务打开即完整渲染，加载**零外部网络请求**；对 `frontend-next/` 的检查输出证明顶部导航栏、页面说明段、个人网关模式提示、页脚、主题切换按钮、逐列表头筛选行、`<dialog>` / `<details>`、二级页跳转全部 0 命中；输入控件只剩 `#query`、`#statusFilter`、`#sortSelect`、`#exportMhtml`、`#exportHtml` 与行内 `.copy-btn`。
+- **一屏与交互（真实 Chromium）**：1440 视口无横向滚动（十列实测和 1322px）、行高统一 51px、对比度 0 违规；搜索「日本」、切状态、切排序即时生效；任意一行不点击即可看到 9 项内容，失败节点呈现失败原因而不是空白。
+- **导出与离线（真实 Chromium + 系统剪贴板）**：Node 侧序列化往返测试（`frontend-next/tools/mhtml-roundtrip.mjs`）把产物解析回分片后与源 HTML/CSS 逐字节一致；断网条件下从 `file://` 打开 `.mhtml` 与 `.html`，行数/表头/控件/色带/对比度与在线视图一致；`.html` 兜底里去掉 `navigator.clipboard` 后走 `execCommand` 回退，系统剪贴板实测内容正确；`.mhtml` 版因 Chrome 沙箱拦脚本，改由「单击出口 IP 全选 + Ctrl/⌘+C」承担，有头 Chromium + 真鼠标 + `Page.bringToFront` 拿到焦点后系统剪贴板实测拿到出口 IP。
+- **真实数据两轮闭环**：`?job=` 本机真实链路 42/42（正式订阅真扫一次 + 真实 Chromium，另把两份 `partial` 较多的历史产物挂进内存逐字段核对）；线上只读通路 51/51（真实产物字节 + 生产同款 CSP，见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）。
+- **门禁**：`npm run check`（扫描范围含 `frontend-next/`）、`npm run verify-notes`、`npx wrangler deploy --dry-run` 全绿。
 
-- **`file://` 直接打开页面时导出会失败**。`fetch('./styles.css')` 与 `cssRules` 都被同源策略拒，这不是代码能绕开的事，只能把"请用本地静态服务打开"写进报错文案。本轮把它作为已知限制，不做本地文件专用路径。
-- **快照内色带依赖 CSSOM 写出的自定义属性**。若快照在带 CSP `style-src 'self'` 的 http 环境下打开，`style` 属性会被拦掉，色带退化为兜底灰。手工双击离线打开不受影响。
-- **十列在窄屏放不下**。可用宽度低于 1354px 就整张表横向滚动：1366 视口滚 30px、1280 滚 116px、1100 滚 296px、901 滚 495px。≤900px 折成卡片后行高 216–326px，一屏只看到 2 行。"一屏 12 行"这个卖点只在 ≥1440px 成立。这是"绝不压列宽"的代价：滚动至少不藏信息（把代价交给滚动条），压列宽则会把代价转成肉眼可见的排版崩坏（6 个 chip 折成三行、行高 149px）。
-- **`.mhtml` 里的复制按钮在 Chrome 下永久不可用**，这是浏览器级限制不是缺陷：`file://` 打开的 `.mhtml` 被放进不设 `allow-scripts` 的沙箱 frame，脚本一律不执行。补救是 `.ip { user-select: all }` 的零 JS 路径 + 快照顶部的说明条 + 同批导出的 `.html` 兜底，但"快照里的复制按钮"这件事本身无法两全。
-- **失败行用 `colspan=5` 跨列，屏幕阅读器读到的行内列数与表头不一致**。已用 `data-label` 与失败原因文本补偿，但不完美；表格语义与"有些行少五格"的张力是本方案的结构性代价。
-- **两套前端短期共存**。新建 `frontend-next/` 而不是改造 `frontend/`，意味着同样的取色与归一化逻辑会短暂存在两份。第二步「接真实链路」已落地（本机 loopback 导出 → 行对象，见 [新前端接上本机真实链路](../../implemented/feature/2026-09-22-frontend-next-real-data-path.md)）：示例数据与真实产物字段的映射已用真实记录核对过，但生产网关路径仍未接，两套前端的分工保持不变。
-- **删掉逐列筛选器后，复杂查询能力靠"全局搜索 + 状态筛选"兜**。全局搜索覆盖节点名、协议、IP、国家、城市、ISP、ASN、公司类型、原生性、失败原因，够日常用；但真实数据里若要按 ISP 或 ASN 精确过滤并统计，这个白名单会不够用。
-- **表格语义 + 无二级页意味着信息量被物理限制在十列内**。以后每增加一项"值得一眼看见"的字段，都要在"加列变窄"和"删别的列"之间做一次取舍，扩展空间比卡片布局小。
-- **真实数据通路的 CSP 边界在生产环境会挡路**。本机闭环里页面由 `python -m http.server`/内嵌静态服务提供，不带 CSP，所以 `fetch` 本机 API 畅通；但生产 CSP 是 `connect-src 'self' https://*.blob.core.windows.net`（`worker/responses.js:39`），同一条跨源 `fetch` 到 loopback API 会被拦。也就是说 `?job=` 这条通路只在本地静态服务下可用，进生产要么把 API 放到同源，要么显式把 API 源加进 `connect-src`。这属于部署决策，本轮不动 `worker/`。
+## Consequences
+
+- **收益**：9 项结论一屏可见、零点击；顶部导航栏 / 说明段 / 模式提示 / 页脚 / 主题开关 / 10 个表头筛选器这些噪声清零；当前视图可以变成一个可归档、可离线打开、可转发的单文件。
+- **收益**：列定义只有一份真值（`app/render.js` 的 `COLUMNS`），表头文案、`colgroup` 宽度、窄屏 `data-label` 三处不会再漂移。
+- **代价**：十列在窄屏放不下——可用宽度低于 1322px 就整张横向滚动（1366 视口滚 30px、1280 滚 116px、1100 滚 296px、901 滚 495px），≤900px 折成卡片后行高 216–326px、一屏只看 2 行。「一屏 12 行」只在 ≥1440px 成立。这是「绝不压列宽」的代价：把代价交给滚动条，而不是压列宽导致 6 个 chip 折行、行高 149px 那种排版崩坏。
+- **代价**：失败行用 `colspan=5` 跨列，屏幕阅读器读到的行内列数与表头不一致。已用 `data-label` 与失败原因文本补偿，但不完美；这是「表格语义」与「有些行少五格」的结构性张力。
+- **代价**：信息量被物理限制在十列内，以后每加一项「值得一眼看见」的字段，都要在「加列变窄」和「删别的列」之间取舍一次，扩展空间比卡片布局小。
+- **代价**：删掉逐列筛选器后，按 ISP / ASN 精确过滤并统计这种复杂查询没有入口，只剩「全局搜索（节点名 / 协议 / IP / 国家 / 城市 / ISP / ASN / 公司类型 / 原生性 / 失败原因）+ 状态筛选」。
+- **已知限制**：`file://` 直接打开页面时导出会失败——同源策略拒掉 `fetch('./styles.css')` 与 `cssRules`，这不是代码能绕开的事，只能把「请用本地静态服务打开」写进报错文案。
+- **已知限制**：`.mhtml` 里的复制按钮在 Chrome 下永久不可用（`file://` 打开的 `.mhtml` 被放进不设 `allow-scripts` 的沙箱 frame，脚本一律不执行）。补救是零 JS 的全选路径 + 快照顶部说明条 + 同批 `.html` 兜底，但「快照里的复制按钮」这件事本身无法两全。
+- **已知限制**：快照内色带依赖 CSSOM 写出的自定义属性；若在带 CSP `style-src 'self'` 的 http 环境打开，色带退化为兜底灰。手工双击离线打开不受影响。
+- **已被后续两步消掉的两条风险**（原文写在 proposal 的 Risks 里，这里改成事实）：①「两套前端短期共存」——线上入口已切到 `frontend-next`（`wrangler.jsonc` 的 `assets.directory`），`frontend/` 不再被提供但保留在仓库里作回退；发布证据是 Cloudflare 版本 `28222f32-f622-49bd-8662-29f26ef3d51d` 上 `Verify deployed release` 7/7 项通过、15/15 个文件与 commit 逐字节一致。②「生产 CSP 会挡掉 `?job=` 那条跨源 fetch」——生产改走同源 `GET /api/scans/latest` + 浏览器直连签名 blob，CSP 不必放开 loopback 地址；`?job=` 仍是本机专用深链，在线模式遇到它当场报错而不是默默失败。两条的依据见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)。

@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-[十列宽表](../../proposed/feature/2026-09-22-frontend-single-view-redesign.md) 落到真实数据上之后，有两处**显示契约**在真实形态下说不通：
+[十列宽表](2026-09-22-frontend-single-view-redesign.md) 落到真实数据上之后，有两处**显示契约**在真实形态下说不通：
 
 1. **「国家 / 地区」列把同一个词写两遍。** 这一列的内容是「国家 · 城市」，但后端的 `location` 串在真实产物里大量是 `Hong Kong Hong Kong`、`Singapore Singapore` 这种国家与城市同名的形态（本轮 25 节点真扫里有 3 条是 `Singapore Singapore`，另有多条 `Hong Kong Hong Kong`）。这一列本来只有 116px，同名的城市吃掉其中一半，换来的信息量为零。
 2. **缺项用一句「另有 N 项无数据」注记，代价写在布局上。** 那句话的长度随数据变化（`另有 1 项无数据` / `另有 3 项无数据`），把「IPure 场景评分」这一列的内容需求带着一起抖，列宽下限只能按最坏情况留（358px）。更麻烦的是缺一项时这一行的六个 chip 变成五个：把两个节点的同一个场景横着比对，得先数位次才知道自己对的是哪一项。
