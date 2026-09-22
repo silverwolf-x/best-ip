@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="节点质量榜：一屏看完每个节点的 Coffee 评分、IPure 评分、归属与原生性">
+  <title>节点质量榜 · Best IP</title>
+  <link rel="stylesheet" href="./styles.css">
+  <!-- 空的 data: 图标：只为消掉浏览器自发请求 /favicon.ico 产生的 404 噪音，
+       它不产生任何网络请求，也不进快照的正文外链清单。 -->
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <div class="shell">
+    <!-- 顶部条：品牌 + 运行统计 + 全部输入控件。设计上不要导航栏、不要页面说明段、
+         不要模式提示、不要页脚、不要主题开关——这些在旧版里占了首屏三分之一。 -->
+    <header class="topbar">
+      <div class="topbar-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 17.5 8.5 11l4 4L21 6"></path><path d="M15.5 6H21v5.5"></path>
+            </svg>
+          </span>
+          <h1>节点质量榜</h1>
+          <span class="tag-demo" title="本页是静态设计示例，节点与 IP 全部为合成数据，不来自真实扫描">示例数据</span>
+        </div>
+        <p class="run-stats" id="runStats"></p>
+      </div>
+
+      <div class="topbar-controls">
+        <div class="field">
+          <label class="sr-only" for="query">搜索节点</label>
+          <svg class="field-icon" aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 4 4"></path>
+          </svg>
+          <input id="query" type="search" placeholder="搜索节点、IP、国家、服务商…" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="field field-compact">
+          <label class="sr-only" for="statusFilter">状态</label>
+          <select id="statusFilter">
+            <option value="all">全部状态</option>
+            <option value="success">完整</option>
+            <option value="partial">部分</option>
+            <option value="failed">失败</option>
+          </select>
+        </div>
+
+        <div class="field field-compact">
+          <label class="sr-only" for="sortSelect">排序</label>
+          <select id="sortSelect">
+            <option value="coffee:desc">Coffee 评分 ↓</option>
+            <option value="coffee:asc">Coffee 评分 ↑</option>
+            <option value="ipure:desc">IPure 总分 ↓</option>
+            <option value="ipure:asc">IPure 总分 ↑</option>
+            <option value="node:asc">节点名称 A→Z</option>
+            <option value="node:desc">节点名称 Z→A</option>
+          </select>
+        </div>
+
+        <div class="export-group" role="group" aria-label="导出离线快照">
+          <button id="exportMhtml" type="button" class="btn btn-primary" title="把当前视图导出为单个 .mhtml 离线快照，双击即可打开">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 12 5 5 5-5"></path><path d="M4 20h16"></path></svg>
+            导出 .mhtml
+          </button>
+          <button id="exportHtml" type="button" class="btn btn-ghost" title="同样内容的自包含单文件 .html；浏览器不渲染 .mhtml 时的兜底">
+            导出 .html
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <p class="result-count" id="resultCount" aria-live="polite"></p>
+
+    <!-- 列表就是表格本身：信息密度靠列宽和行高，不靠弹窗。表头文案、colgroup 宽度
+         与窄屏折叠时每个单元格的 data-label 都由 app/render.js 的 COLUMNS 生成，
+         这里不放第二份列定义，免得三处漂移。 -->
+    <main class="table-wrap">
+      <table class="grid" id="grid">
+        <caption class="sr-only">节点质量榜：每行一个节点，含评分、出口 IP、归属与原生性</caption>
+        <colgroup id="gridColumns"></colgroup>
+        <thead id="gridHead"></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </main>
+
+    <div class="empty" id="emptyState" hidden>
+      <p class="empty-title">没有匹配的节点</p>
+      <p class="empty-desc">试试清空搜索框，或把状态切回「全部状态」。</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="./app/copy.js"></script>
+  <script type="module" src="./app/main.js"></script>
+</body>
+</html>
