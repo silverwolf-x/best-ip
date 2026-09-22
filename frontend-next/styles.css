@@ -1,0 +1,599 @@
+/* ============================================================================
+   节点质量榜 · 新前端设计示例样式
+   ----------------------------------------------------------------------------
+   设计取向：单视图、无弹窗、无展开、无二级页，**信息密度靠一张十列宽表**——一行
+   就是一个节点的全部结论（9 项有用信息 + 排名），没有折叠、没有表头逐列筛选行。
+   因此这一份 CSS 只服务一个职责：把 9 项有用信息排进一行（实测行高 50.5px，两行文案的失败行 54.1px）而不互相挤压。
+
+   色彩契约（有意继承 frontend/styles.css 里已验证的那一套语义色）：
+   - good / warn / danger / info 两组主题的取值逐字照搬旧版，避免重算对比度时
+     把已经过 AA 的配方改坏；旧版 token 注释里记录过每个值的实测对比度。
+   - 分数色带（--sc-l / --sc-d 两组通道）来自 frontend/src/results.js 的
+     ipureScoreInlineStyle，分段与插值一个字没改，见 app/score-color.js。
+   - 唯一的偏离：旧版拿 --text-muted(#8b949e) 当正文灰，它在白底上只有 2.92:1，
+     低于 AA。本文件把正文灰换成 --ink-3，并只用 --ink-faint 画非文字元素。
+   ========================================================================== */
+
+:root {
+  color-scheme: light dark;
+
+  /* 版面 */
+  --bg: #f1f3f7;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --surface-3: #eaeef3;
+  --line: #dfe4ea;
+  --line-2: #cbd3dc;
+  --shadow-row: 0 1px 2px rgba(16, 21, 27, 0.04);
+  --shadow-pop: 0 10px 30px rgba(16, 21, 27, 0.14);
+
+  /* 文字：三级墨色，每一级都对 --surface / --surface-2 过 AA */
+  --ink: #10151b;
+  --ink-2: #3f4753;
+  --ink-3: #5b6472;
+  --ink-faint: #8b949e; /* 仅用于描边、导轨等非文字元素 */
+
+  --focus: #1f4d8a;
+
+  /* 语义色（与旧版逐字一致） */
+  --good: #1d7a3a;
+  --good-soft: #e8f7ee;
+  --good-line: #86efac;
+  --warn: #7a5a00;
+  --warn-soft: #fff6e0;
+  --warn-line: #fde68a;
+  --danger: #a13131;
+  --danger-soft: #fcecec;
+  --danger-line: #fca5a5;
+  --info: #1f4d8a;
+  --info-soft: #e7f0fc;
+
+  --accent: #10151b;
+  --accent-ink: #ffffff;
+  --accent-hover: #2a323d;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f14;
+    --surface: #141a21;
+    --surface-2: #1a212a;
+    --surface-3: #222b36;
+    --line: #263140;
+    --line-2: #38455a;
+    --shadow-row: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+
+    --ink: #e8eef5;
+    --ink-2: #c2ccd8;
+    --ink-3: #9aa6b4;
+    --ink-faint: #6b7683;
+
+    --focus: #58a6ff;
+
+    --good: #3fb950;
+    --good-soft: #14331f;
+    --good-line: #2ea04366;
+    --warn: #e3b341;
+    --warn-soft: #3a2f10;
+    --warn-line: #d2992255;
+    --danger: #ff7b72;
+    --danger-soft: #3d1a1a;
+    --danger-line: #f8514955;
+    --info: #58a6ff;
+    --info-soft: #1f4d8a33;
+
+    --accent: #e8eef5;
+    --accent-ink: #0b0f14;
+    --accent-hover: #ffffff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+.shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 20px 56px;
+}
+
+/* ---------------------------------------------------------------- 顶部条 --- */
+/* 顶部条把「旧版的导航栏 + 说明段 + 健康检查 + 进度面板 + 统计 + 工具条」压成一条，
+   并且是页面里唯一的粘性区域，滚动时控件始终在手边。 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: 0 -20px 14px;
+  padding: 12px 20px 12px;
+  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  flex-wrap: wrap;
+  min-height: 26px;
+}
+
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+
+.brand-mark {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 8px;
+  background: var(--accent); color: var(--accent-ink);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tag-demo {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px;
+  border-radius: 5px;
+  border: 1px dashed var(--line-2);
+  color: var(--ink-3);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.run-stats {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+}
+.run-stats b { color: var(--ink); font-weight: 700; }
+/* 分隔点也是文字流的一部分，同样按 AA 取色：--ink-faint(#8b949e) 在白底上只有
+   2.77:1，只配去画描边和导轨，不配当任何字符的墨色。 */
+.sep { color: var(--ink-3); }
+
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+/* 输入控件统一外壳，保证三种控件等高、圆角一致 */
+.field {
+  display: flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.field:focus-within { border-color: var(--line-2); box-shadow: 0 0 0 3px rgb(31 77 138 / 0.14); }
+.field-icon { color: var(--ink-3); flex: none; }
+.field input, .field select {
+  appearance: none;
+  border: 0; background: none; color: var(--ink);
+  font: inherit; font-size: 13px;
+  height: 100%; min-width: 0; width: 100%;
+  padding: 0;
+}
+.field input::placeholder { color: var(--ink-3); }
+.field input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
+.field-compact { padding-right: 6px; }
+.field-compact select {
+  width: auto; min-width: 92px;
+  padding-right: 18px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: right 8px center, right 3px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.field:not(.field-compact) { flex: 1 1 260px; min-width: 200px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; justify-content: center;
+  height: 34px; padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit; font-size: 13px; font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.btn:hover { background: var(--surface-3); border-color: var(--line-2); }
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: 0.55; cursor: progress; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-ghost { color: var(--ink-2); }
+.export-group { display: flex; align-items: center; gap: 0; }
+.export-group .btn-primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.export-group .btn-ghost { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+/* ------------------------------------------------------------ 结果计数行 --- */
+.result-count {
+  margin: 0 0 10px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.result-count b { color: var(--ink); font-weight: 700; }
+
+/* ------------------------------------------------------------------ 表格 --- */
+/* 信息密度靠一张真表格：十列就是十件事实，行高实测 50.5px、整表 645px，1440 视口下
+   12 行连同表头全在屏内。表头是静态列名，不挂逐列筛选器——筛选只有全局搜索 + 状态筛选。 */
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-row);
+  overflow-x: auto;
+}
+
+.grid {
+  width: 100%;
+  /* 1350px 是列宽**实测和**的硬下限（每列都按内容的自然宽度给，省下来的地方
+     全给了「节点」列）。低于这个数，浏览器就从「IPure 场景评分」那列挖宽度，
+     6 个 chip 一折行，行高从 50.5px 膨胀到 57/80/149px，密度当场归零。
+     所以窄屏宁可横向滚动，也不压缩列宽。 */
+  min-width: 1350px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 唯一一条写在 CSS 里的列宽：col 元素不支持 min-width，而「这一列绝不许折行」本身
+   是密度契约的一部分——最宽的一行 6 个场景 chip 要 346px，加 18px 内边距才是 364。 */
+.grid .cell-scn,
+.grid thead th.col-scn { min-width: 364px; }
+
+.grid thead th {
+  padding: 8px 9px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+.grid thead th + th { border-left: 1px solid var(--line); }
+.grid thead th[data-align="center"],
+.grid tbody td[data-align="center"] { text-align: center; }
+
+/* --- 行 --- */
+.row { transition: background 120ms ease; }
+.row > td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+.grid tbody tr:last-child > td { border-bottom: 0; }
+.row:hover > td { background: var(--surface-3); }
+
+/* 左侧导轨一眼给出「值不值得用」：绿=住宅+原生，琥珀=可用但有折损，红=失败。
+   它不是文字，所以不占列宽，只吃掉首列 3px 的左内边距。 */
+.row > td.rank { border-left: 3px solid var(--ink-faint); padding-left: 6px; }
+.row[data-verdict="good"] > td.rank { border-left-color: var(--good); }
+.row[data-verdict="mixed"] > td.rank { border-left-color: var(--warn); }
+.row[data-verdict="bad"] > td.rank { border-left-color: var(--danger); }
+
+.row[data-status="failed"] > td { background: var(--surface-2); color: var(--ink-3); }
+
+/* --- 排名 --- */
+.rank {
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  font-weight: 800;
+}
+.row[data-tier="top"] > td.rank { color: var(--warn); background: var(--warn-soft); }
+
+/* --- 节点 --- */
+/* td 保持 table-cell：给单元格设 display:flex 会让整行错位。这里靠单行 +
+   省略号处理过长节点名，完整名字留在 title 里。 */
+.ident {
+  max-width: 0; /* 配合 table-layout 的默认算法，让 ellipsis 真的生效 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ident .node { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.proto {
+  margin-left: 6px;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--surface-3); color: var(--ink-3);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+}
+
+/* --- 通用药丸 --- */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 19px; padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  white-space: nowrap;
+}
+.chip-good    { color: var(--good);   background: var(--good-soft);   border-color: var(--good-line); }
+.chip-warn    { color: var(--warn);   background: var(--warn-soft);   border-color: var(--warn-line); }
+.chip-bad     { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+.chip-neutral { color: var(--ink-3);  background: var(--surface-2);   border-color: var(--line); }
+
+/* --- 出口 IP --- */
+.cell-ip { white-space: nowrap; }
+.ip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; font-weight: 700; color: var(--ink); letter-spacing: 0.01em;
+  /* 零 JS 的复制路径：单击即选中整个 IP，再 Ctrl+C。这条在 .mhtml 里是**唯一**能用的
+     复制方式——Chrome 把 file:// 打开的 mhtml 放进沙箱且不设 allow-scripts，
+     快照里的复制按钮在那里永远不会被绑定。见 app/snapshot.js 的 format 分支。 */
+  user-select: all;
+}
+.copy-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 18px; padding: 0 5px; margin-left: 5px;
+  vertical-align: middle;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font: inherit; font-size: 10px; font-weight: 700;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.copy-btn:hover { background: var(--surface-3); color: var(--ink); border-color: var(--line-2); }
+.copy-btn[data-state="copied"] { color: var(--good); background: var(--good-soft); border-color: var(--good-line); }
+.copy-btn[data-state="error"] { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+
+/* --- 地区 / 服务商 --- */
+.cell-geo { white-space: nowrap; }
+.cell-isp .isp {
+  display: block; color: var(--ink); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cell-isp .isp-sub {
+  display: block; margin-top: 1px; color: var(--ink-3); font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cell-isp .route { color: var(--ink-3); }
+
+/* --- 接入 / 原生性 --- */
+.cell-kind, .cell-native { white-space: nowrap; }
+
+/* --- 分数药丸 --- */
+.score {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 38px; height: 22px; padding: 0 7px;
+  border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--ink-3);
+  font-size: 13px; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.score[data-band="good"] { color: var(--good);   background: var(--good-soft);   border-color: var(--good-line); }
+.score[data-band="warn"] { color: var(--warn);   background: var(--warn-soft);   border-color: var(--warn-line); }
+.score[data-band="bad"]  { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+.score[data-band="na"]   { color: var(--ink-3);  background: var(--surface-2);   border-color: var(--line); }
+
+/* --- IPure 六项场景评分 --- */
+.scenarios {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  margin: 0; padding: 0; list-style: none;
+}
+.scn {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 19px; padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* IPure 分数色带：--sc 只有两组通道（浅色/深色），由 app/score-color.js 用 CSSOM
+   写进元素，CSS 这边才决定前景/描边/底色的比例。CSP 是 style-src 'self'，
+   所以色带绝不出现在标记的 style 属性里，只能这样分两步走。这条必须排在
+   .score / .scn 的基础规则之后，否则 shorthand 会把 border-color 又抹回透明。 */
+.score[data-band="band"],
+.scn {
+  --sc: var(--sc-l, 85 99 114);
+  color: rgb(var(--sc));
+  background: rgb(var(--sc) / 0.10);
+  border-color: rgb(var(--sc) / 0.42);
+}
+@media (prefers-color-scheme: dark) {
+  :root .score[data-band="band"], :root .scn { --sc: var(--sc-d, 147 163 179); }
+}
+
+.scn-lbl { font-weight: 600; }
+.scn-none { display: inline-flex; align-items: center; color: var(--ink-3); font-size: 11px; }
+
+/* --- 失败行不留白：原因与卡住的步骤占住本该显示网络信息的跨列单元格 --- */
+.cell-absent { color: var(--ink-3); }
+.cell-absent .failure {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--danger); font-size: 12.5px; font-weight: 600;
+}
+.cell-absent .failure svg { flex: none; }
+.cell-absent .failure-step { color: var(--ink-3); font-weight: 500; }
+.cell-absent .failure-isp { display: block; margin-top: 2px; color: var(--ink-3); font-size: 11px; }
+
+/* --------------------------------------------------------------- 空状态 --- */
+.empty {
+  margin-top: 10px;
+  padding: 56px 24px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+}
+.empty-title { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+.empty-desc { margin: 0; color: var(--ink-3); font-size: 12.5px; }
+
+/* ---------------------------------------------------------------- 提示条 --- */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(92vw, 560px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink);
+  box-shadow: var(--shadow-pop);
+  font-size: 12.5px; font-weight: 600;
+  animation: toast-in 160ms ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* 复制回退用的隐藏输入框。不用内联 style：生产 CSP 是 style-src 'self'，
+   标记里的 style 属性会被拦掉（CSSOM 赋值才不算内联样式）。 */
+.clipboard-buffer {
+  position: fixed; top: 0; left: -9999px;
+  width: 1px; height: 1px; padding: 0; border: 0;
+  opacity: 0; pointer-events: none;
+}
+
+/* --------------------------------------------------------------- 响应式 --- */
+/* 表格只有两种命运：宽度够就十列平铺，不够就整张横向滚动。列宽与密度在任何宽度下
+   都不变——删列等于把「一行 9 项」偷偷减配，压列宽等于把 6 个场景 chip 折成三行。 */
+
+/* 再窄就不滚了：表格折成「一行一卡片」，每个单元格用 data-label 自报家门，
+   9 项内容依旧零点击可见，只是从横向排列改成纵向排列。 */
+@media (max-width: 900px) {
+  .table-wrap { background: none; border: 0; box-shadow: none; overflow: visible; }
+  .grid { display: block; min-width: 0; }
+  .grid colgroup, .grid thead { display: none; }
+  .grid tbody { display: block; }
+  .grid .row {
+    display: block;
+    margin-bottom: 8px;
+    padding: 10px 12px 11px 13px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ink-faint);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-row);
+  }
+  .grid .row[data-verdict="good"] { border-left-color: var(--good); }
+  .grid .row[data-verdict="mixed"] { border-left-color: var(--warn); }
+  .grid .row[data-verdict="bad"] { border-left-color: var(--danger); }
+  .grid .row > td {
+    display: block;
+    padding: 2px 0;
+    border-bottom: 0;
+    background: none;
+  }
+  .grid .row > td[data-align="center"] { text-align: left; }
+  .grid .row > td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 88px;
+    color: var(--ink-3);
+    font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+    vertical-align: middle;
+  }
+  /* 节点名与出口 IP 自己就说明了是什么，再顶一个标签只是噪声。 */
+  .grid .row > td.ident::before,
+  .grid .row > td.cell-ip::before { display: none; }
+  /* 卡片模式必须放开 .ident 的单行裁切：max-width:0 是为表格算法准备的，
+     到了 block 布局它会把整格内容裁成 0 宽——节点名与协议 tag 直接消失。 */
+  .grid .row > td.ident { max-width: none; overflow: visible; white-space: normal; }
+  /* 卡片模式整行都是块级元素，这条给表格算列宽的硬下限必须撤销，否则窄屏会被它
+     撑出横向滚动（375px 下实测 18px），chip 照样折行。 */
+  .grid .row > td.cell-scn { min-width: 0; }
+  .grid .row > td.rank {
+    display: inline-block;
+    margin-bottom: 6px;
+    padding: 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-2);
+    line-height: 24px;
+  }
+  .grid .row[data-tier="top"] > td.rank {
+    color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line);
+  }
+  /* 卡片模式宽度够，服务商名与 ASN 不必再截断。 */
+  .grid .row .isp, .grid .row .isp-sub { white-space: normal; }
+}
+
+@media (max-width: 620px) {
+  .shell { padding: 0 12px 32px; }
+  .topbar { margin: 0 -12px 12px; padding: 10px 12px; }
+  .field:not(.field-compact) { flex: 1 1 100%; }
+  .field-compact { flex: 1 1 auto; }
+  .export-group { flex: 1 1 100%; }
+  .export-group .btn { flex: 1 1 0; }
+  .grid .row > td[data-label]::before { min-width: 76px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* --------------------------------------------------------- 离线快照头部 --- */
+/* 快照顶部是静态摘要而不是控件：离线快照没有可操作的对象，摆一排按不动的输入框
+   只会让人以为文件坏了。所以取消粘性、取消半透明玻璃，改成一条普通说明行。
+   这一条只被 snapshot.js 生成的文档命中，实时页面里不会出现 .topbar-static。 */
+.topbar-static {
+  position: static;
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+.snapshot-state {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.snapshot-state b { color: var(--ink); font-weight: 700; }
+
+/* 只在 .mhtml 快照里出现的那条提示：浏览器把 mhtml 的脚本关在沙箱里，复制按钮不会
+   被绑定，所以必须把「单击 IP 全选再 Ctrl+C」这条零 JS 路径写在人看得见的地方。
+   .html 兜底版本脚本正常，不会带这一条（见 app/snapshot.js 的 format 分支）。 */
+.snapshot-note {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.snapshot-note b { color: var(--ink); font-weight: 700; }
