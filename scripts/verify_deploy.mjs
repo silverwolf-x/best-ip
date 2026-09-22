@@ -52,6 +52,9 @@ const ATTEMPTS = 3;
 const TIMEOUT_MS = 20_000;
 const BLOB_CSP = "connect-src 'self' https://*.blob.core.windows.net";
 const SESSION_COOKIE = "__Host-best-ip-session";
+// 新资产在边缘生效有个窗口（见 waitForAssets 的注释）：探到生效为止，最多 6 轮 × 5 秒。
+const ASSET_GRACE_ROUNDS = 6;
+const ASSET_GRACE_WAIT_MS = 5_000;
 
 const failures = [];
 const results = [];
@@ -119,6 +122,28 @@ function assetProbePath() {
   return files.find((path) => path !== "index.html" && !path.endsWith(".pem")) || "styles.css";
 }
 
+/**
+ * 等线上资产真的生效，再进逐字节比对。Cloudflare 把新版本切到每个边缘有个窗口：
+ * 2026-09-22 那次发布实测——版本创建后约 2 秒去看，嵌套目录下的文件全是 404；3 分钟后再看同一个
+ * URL 是 200 且字节正确（`/app/api.js` 12089 B、`/app/main.js` 20001 B）。那不是漂移，但会把发布
+ * 判红。所以这里用目录里第一个非 index.html 的文件探一次，404 就等 5 秒重探，最多 6 轮。
+ * 等不到也不放弃比对：真正的漂移（发错版本、漏发文件）正是后面要判红的东西。
+ */
+async function waitForAssets(session) {
+  const probePath = assetProbePath();
+  let status = 0;
+  for (let round = 1; round <= ASSET_GRACE_ROUNDS; round += 1) {
+    const response = await request(`/${probePath}`, { headers: { Cookie: session } });
+    status = response.status;
+    if (status !== 404) return { probePath, round, status };
+    if (round < ASSET_GRACE_ROUNDS) {
+      console.log(`      /${probePath} 还是 404（第 ${round} 轮）：新资产在边缘生效有个窗口，等 ${ASSET_GRACE_WAIT_MS / 1000} 秒再探。`);
+      await sleep(ASSET_GRACE_WAIT_MS);
+    }
+  }
+  return { probePath, round: ASSET_GRACE_ROUNDS, status };
+}
+
 async function main() {
   console.log(`站点：${SITE}`);
   console.log(`比对基准：${COMMIT}（${ASSETS_DIR}/ 下全部被跟踪文件）\n`);
@@ -166,6 +191,13 @@ async function main() {
     const session = cookiesOf(loginResponse).find((entry) => entry.startsWith(`${SESSION_COOKIE}=`)) || "";
     record(loginResponse.status === 303 && Boolean(session), "登录换取会话", `HTTP ${loginResponse.status}`);
     if (!session) return;
+
+    const grace = await waitForAssets(session);
+    if (grace.status === 404) {
+      console.log(`      /${grace.probePath} 等满 ${ASSET_GRACE_ROUNDS} 轮仍是 404：按真实漂移处理。`);
+    } else if (grace.round > 1) {
+      console.log(`      /${grace.probePath} 在第 ${grace.round} 轮生效（HTTP ${grace.status}）。`);
+    }
 
     // /site-config.js 不在这份清单里：它由 worker/router.js 现算（注入 mode 与公钥指纹），
     // 不是仓库里的文件，没有可比对的 blob。
