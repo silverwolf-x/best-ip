@@ -9,6 +9,11 @@
   <!-- 空的 data: 图标：只为消掉浏览器自发请求 /favicon.ico 产生的 404 噪音，
        它不产生任何网络请求，也不进快照的正文外链清单。 -->
   <link rel="icon" href="data:,">
+  <!-- 运行模式由部署方注入：worker 在生产里把 /site-config.js 换成一个定义
+       window.BEST_IP_CONFIG 的脚本（mode: "gateway"）。没有这个文件时（本机静态打开、
+       file://、旧式静态服务）window.BEST_IP_CONFIG 保持未定义，页面退回「示例数据」或
+       ?job= 深链——这是刻意的降级：一份不存在的配置不该让整页白屏。 -->
+  <script src="./site-config.js"></script>
 </head>
 <body>
   <div class="shell">

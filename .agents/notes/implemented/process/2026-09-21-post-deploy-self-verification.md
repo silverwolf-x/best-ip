@@ -14,12 +14,13 @@ Status: implemented
 
 `worker.yml` 在 `Deploy Worker and static assets` 之后增加一步 `Verify deployed release`，跑仓库里的 `scripts/verify_deploy.mjs`（`npm run verify:deploy`），失败即让这次发布变红。脚本分两层，都不依赖部署方的自述：
 
-1. **无凭据可达性**（任何环境都能跑）：`GET /login` 为 200 且页面含密码表单；`Content-Security-Policy` 仍含 `connect-src 'self' https://*.blob.core.windows.net`；未登录 `GET /` 是 401 `login_required`；未登录 `GET /src/results.js` 是 401。
-2. **有凭据字节比对**：用 `SITE_PASSWORD` 走一遍真实登录表单（读 `name="csrf"` 的令牌与 `__Host-best-ip-login-csrf` cookie，POST 之后取 `__Host-best-ip-session`），再把 `frontend/` 下**每一个**被 git 跟踪的文件与它在该 commit 里的 blob 做字节比对（`index.html` 比对根路径 `/`）。
+1. **无凭据可达性**（任何环境都能跑）：`GET /login` 为 200 且页面含密码表单；`Content-Security-Policy` 仍含 `connect-src 'self' https://*.blob.core.windows.net`；未登录 `GET /` 是 401 `login_required`；未登录访问静态资源（取当前 assets 目录里真实存在的第一个文件）是 401。
+2. **有凭据字节比对**：用 `SITE_PASSWORD` 走一遍真实登录表单（读 `name="csrf"` 的令牌与 `__Host-best-ip-login-csrf` cookie，POST 之后取 `__Host-best-ip-session`），再把**当前 assets 目录**（`wrangler.jsonc` 的 `assets.directory`）下每一个被 git 跟踪的文件与它在该 commit 里的 blob 做字节比对（`index.html` 比对根路径 `/`；`/site-config.js` 不在清单里——它由 `worker/router.js` 现算，没有可比对的 blob）。
 
 规则：
 
-- 比对基准必须是 `git show <commit>:frontend/<path>` 的 blob，**不是本地工作区文件**：`core.autocrlf=true` 的 Windows 检出在工作区里是 CRLF，拿工作区字节比会得到 21 个假不一致（已实测）。
+- 比对基准必须是 `git show <commit>:<assets 目录>/<path>` 的 blob，**不是本地工作区文件**：`core.autocrlf=true` 的 Windows 检出在工作区里是 CRLF，拿工作区字节比会得到一堆假不一致（已实测）。
+- **比对根不写死**：目录从 `wrangler.jsonc` 的 `assets.directory` 读（`--assets` 可覆盖），未登录那条静态资源探测也取目录里真实存在的第一个文件。写死某一个目录会让换了部署根之后的门禁恒绿——线上每个文件都 404，而「404」在结论里和「内容不一致」长得一样，只是更难查（见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)）。
 - 工作流里的 `SITE_PASSWORD` **必须存在**：缺失时该步骤先 `::error::` 再 `exit 1`。脚本自身在没有密码时只跑第 1 层，并打印「本次**没有**验证线上内容与 commit 一致」——这种降级只允许出现在本地，不允许出现在发布门禁里。
 - 只对 5xx 与网络错误重试（3 次、1.5s×n 退避）；4xx 是确定答复，直接判定。每次请求带 20s 超时。
 
@@ -35,14 +36,14 @@ Status: implemented
 
 - 收益：自动发布从「发出去就算」变成「发出去并自证」。坏发布在发布工作流里当场变红，不用等到有人发现线上不对。
 - 收益：校验跑在公网、用真实会话与真实 CSP，覆盖的是发布系统自己的输出面，而不是本地构建产物。
-- 代价：发布多约 10–20 秒（一次登录 + 21 个请求），GitHub secrets 多一个 `SITE_PASSWORD`。轮换 Worker 的 `SITE_PASSWORD` 时 GitHub 侧必须同批改，否则发布会在最后一步红。
+- 代价：发布多约 10–20 秒（一次登录 + assets 目录里每个文件一个请求；`frontend-next` 下是 15 个文件），GitHub secrets 多一个 `SITE_PASSWORD`。轮换 Worker 的 `SITE_PASSWORD` 时 GitHub 侧必须同批改，否则发布会在最后一步红。
 - 代价：这一步依赖公网可达性与 Cloudflare 边缘；`workers.dev` 边缘抖动会让发布红掉（3 次重试 + 20s 超时兜底，超出重试预算仍会红）。这是有意的取舍：宁可红，也不要绿着上线。
 - 事实：`ci.yml` 不跑这一步——它验的是生产，PR 阶段没有对应的生产可验。
 - 事实：脚本只读，不写任何状态；不打印密码，也不把密码落盘。
 
 ## Testing
 
-- 本地对生产跑通：`SITE_PASSWORD=… node scripts/verify_deploy.mjs --site https://best-ip.silverwolfx.workers.dev` → 7/7 通过（4 项无凭据 + CSRF/会话 2 项 + `21/21 个文件` 逐字节一致）。
+- 本地对生产跑通（当时 assets 根是 `frontend/`，21 个文件）：`SITE_PASSWORD=… node scripts/verify_deploy.mjs --site https://best-ip.silverwolfx.workers.dev` → 7/7 通过（4 项无凭据 + CSRF/会话 2 项 + `21/21 个文件` 逐字节一致）。
 - 无密码降级路径：同一命令不带 `SITE_PASSWORD` → 4/4 通过，并明确打印「本次**没有**验证线上内容与 commit 一致」，退出码 0。
 - `npm run check` 覆盖 `scripts/*.mjs`（`node --check`），新脚本在语法门禁内。
 - 流水线（真实证据）：`SITE_PASSWORD` secret 于 2026-09-21T16:14:42Z 设置；提交 `d764365` 推送后，CI 运行 `35624457863` success，`Deploy Cloudflare Worker` 运行 `35624491765` 于 16:15:57Z 由 `workflow_run` **自动**创建并 success（`Current Version ID: 798e728e-c381-4753-9bd3-449e20c7f831`），其中第 7 步 `Verify deployed release` success：`登录页可达 / CSP 仍放行签名 blob / 未登录访问被会话门挡住 / 静态资源未登录不可读 / 登录页下发 CSRF 令牌 / 登录换取会话 / 线上内容与 HEAD 逐字节一致（21/21 个文件）`，`结果：7/7 项通过`，`SITE_PASSWORD` 在日志里被掩码为 `***`，校验本身耗时约 4.5 秒。

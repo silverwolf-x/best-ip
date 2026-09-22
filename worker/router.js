@@ -3,6 +3,7 @@ import { KEY_ID_PATTERN, assertWorkerConfigured } from "./config.js";
 import { authenticate, assertSameOrigin } from "./auth.js";
 import { createScan, scanState, cancelScan, resolveScanRun } from "./scans.js";
 import { downloadArtifact } from "./artifacts.js";
+import { latestScanState } from "./latest.js";
 import { loginRoute, loginRedirect } from "./login.js";
 import { SUBSCRIPTION_RELAY_PATH, subscriptionRelay } from "./relay.js";
 
@@ -13,6 +14,8 @@ export async function api(request, env, auth) {
     return json({ status: "ok", mode: "github-actions-gateway", authentication: auth.method }, 200, { "Cache-Control": "no-store" });
   }
   if (url.pathname === "/api/scans" && request.method === "POST") return createScan(request, env);
+  // 必须排在下面那条 /api/scans/<id> 正则之前：否则 "latest" 会被当成一个 request_id 去验扫描 token。
+  if (url.pathname === "/api/scans/latest" && request.method === "GET") return latestScanState(env);
   const match = url.pathname.match(/^\/api\/scans\/([^/]+)(\/artifact)?$/u);
   if (!match) throw new HttpError(404, "API 路径不存在", "not_found");
   let requestId;
@@ -54,15 +57,18 @@ export async function fetchHandler(request, env, ctx) {
     return secureResponse(await api(request, env, auth), { noStore: true });
   }
   if (url.pathname === "/site-config.js") {
-    if (!KEY_ID_PATTERN.test(String(env.SCAN_KEY_ID || "").trim())) {
-      throw new HttpError(503, "扫描公钥指纹尚未配置", "worker_not_configured");
-    }
+    // 这个文件是「这次部署怎么跑」的标记，不是「扫描能力齐不齐」的检查：缺 SCAN_KEY_ID 时也要照发。
+    // 否则页面读不到配置就退回示例数据，线上会安静地显示一屏合成 IP——一个配置疏漏装成了设计示例。
+    // 能力检查交给 /api/* 的 assertWorkerConfigured：那里缺配置就该明确 503。
+    // keyId / publicKeyPath 只有那个会发起扫描的旧前端用得到；字段留着，是为了把 assets 根
+    // 改回 ./frontend 时那条回退路径仍然可用。
+    const keyId = String(env.SCAN_KEY_ID || "").trim().toLowerCase();
     return secureResponse(
       new Response(
         `window.BEST_IP_CONFIG = Object.freeze(${JSON.stringify({
           mode: "gateway",
           publicKeyPath: "./scan-public.pem",
-          keyId: String(env.SCAN_KEY_ID).trim().toLowerCase(),
+          keyId: KEY_ID_PATTERN.test(keyId) ? keyId : null,
         })});`,
         { headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" } },
       ),

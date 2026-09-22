@@ -7,14 +7,17 @@
    与旧版的差别不只是数量：旧版每次改动都要重算 10 个逐列筛选器 + 全局搜索 + 表格
    排序 + 进度面板，这里只有一条归一化链路——原始记录 → 过滤 → 排序 → 建行。
 
-   数据有两个来源，行对象只有一个形状：
-   - 默认（地址栏没有 ?job=）：app/data.js 的合成示例，零网络请求；
-   - `?job=<任务 ID>`：本机 loopback 上一次真实扫描的导出，经 records.js 映射成同样的
-     行对象。任务只由 URL 参数指定，页面不为此增加任何控件。
+   数据有三个来源，行对象只有一个形状：
+   - 在线部署（site-config.js 说 mode === "gateway"）：本站 Worker 上「最近一次扫描」的
+     产物，经 gateway.js 校验后由 records.js 映射成行对象——页面只读，不发起扫描；
+   - `?job=<任务 ID>`：本机 loopback 上一次真实扫描的导出，同样的映射；任务只由 URL 参数
+     指定，页面不为此增加任何控件；
+   - 默认（地址栏没有 ?job= 且不是在线部署）：app/data.js 的合成示例，零网络请求。
    ========================================================================== */
 
 import { NODES, SNAPSHOT_META } from "./data.js";
 import { resolveTarget, fetchExport } from "./api.js";
+import { fetchLatestScan } from "./gateway.js";
 import { toRows, toSnapshotMeta } from "./records.js";
 import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
 import { comparableScore } from "./score-color.js";
@@ -279,49 +282,90 @@ function setEmptyState(title, description) {
 
 /* --------------------------------------------------------- 真实数据通路 --- */
 // 页面顶上的 badge 默认写着「示例数据」：真实来源下不改口，等于给一屏真实 IP
-// 贴上一个「合成数据」的标签。
-function markRealSource() {
+// 贴上一个「合成数据」的标签。两处真实来源各说各的来源地：在线读的是本站 Worker 上的
+// 最近一次扫描，本机读的是 loopback API 上的一次导出——混着说就把「从哪读的」讲错了。
+const REAL_ORIGIN = {
+  gateway: "来自本站 Worker 上最近一次有结果的扫描产物，只存在内存里",
+  local: "来自本机 loopback API 上的一次真实扫描导出，只存在内存里",
+};
+
+function markRealSource(origin) {
   const badge = document.querySelector(".tag-demo");
   if (!badge) return;
   badge.textContent = "真实扫描";
-  badge.title = `${dataset.meta ? dataset.meta.source : "真实扫描"}：来自本机 loopback API 上的一次真实扫描导出，只存在内存里`;
+  badge.title = `${dataset.meta ? dataset.meta.source : "真实扫描"}：${REAL_ORIGIN[origin] || REAL_ORIGIN.local}`;
+}
+
+/**
+ * 真实数据到位之前先按「空表 + 加载中」渲染一帧：绝不能先亮一屏合成数据再被顶掉，
+ * 那一帧里的 IP 全是假的，肉眼看和截图都可能把它当成这次扫描的结果。
+ */
+function beginRealSource(origin, title, description) {
+  setNodes([]);
+  dataset.meta = null;
+  dataset.real = true;
+  markRealSource(origin);
+  renderStats();
+  render();
+  setEmptyState(title, description);
+}
+
+/**
+ * 数据到手：换数据、补来源、把空状态清回默认文案——否则「搜不到」时会一直挂着
+ * 「正在读取真实扫描结果…」那句假话。meta 到手后再叫一次 markRealSource，
+ * badge 的 title 里要能看出这是「哪一次」扫描。
+ */
+function applyRealPayload(payload, origin, emptyTitle, emptyDesc) {
+  setNodes(toRows(payload));
+  dataset.meta = toSnapshotMeta(payload);
+  markRealSource(origin);
+  const empty = dataset.nodes.length === 0;
+  setEmptyState(empty ? emptyTitle : null, empty ? emptyDesc : "");
+  renderStats();
+  render();
 }
 
 function failRealData(message) {
-  setNodes([]);
-  dataset.meta = null;
-  dataset.real = true;
-  markRealSource();
-  renderStats();
-  render();
-  setEmptyState("真实扫描结果没有加载成功", `${message}。想换成别的 API 地址可以给页面加上 ?api=<本机 origin>。`);
+  beginRealSource("local", "真实扫描结果没有加载成功",
+    `${message}。想换成别的 API 地址可以给页面加上 ?api=<本机 origin>。`);
   toast(`真实扫描加载失败：${message}`);
 }
 
-async function loadRealData(target) {
-  // 真实数据到位之前先按「空表 + 加载中」渲染一帧：绝不能先亮一屏合成数据再被顶掉，
-  // 那一帧里的 IP 全是假的，肉眼看和截图都可能把它当成这次扫描的结果。
-  setNodes([]);
-  dataset.meta = null;
-  dataset.real = true;
-  markRealSource();
-  renderStats();
-  render();
-  setEmptyState("正在读取真实扫描结果…", `任务 ${target.jobId} · ${target.apiBase}`);
+// 在线模式的失败没有 ?api= 这条退路（见 api.js 文件头），所以文案里不提它；
+// 真正的成因由 gateway.js 分条给出：没扫过 / 产物已过期 / 还没跑完 / 产物坏了 / 跨源被拦。
+// 在线模式的失败没有 ?api= 这条退路（见 api.js 文件头），所以文案里不提它；成因由 gateway.js
+// 分条给出：没扫过 / 产物已过期 / 还没跑完 / 产物坏了 / 跨源被拦。标题也照抄它给的那一份——
+// 「没有读到结果」套在「从没扫过」和「还在跑」上会把两件不同的事实说成同一次失败。
+function failGateway(failure) {
+  const title = typeof failure === "object" && failure?.title ? failure.title : "没有读到真实扫描结果";
+  const message = (typeof failure === "string" ? failure : failure?.message) || "网关没有说明原因";
+  beginRealSource("gateway", title, message);
+  toast(`未显示真实扫描结果：${message}`);
+}
 
+async function loadRealData(target) {
+  beginRealSource("local", "正在读取真实扫描结果…", `任务 ${target.jobId} · ${target.apiBase}`);
   try {
     const payload = await fetchExport(target.apiBase, target.jobId);
-    setNodes(toRows(payload));
-    dataset.meta = toSnapshotMeta(payload);
-    // meta 到手后再叫一次：badge 的 title 里要能看出这是「哪一次」扫描。
-    markRealSource();
-    // 数据到手后必须把空状态清回默认文案：否则「搜不到」时会显示「正在读取真实扫描结果…」。
-    setEmptyState(dataset.nodes.length === 0 ? "这次扫描没有任何节点记录" : null,
-      dataset.nodes.length === 0 ? "任务本身是完成的，但导出里的 results 是空的。" : "");
-    renderStats();
-    render();
+    applyRealPayload(payload, "local",
+      "这次扫描没有任何节点记录", "任务本身是完成的，但导出里的 results 是空的。");
   } catch (error) {
     failRealData(error.message);
+  }
+}
+
+// 在线模式：读本站 Worker 上的「最近一次扫描」。选中哪一次由 worker/latest.js 决定，
+// 页面这一侧只负责把「最近一次」这件事说清楚，不提供任何选择入口（没有新增控件）。
+async function loadGatewayData() {
+  beginRealSource("gateway", "正在读取最近一次真实扫描…",
+    "结果来自本站 Worker 上的扫描网关；页面只读已经发布的结果，不发起扫描。");
+  try {
+    const payload = await fetchLatestScan();
+    applyRealPayload(payload, "gateway",
+      "最近一次扫描没有任何节点记录", "那次运行是完成的，但产物里的 results 是空的。");
+  } catch (error) {
+    // 整条错误对象交下去：标题要用它带的成因（见 failGateway），只传 message 就只剩正文。
+    failGateway(error);
   }
 }
 
@@ -397,8 +441,15 @@ const target = resolveTarget({
 
 // 顺序不能反：`?job=`（写了但为空）会同时满足「jobId 为空」和「有 error」，
 // 先判 jobId 就会把它当成演示路径，给出一条满屏合成 IP、零提示的深链。
+// 在线模式排在最前面：它的「没有数据」和「读失败」都只有一条路（本站 Worker），
+// 拿本机那套 ?api= 文案去解释它只会把人指向一个在生产里根本不存在的地址。
 if (target.error) {
-  failRealData(target.error);
+  // 两处失败能走的退路不同，所以按来源分岔，而不是共用一句「加载失败」。
+  if (target.mode === "gateway") failGateway(target.error);
+  else failRealData(target.error);
+} else if (target.mode === "gateway") {
+  // 同样不 await：先让页面把「正在读取」那一帧显示出来。
+  loadGatewayData();
 } else if (!target.jobId) {
   // 静态示例路径：不解析 API 地址、不发任何请求，打开即是一屏完整内容。
   renderStats();

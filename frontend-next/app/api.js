@@ -1,8 +1,9 @@
 /* ============================================================================
-   真实数据通路 —— 从本机 loopback 读取一次真实扫描的导出结果
+   真实数据通路 —— 决定这次打开页面读哪一份真实结果
    ----------------------------------------------------------------------------
-   只做三件事：决定「读哪个任务、用哪个 API」，把这一次导出取回来，把明显不对的响应
-   挡在渲染之前。字段映射在 records.js，页面接线在 main.js。
+   两个来源，同一个出口：在线部署（site-config.js 说 mode === "gateway"）固定读本站 Worker 的
+   「最近一次扫描」，本机静态服务（?job=<任务 ID>）读 loopback 上一次真实扫描的导出。两条路
+   最终交出同一份导出 payload，字段映射在 records.js，页面接线在 main.js。
 
    为什么 base 只允许 http:// + 127.0.0.1/localhost/::1 + 显式端口：
    地址可以来自 URL 参数，任何人构造一个链接就能把页面指向别处。这里照抄
@@ -13,6 +14,10 @@
    为什么选任务只走 URL 参数（?job=）：
    任务身份属于地址而不是页面状态——刷新、转发、多开标签页都会落在同一个任务上，
    也不需要引入「当前任务」这块与渲染无关的状态和一个新控件。
+
+   在线模式为什么不认 ?job=：产物躺在 GitHub 上，只有 Worker 能用 GitHub App token 换出签名
+   地址；?job= 只会去打一个 loopback 地址，而生产页面既过不了同源策略也过不了 CSP。给出一条
+   「看着合法、永远失败」的链接不如当场说清楚。
 
    为什么启动路径的错误做成返回值而不是抛异常：
    这个模块在页面启动时被调用，模块顶层抛异常会让整页连表头都不渲染——一个拼错的
@@ -77,26 +82,53 @@ function jobIdError(jobId) {
 }
 
 /**
+ * 只有 site-config.js 说 mode === "gateway" 才算在线模式：那是本站 Worker 注入的配置，
+ * 也是唯一能说明「页面正跑在 Cloudflare 上、没有 loopback 可用」的证据。其余取值
+ * （缺失 / "local" / 拼错的字符串）一律按本机静态服务处理，行为与切换 assets 之前一致。
+ */
+export function isGatewayMode(config) {
+  return Boolean(config) && config.mode === "gateway";
+}
+
+/**
  * 解析这次打开页面用哪个数据源。
- * @returns {{jobId: string, apiBase: string, error: string}} jobId 为空表示演示路径。
+ * @returns {{mode: "gateway"|"local"|"demo", jobId: string, apiBase: string, error: string}}
+ *   mode 为 "demo" 表示走示例数据（零网络请求），"gateway" 表示读本站最近一次扫描。
  */
 export function resolveTarget({ search = "", config = null } = {}) {
+  const gateway = isGatewayMode(config);
   const jobId = readParam(search, "job");
+
+  if (gateway) {
+    // 在线模式下 ?job= 只可能是一条永远失败的链接（见文件头），当场说清楚而不是默默忽略。
+    if (jobId) {
+      return Object.freeze({
+        mode: "gateway",
+        jobId,
+        apiBase: "",
+        error: "在线部署只显示最近一次扫描：?job= 只在本机静态服务下有效",
+      });
+    }
+    // 「写了 ?job= 但是空的」在在线模式下不报错：那条防线是为了挡住满屏合成 IP 的深链，
+    // 而在线模式永远不会拿示例数据冒充结果——它要么读到最近一次扫描，要么如实说没有。
+    return Object.freeze({ mode: "gateway", jobId: "", apiBase: "", error: "" });
+  }
+
   // 「没写 ?job=」与「写了 ?job= 但是空的」必须分开：后者多半是个没替换成功的模板链接，
   // 当成演示路径处理就会给出一条满屏合成 IP、零提示的深链——正是真实通路最该防的错。
   if (!jobId) {
     const wroteJob = queryParams(search).has("job");
-    if (!wroteJob) return Object.freeze({ jobId: "", apiBase: "", error: "" });
-    return Object.freeze({ jobId: "", apiBase: "", error: "URL 参数 ?job= 是空的" });
+    if (!wroteJob) return Object.freeze({ mode: "demo", jobId: "", apiBase: "", error: "" });
+    return Object.freeze({ mode: "demo", jobId: "", apiBase: "", error: "URL 参数 ?job= 是空的" });
   }
 
   const invalid = jobIdError(jobId);
-  if (invalid) return Object.freeze({ jobId, apiBase: "", error: invalid });
+  if (invalid) return Object.freeze({ mode: "local", jobId, apiBase: "", error: invalid });
 
   try {
-    return Object.freeze({ jobId, apiBase: resolveApiBase({ search, config }), error: "" });
+    return Object.freeze({ mode: "local", jobId, apiBase: resolveApiBase({ search, config }), error: "" });
   } catch (cause) {
-    return Object.freeze({ jobId, apiBase: "", error: cause.message });
+    return Object.freeze({ mode: "local", jobId, apiBase: "", error: cause.message });
   }
 }
 
