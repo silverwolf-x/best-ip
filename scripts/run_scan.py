@@ -195,6 +195,7 @@ async def run(
         from backend.app.subscription import (
             SubscriptionError,
             SubscriptionRelay,
+            SubscriptionSource,
             download_subscription,
             subscription_failure_reason,
         )
@@ -212,6 +213,7 @@ async def run(
     manager = None
     job_id = None
     completed = False
+    source = SubscriptionSource()
     try:
         async with asyncio.timeout(args.timeout):
             try:
@@ -220,6 +222,7 @@ async def run(
                     max_bytes=app_settings.subscription_max_bytes,
                     timeout_seconds=min(app_settings.subscription_timeout_seconds, args.timeout),
                     relay=relay,
+                    source=source,
                 )
             except (SubscriptionError, ValueError) as exc:
                 print(
@@ -228,9 +231,14 @@ async def run(
                 )
                 raise ScanCLIError("input_invalid") from exc
             print(
-                f"subscription_source: {'relay' if relay is not None else 'direct'}",
+                f"subscription_source: {source.value}",
                 file=sys.stderr,
             )
+            if source.fallback_reason is not None:
+                print(
+                    f"subscription_fallback_reason: {source.fallback_reason}",
+                    file=sys.stderr,
+                )
             if not isinstance(content, bytes) or len(content) > app_settings.subscription_max_bytes:
                 raise ScanCLIError("input_invalid")
 

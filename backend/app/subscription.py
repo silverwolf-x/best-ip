@@ -41,12 +41,32 @@ def subscription_failure_reason(exc: BaseException) -> str:
     return "unknown"
 
 
+# 出口拒绝的实测特征：订阅主机按抓取方出口网络拒绝时回的都是 HTTP 403。Azure runner 与
+# Cloudflare Worker 两个方向都实测到过这个码，因此只有它触发出口回退，其它失败照原样抛出。
+EGRESS_REFUSAL_REASON = "http_status_403"
+
+
+@dataclass
+class SubscriptionSource:
+    """本次抓取实际用的出口，只用于日志归因，不参与任何安全判定。
+
+    `value` 是 `direct` 或 `relay`；`fallback_reason` 只在直连被出口拒绝、改走中继时
+    记下直连那一次的固定原因码。
+    """
+
+    value: str = "direct"
+    fallback_reason: str | None = None
+
+
 @dataclass(frozen=True)
 class SubscriptionRelay:
-    """用 Worker 中继抓取订阅：抓取发生在 Worker 出口网络，而不是扫描 runner。
+    """Worker 中继：把某一次抓取的出口换成 Cloudflare 边缘，而不是扫描 runner。
 
-    订阅主机对 GitHub Actions 的 Azure 出口返回 HTTP 403，对 Cloudflare 出口返回 200，
-    因此生产扫描把订阅抓取委托给 Worker；runner 仍逐跳校验目标必须是公网地址。
+    它只为「某个出口被订阅主机按网络拒绝」这类情况存在，不能预设谁更通：实测同一台
+    订阅主机可以只拒 Azure（runner 403 / Worker 200），也可以只拒 Cloudflare
+    （runner 200 / Worker 403，被 managed challenge 挡住）。谁先谁后由
+    `download_subscription` 按实际结果决定并记进 `SubscriptionSource`；runner 仍逐跳
+    校验目标必须是公网地址。
     """
 
     url: str
@@ -169,15 +189,44 @@ async def download_subscription(
     max_bytes: int,
     timeout_seconds: float,
     relay: SubscriptionRelay | None = None,
+    source: SubscriptionSource | None = None,
 ) -> bytes:
-    if relay is not None:
+    """抓订阅：直连优先，只有直连被出口拒绝（403）且配了中继时才改走 Worker 中继。
+
+    两种出口都有真实反例，所以策略不能写死成「一直走中继」或「一直直连」。回退只认
+    `EGRESS_REFUSAL_REASON`：DNS、重定向、超限、401/404 等其它失败照原样抛出，免得把
+    「订阅本身有问题」误判成「换个出口就好了」。实际用的是哪个出口写进 `source`，
+    调用方据此打印 `subscription_source`。
+    """
+
+    recorder = source if source is not None else SubscriptionSource()
+    try:
+        content = await _download_direct(
+            url,
+            max_bytes=max_bytes,
+            timeout_seconds=timeout_seconds,
+        )
+    except SubscriptionError as exc:
+        if relay is None or exc.reason != EGRESS_REFUSAL_REASON:
+            raise
+        recorder.value = "relay"
+        recorder.fallback_reason = exc.reason
         return await _download_via_relay(
             url,
             max_bytes=max_bytes,
             timeout_seconds=timeout_seconds,
             relay=relay,
         )
+    recorder.value = "direct"
+    return content
 
+
+async def _download_direct(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout_seconds: float,
+) -> bytes:
     current_url = url.strip()
     timeout = httpx.Timeout(timeout_seconds)
     headers = {

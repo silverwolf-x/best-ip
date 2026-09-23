@@ -31,6 +31,12 @@ URL）都成功。
 是别的问题，不要混为一谈。
 ## Decision
 
+> 2026-09-23 更新：本篇里「生产扫描把抓订阅固定委托给 Worker」和「直连被 403 后不再重试」两条口径已被
+> [抓订阅改成直连优先，Worker 中继只在 403 时回退](2026-09-23-direct-first-subscription-egress.md)
+> 取代——同一台订阅主机可以只拒 Azure，也可以只拒 Cloudflare（后者是站点自己的 managed challenge），
+> 写死任何一侧都会把另一侧打成 403。中继本身、路由、鉴权、wire 契约与「逐跳公网校验只在 runner 做」
+> 仍然有效，本篇其余内容照旧。
+
 生产扫描把「抓订阅」这一步委托给自有 Cloudflare Worker；**安全判定仍只在 runner 侧做**。
 
 **为什么是 Worker**：它是用户已经拥有、已经在跑的那一个出口（同一个 `best-ip` Worker 既发 dispatch

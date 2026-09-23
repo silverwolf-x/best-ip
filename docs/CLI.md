@@ -60,11 +60,18 @@ ready manifest. Both are fixed tokens and never contain the subscription URL, it
 host, or any credential.
 
 When `BEST_IP_SUBSCRIPTION_RELAY_URL` and `BEST_IP_SUBSCRIPTION_RELAY_TOKEN` are both
-set, the download is delegated to the Worker subscription relay and a run that
-downloads successfully prints `subscription_source: relay`; with neither set it
-prints `subscription_source: direct`. Setting only one of the pair is a configuration
-error (`environment_not_ready`), so a direct fetch that the host rejects is never
-silently retried through the relay. Relay failures report the fixed codes
+set, the download is tried directly from the runner first and falls back to the Worker
+subscription relay only when that direct attempt is refused with `http_status_403` —
+the observed signature of a host that filters by fetching network, which has been seen
+in both directions (a host that refuses Azure and a host that refuses Cloudflare, the
+latter with a Cloudflare managed challenge). Every other failure is reported as-is
+instead of being retried through the relay, so a wrong token (401) or a wrong path
+(404) never turns into a second network round trip. A successful download prints the
+egress that actually answered — `subscription_source: direct` or
+`subscription_source: relay` — and adds `subscription_fallback_reason: http_status_403`
+when the relay answered after a direct refusal. With neither variable set the run is
+direct-only, and setting only one of the pair is a configuration error
+(`environment_not_ready`). Relay failures report the fixed codes
 `relay_url_invalid`, `relay_token_invalid`, `relay_unauthorized`,
 `relay_response_too_large`, `relay_unreachable`, `relay_not_configured`,
 `relay_timeout`, `relay_response_invalid`, `relay_empty_body` and `relay_error`. The

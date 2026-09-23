@@ -36,16 +36,17 @@
       <!-- 发起扫描：只在在线部署里出现（site-config.js 说 mode === "gateway"）。它默认 hidden，
            由 app/main.js 在确认「本站确实有扫描网关、而且扫描公钥配好了」之后才显出来——
            静态示例与本机 ?job= 路径下摆一个点了必然失败的按钮，比不摆更糟。
-           订阅地址用 type="password"（与旧前端一致）：它是带 token 的半机密链接，不该在
-           共享屏幕上摊开；明文也从不离开浏览器，加密在提交前就完成了（app/scan-crypto.js）。 -->
+           订阅地址是 type="text" 的明文输入（用户要求：不要隐私掩码，直接公开输入）。链接本身
+           带 token，所以页面不回显、不落盘、不进导出快照；明文也从不离开浏览器，加密在提交前
+           就完成了（app/scan-crypto.js）。图标相应地从挂锁换成链接符号，免得界面暗示有遮掩。 -->
       <form class="scanbar" id="scanForm" hidden>
         <div class="scan-row">
           <label class="sr-only" for="subscriptionUrl">Mihomo YAML 订阅链接</label>
           <div class="field">
             <svg class="field-icon" aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="4" y="10.5" width="16" height="9.5" rx="2.2"></rect><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"></path>
+              <path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1"></path><path d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"></path>
             </svg>
-            <input id="subscriptionUrl" name="subscription_url" type="password" inputmode="url" autocomplete="off" spellcheck="false" required placeholder="粘贴 Mihomo YAML 订阅链接（http 或 https 均可）">
+            <input id="subscriptionUrl" name="subscription_url" type="text" inputmode="url" autocomplete="off" spellcheck="false" required placeholder="粘贴 Mihomo YAML 订阅链接（http 或 https 均可）">
           </div>
           <button id="startScan" type="submit" class="btn btn-primary">开始扫描</button>
           <button id="stopScan" type="button" class="btn btn-ghost" hidden>停止</button>

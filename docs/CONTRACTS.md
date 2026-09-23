@@ -105,7 +105,10 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   characters, port 1..65535, and no localhost/`.localhost`/`.internal`/`.local` or
   private, loopback, link-local and reserved IP literals). The Worker therefore does
   NOT resolve DNS or judge the target's public reachability; the runner re-validates
-  every hop with `validate_public_url`. Upstream is fetched with `redirect:"manual"`
+  every hop with `validate_public_url`. The runner only reaches this route as a fallback:
+  it downloads directly first and retries through the relay solely when that direct
+  attempt is refused with `http_status_403` (a host filtering by fetching network), while
+  every other failure is reported as-is. Upstream is fetched with `redirect:"manual"`
   and a 20 second timeout on Cloudflare's egress, capped at 5 MiB. A 200 carries
   `{status,location,body_b64}`: `location` only for 300..399 (truncated to 4096 chars,
   with `body_b64:null`) so the runner can re-validate the hop, otherwise `body_b64` is
