@@ -46,7 +46,10 @@ _DOH_RESOLVERS = (
 )
 _DEFAULT_DNS_CONFIG = {
     "enable": True,
-    "ipv6": False,
+    # 返回 AAAA：订阅里 v6-aws-{jp,hk,sg}.aikunapp.com 只有 AAAA 记录，关掉这一项时
+    # mihomo 连地址都拿不到，失败被写成「节点服务器域名无法解析」——一个地址族开关
+    # 冒充成了订阅数据的坏。开着它，本环境没有 IPv6 出口时文案才是「网络不可达」。
+    "ipv6": True,
     "enhanced-mode": "redir-host",
     "default-nameserver": ["223.5.5.5", "119.29.29.29", "1.1.1.1", "8.8.8.8"],
     "nameserver": list(_DOH_RESOLVERS),
@@ -257,7 +260,11 @@ class MihomoProcess:
             "bind-address": "127.0.0.1",
             "mode": "rule",
             "log-level": "warning",
-            "ipv6": False,
+            # 出站允许 IPv6：订阅里既有 server 是 IPv6 字面量的节点，也有只有 AAAA 的
+            # 节点域名。GitHub 托管 runner 没有 IPv6 默认路由（只有 ::1 与 eth0 的
+            # fe80::/64），所以这 8 个节点仍然连不上；但关掉开关会把「本环境没有 IPv6
+            # 出口」冒充成节点自身的问题。真要让它们成功，得先给扫描环境一条 IPv6 出口。
+            "ipv6": True,
             "external-controller": f"127.0.0.1:{self.controller_port}",
             "secret": self.secret,
             "profile": {"store-selected": False, "store-fake-ip": False},
