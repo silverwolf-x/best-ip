@@ -215,6 +215,16 @@ def _record_phase(phase_ms: dict[str, int], phase: str, started: float) -> None:
 
 
 def _dns_bootstrap_candidates(proxies: list[dict[str, Any]]) -> list[str]:
+    """能代跑 DNS 的节点：server 是**全局 IPv4 字面量**。
+
+    为什么必须限 IPv4：引导出口要替本机把 DoH 查询送到四个解析器
+    （`mihomo.py` 的 `_DOH_RESOLVERS`——223.5.5.5 / 1.12.12.12 / 1.1.1.1 /
+    8.8.8.8，全是 IPv4 字面量），所以出口本身必须能由本机的 IPv4 栈到达。
+    IPv6 字面量节点只有在运行环境有 IPv6 出口时才可能连上；一旦被选中而连不上，
+    这次尝试的 DNS 就全部失败，日志被读成「节点服务器域名无法解析」，
+    于是一个 A 记录正常、本来能连的节点被判成失败并白烧三次尝试。
+    见 implemented/bug-fix/2026-09-23-dns-bootstrap-ipv6-poisoning.md。
+    """
     candidates: list[str] = []
     for proxy in proxies:
         try:
@@ -222,7 +232,7 @@ def _dns_bootstrap_candidates(proxies: list[dict[str, Any]]) -> list[str]:
         except ValueError:
             continue
         name = str(proxy.get("name") or "")
-        if address.is_global and name:
+        if address.version == 4 and address.is_global and name:
             candidates.append(name)
     return list(dict.fromkeys(candidates))
 
