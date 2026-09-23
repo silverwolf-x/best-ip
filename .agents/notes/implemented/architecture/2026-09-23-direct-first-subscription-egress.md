@@ -131,7 +131,8 @@ reason=relay_unauthorized`；② 真的连不上的公网地址（`https://examp
 11 秒扫完，产物 `best-ip-result-req-verify-1790201044-35926228537-1`（zip 82270 字节，`result.json` 1006192
 字节），`status.json` 为 `total: 22 / success: 22 / partial: 0 / failed: 0`，行里是真实出口 IP 与 CIDR
 （如 `18.178.247.88` / `18.178.247.0/24`）。对照同一条订阅在修复前的运行 `35924938863`：10 秒红在
-`subscription_fetch_reason: http_status_403`。
+`subscription_fetch_reason: http_status_403`。改动收尾（把连接层失败收敛成固定码那批）之后又原样重跑一次：
+运行 `35928184512` completed/success、同样 `subscription_source: direct`（8 秒），确认收敛没动到正常路径。
 
 **生产闭环 B（页面发起，走 Worker 那条路）**：用 `SITE_PASSWORD` 登录线上站点后，订阅框是 `type="text"`
 明文输入（实测 `document.getElementById('subscriptionUrl').type === "text"`），粘进同一条订阅地址 →
