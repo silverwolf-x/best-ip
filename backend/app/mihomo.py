@@ -326,21 +326,48 @@ class MihomoProcess:
             raise MihomoError(f"Mihomo 启动失败{suffix}") from None
 
     async def _wait_until_ready(self) -> None:
+        """就绪 = 控制端口能应答 **且** 本次要用的 selector 组已注册。
+
+        只看 `/version` 不够：mihomo 的 `hub.ApplyConfig` 先 `applyRoute`（`go
+        start(cfg)` 起控制端口）再 `executor.ApplyConfig`（里面 `updateProxies` 才把
+        proxies 灌进 `tunnel.Proxies()`），所以控制端口会先接客，这一小段里
+        `/proxies/BEST-IP` 是 404。那个 404 在该路由里只有一个来源：chi 的
+        `findProxyByName` 查不到这个名字（`PUT` 的 `updateProxy` 只会回 400/204）。
+        2026-09-23 的取证也指向同一处：404 那一刻监听控制端口的进程是我们自己的
+        子进程、用的是我们的 secret，几十毫秒后组就在了。见
+        implemented/bug-fix/2026-09-23-selector-readiness-race.md。
+        """
         deadline = asyncio.get_running_loop().time() + 15
+        controller_ready = False
         async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
             while asyncio.get_running_loop().time() < deadline:
                 if self.process and self.process.returncode is not None:
                     raise MihomoError("Mihomo 进程提前退出")
-                try:
-                    response = await client.get(
-                        f"{self.controller_url}/version", headers=self.headers
-                    )
-                    if response.is_success:
-                        return
-                except httpx.HTTPError:
-                    pass
-                await asyncio.sleep(0.2)
-        raise MihomoError("等待 Mihomo 控制端口超时")
+                if not controller_ready:
+                    try:
+                        response = await client.get(
+                            f"{self.controller_url}/version", headers=self.headers
+                        )
+                        controller_ready = response.is_success
+                    except httpx.HTTPError:
+                        pass
+                if controller_ready and await self._selector_registered(client):
+                    return
+                await asyncio.sleep(0.05 if controller_ready else 0.2)
+        raise MihomoError(
+            "等待 Mihomo selector 组注册超时"
+            if controller_ready
+            else "等待 Mihomo 控制端口超时"
+        )
+
+    async def _selector_registered(self, client: httpx.AsyncClient) -> bool:
+        """组端点是否已 2xx：这是 `select()` 真正需要的前置条件。"""
+        url = f"{self.controller_url}/proxies/{quote(self.group_name, safe='')}"
+        try:
+            response = await client.get(url, headers=self.headers)
+        except httpx.HTTPError:
+            return False
+        return response.is_success
 
     async def select(self, node_name: str) -> str:
         endpoint = quote(self.group_name, safe="")
