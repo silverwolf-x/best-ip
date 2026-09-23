@@ -53,25 +53,30 @@ Beyond the fixed code, a failing run prints one machine-readable line naming why
 the subscription could not be used. `subscription_fetch_reason: <code>` covers the
 CLI's own URL validation and download (`non_http_scheme`, `url_credentials`,
 `localhost_target`, `dns_unresolved`, `dns_not_global`, `doh_unavailable`,
-`dns_no_public_records`, `http_status_<status>`, `redirect_without_location`,
-`redirect_limit`, `response_too_large`, the `relay_*` codes below, `unknown`);
+`dns_no_public_records`, `http_status_<status>`, `direct_timeout`, `direct_unreachable`,
+`redirect_without_location`, `redirect_limit`, `response_too_large`, the `relay_*` codes
+below, `unknown`);
 `scan_failure_code: <code>` reports the manager's code when a job ends without a
 ready manifest. Both are fixed tokens and never contain the subscription URL, its
 host, or any credential.
 
-When `BEST_IP_SUBSCRIPTION_RELAY_URL` and `BEST_IP_SUBSCRIPTION_RELAY_TOKEN` are both
 set, the download is tried directly from the runner first and falls back to the Worker
-subscription relay only when that direct attempt is refused with `http_status_403` —
-the observed signature of a host that filters by fetching network, which has been seen
-in both directions (a host that refuses Azure and a host that refuses Cloudflare, the
-latter with a Cloudflare managed challenge). Every other failure is reported as-is
-instead of being retried through the relay, so a wrong token (401) or a wrong path
+subscription relay only when that direct attempt fails in a way that says "this egress
+cannot reach the host" rather than "the subscription is wrong": `http_status_403` (the
+observed signature of a host filtering by fetching network, seen in both directions — a
+host that refuses Azure and a host that refuses Cloudflare, the latter with a Cloudflare
+managed challenge), plus `direct_timeout` / `direct_unreachable` (the connection never
+completed: blackhole, reset, TLS/protocol interruption). Every other failure is reported
+as-is instead of being retried through the relay, so a wrong token (401) or a wrong path
 (404) never turns into a second network round trip. A successful download prints the
 egress that actually answered — `subscription_source: direct` or
-`subscription_source: relay` — and adds `subscription_fallback_reason: http_status_403`
-when the relay answered after a direct refusal. With neither variable set the run is
-direct-only, and setting only one of the pair is a configuration error
-(`environment_not_ready`). Relay failures report the fixed codes
+`subscription_source: relay` — and adds
+`subscription_fallback_reason: http_status_403|direct_timeout|direct_unreachable`
+when the relay answered after the direct attempt failed. With neither variable set the
+run is direct-only, and setting only one of the pair is a configuration error
+(`environment_not_ready`). A failing download prints `subscription_fallback_reason`
+before `subscription_fetch_reason` when the direct attempt had already failed. Relay
+failures report the fixed codes
 `relay_url_invalid`, `relay_token_invalid`, `relay_unauthorized`,
 `relay_response_too_large`, `relay_unreachable`, `relay_not_configured`,
 `relay_timeout`, `relay_response_invalid`, `relay_empty_body` and `relay_error`. The

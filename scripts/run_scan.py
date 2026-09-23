@@ -225,15 +225,22 @@ async def run(
                     source=source,
                 )
             except (SubscriptionError, ValueError) as exc:
+                # 失败时也得留下「先撞过直连」的痕迹：不然只看得到中继那次的码，
+                # 「两个出口都要看」就成了口头约定。此处不报 subscription_source——
+                # 回退已经把 value 置成 relay，但中继并没有应答。
+                if source.fallback_reason is not None:
+                    print(
+                        f"subscription_fallback_reason: {source.fallback_reason}",
+                        file=sys.stderr,
+                    )
                 print(
                     f"subscription_fetch_reason: {subscription_failure_reason(exc)}",
                     file=sys.stderr,
                 )
                 raise ScanCLIError("input_invalid") from exc
-            print(
-                f"subscription_source: {source.value}",
-                file=sys.stderr,
-            )
+            # value 只由 download_subscription 写成 direct/relay；替身不回写时如实报 unknown。
+            egress = source.value if source.value in {"direct", "relay"} else "unknown"
+            print(f"subscription_source: {egress}", file=sys.stderr)
             if source.fallback_reason is not None:
                 print(
                     f"subscription_fallback_reason: {source.fallback_reason}",

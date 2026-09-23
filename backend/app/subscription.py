@@ -41,23 +41,26 @@ def subscription_failure_reason(exc: BaseException) -> str:
     return "unknown"
 
 
-# 出口拒绝的实测特征：订阅主机按抓取方出口网络拒绝时回的都是 HTTP 403。Azure runner 与
-# Cloudflare Worker 两个方向都实测到过这个码，因此只有它触发出口回退，其它失败照原样抛出。
-EGRESS_REFUSAL_REASON = "http_status_403"
+# 值得换个出口重试的直连失败原因：它们说明「这个出口到不了订阅主机」，而不是「订阅本身有问题」。
+# - http_status_403：订阅主机按出口网络拒绝的实测特征（Azure 与 Cloudflare 两个方向都实测到过）；
+# - direct_timeout / direct_unreachable：直连连不上（黑洞、重置、TLS/协议中断）。这类主机在
+#   「一直走中继」的旧策略下本来是被中继救回来的，直连优先不能把它变成硬失败。
+# 不在集合里的码（dns_*、redirect_*、response_too_large、http_status_401/404…）说明问题在订阅或
+# 地址本身，换出口不会变好，重试只会把一次输入错误变成两次网络往返加一个更难解释的原因码。
+EGRESS_FALLBACK_REASONS = frozenset({"http_status_403", "direct_timeout", "direct_unreachable"})
 
 
 @dataclass
 class SubscriptionSource:
     """本次抓取实际用的出口，只用于日志归因，不参与任何安全判定。
 
-    `value` 是 `direct` 或 `relay`；`fallback_reason` 只在直连被出口拒绝、改走中继时
-    记下直连那一次的固定原因码。
+    `value` 只由 `download_subscription` 写成 `direct` / `relay`；留成 `None` 表示没有任何
+    实现回写过它（例如注入的替身），调用方据此打 `unknown` 而不是假装知道。
+    `fallback_reason` 只在直连失败、改走中继时记下直连那一次的固定原因码。
     """
 
-    value: str = "direct"
+    value: str | None = None
     fallback_reason: str | None = None
-
-
 @dataclass(frozen=True)
 class SubscriptionRelay:
     """Worker 中继：把某一次抓取的出口换成 Cloudflare 边缘，而不是扫描 runner。
@@ -191,10 +194,11 @@ async def download_subscription(
     relay: SubscriptionRelay | None = None,
     source: SubscriptionSource | None = None,
 ) -> bytes:
-    """抓订阅：直连优先，只有直连被出口拒绝（403）且配了中继时才改走 Worker 中继。
+    """抓订阅：直连优先，只有直连以「这个出口到不了订阅主机」的方式失败（403 或连接层失败）
+    且配了中继时，才改走 Worker 中继再抓一次。
 
     两种出口都有真实反例，所以策略不能写死成「一直走中继」或「一直直连」。回退只认
-    `EGRESS_REFUSAL_REASON`：DNS、重定向、超限、401/404 等其它失败照原样抛出，免得把
+    `EGRESS_FALLBACK_REASONS`：DNS、重定向、超限、401/404 等其它失败照原样抛出，免得把
     「订阅本身有问题」误判成「换个出口就好了」。实际用的是哪个出口写进 `source`，
     调用方据此打印 `subscription_source`。
     """
@@ -207,7 +211,7 @@ async def download_subscription(
             timeout_seconds=timeout_seconds,
         )
     except SubscriptionError as exc:
-        if relay is None or exc.reason != EGRESS_REFUSAL_REASON:
+        if relay is None or exc.reason not in EGRESS_FALLBACK_REASONS:
             raise
         recorder.value = "relay"
         recorder.fallback_reason = exc.reason
@@ -234,38 +238,47 @@ async def _download_direct(
         "Accept": "application/yaml,text/yaml,text/plain,*/*",
     }
 
-    async with httpx.AsyncClient(
-        timeout=timeout,
-        follow_redirects=False,
-        trust_env=False,
-    ) as client:
-        for _ in range(6):
-            await validate_public_url(current_url)
-            async with client.stream("GET", current_url, headers=headers) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            for _ in range(6):
+                await validate_public_url(current_url)
+                async with client.stream("GET", current_url, headers=headers) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise SubscriptionError(
+                                "订阅地址返回了无目标的重定向", reason="redirect_without_location"
+                            )
+                        current_url = urljoin(current_url, location)
+                        continue
+                    if response.status_code >= 400:
                         raise SubscriptionError(
-                            "订阅地址返回了无目标的重定向", reason="redirect_without_location"
+                            f"下载订阅失败：HTTP {response.status_code}",
+                            reason=f"http_status_{response.status_code}",
                         )
-                    current_url = urljoin(current_url, location)
-                    continue
-                if response.status_code >= 400:
-                    raise SubscriptionError(
-                        f"下载订阅失败：HTTP {response.status_code}",
-                        reason=f"http_status_{response.status_code}",
-                    )
 
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise SubscriptionError("订阅内容超过允许大小", reason="response_too_large")
-                    chunks.append(chunk)
-                return b"".join(chunks)
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise SubscriptionError(
+                                "订阅内容超过允许大小", reason="response_too_large"
+                            )
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+    except httpx.TimeoutException as exc:
+        # httpx 的超时异常是 TransportError 的子类，必须先于它捕获。
+        raise SubscriptionError("直连订阅超时", reason="direct_timeout") from exc
+    except httpx.TransportError as exc:
+        raise SubscriptionError("直连订阅失败", reason="direct_unreachable") from exc
 
     raise SubscriptionError("订阅地址重定向次数过多", reason="redirect_limit")
+
 
 
 async def _download_via_relay(
