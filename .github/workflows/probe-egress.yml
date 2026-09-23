@@ -32,9 +32,9 @@ jobs:
             else
               out=$(curl -sS -o /tmp/body.txt -D /tmp/head.txt -w '%{http_code} %{size_download} %{time_total}' -A "" "$TARGET_URL" || echo "curl_failed")
             fi
-            mitigated=$(grep -i '^cf-mitigated:' /tmp/head.txt | tr -d '\r' | awk '{print $2}')
-            server=$(grep -i '^server:' /tmp/head.txt | tr -d '\r' | awk '{print $2}')
-            acao=$(grep -i '^access-control-allow-origin:' /tmp/head.txt | tr -d '\r' | awk '{print $2}')
+            mitigated=$( { grep -i '^cf-mitigated:' /tmp/head.txt || true; } | tr -d '\r' | awk '{print $2}')
+            server=$( { grep -i '^server:' /tmp/head.txt || true; } | tr -d '\r' | awk '{print $2}')
+            acao=$( { grep -i '^access-control-allow-origin:' /tmp/head.txt || true; } | tr -d '\r' | awk '{print $2}')
             head1=$(head -c 60 /tmp/body.txt | tr -d '\r\n' | tr -c '[:print:]' '.')
             echo "profile=$ua result=[$out] cf_mitigated=${mitigated:-none} server=${server:-none} acao=${acao:-none} body_head=${head1}"
           done
