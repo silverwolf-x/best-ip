@@ -98,4 +98,36 @@ runner 直连这条更便宜的路已经实测能通，代价与收益不成比�
 
 ## Testing
 
-（真实证据待补：生产闭环运行 ID 与日志行）
+**判定顺序（离线，注入式替身）**：六个场景——直连成功时中继零次调用并记 `direct`；直连 403 → 中继成功（记
+`relay` + `fallback_reason=http_status_403`）；直连 403 且未配中继 → 原样抛 `http_status_403`；直连 404 →
+中继零次调用、原样抛 `http_status_404`；直连 403 且中继也 403 → 报中继那次的码；未配中继 + 直连成功 →
+`direct`。6/6 通过。
+
+**真实 403 真的会去调中继**：拿一个真的回 403 的公网地址（`https://httpbin.org/status/403`）配真实生产中继
+地址（故意用错 token）跑一遍 → `source=relay fallback=http_status_403 reason=relay_unauthorized`：直连那次
+拿到的是真实 HTTP 403，回退真的发出了请求，生产中继按契约以 401 拒绝并收敛成闭集码。
+
+**生产闭环 A（CLI 触发，复现原缺陷场景）**：用页面同款信封对 `xn--9kqs1lo79d.cc` 这条订阅 dispatch
+`scan.yml`，运行 `35926228537` completed/success：`subscription_source: direct`（修复前这里必然走中继并 403），
+11 秒扫完，产物 `best-ip-result-req-verify-1790201044-35926228537-1`（zip 82270 字节，`result.json` 1006192
+字节），`status.json` 为 `total: 22 / success: 22 / partial: 0 / failed: 0`，行里是真实出口 IP 与 CIDR
+（如 `18.178.247.88` / `18.178.247.0/24`）。对照同一条订阅在修复前的运行 `35924938863`：10 秒红在
+`subscription_fetch_reason: http_status_403`。
+
+**生产闭环 B（页面发起，走 Worker 那条路）**：用 `SITE_PASSWORD` 登录线上站点后，订阅框是 `type="text"`
+明文输入，粘进同一条订阅地址 → `POST /api/scans` → dispatch → 轮询 → 浏览器直连 blob 取产物 → 落表：进度行
+「扫描已完成 · 已用时 28秒」，统计行「22 个节点·22 完整·0 部分·0 失败·真实扫描快照生成于 2026-09-24 06:06」，
+toast「扫描完成：已显示刚扫出来的 22 个节点。」，表格 22 行、十列表头齐全，首行「🇬🇧英国•电信01 / vless /
+51.24.48.151 / United Kingdom / Amazon.com AS16509·Hosting / 机房 / 广播 / Coffee 89 / IPure 44 /
+AI0·社交4·流媒体23·游戏19·电商18·邮件59」。
+
+**部署面**：推送后 CI `35926211148` success → `Deploy Cloudflare Worker` `35926278617` success；
+`SITE_PASSWORD=… node scripts/verify_deploy.mjs --site …` → `7/7 项通过`，其中「线上内容与 HEAD 逐字节一致
+（18/18 个文件）」把改动后的 `index.html` 也覆盖在内。门禁：`uv run --no-dev ruff check .` 全过、
+`npm run check` 全过、`npm run verify-notes` 三线 ok（23 篇）。
+
+**留下的缺口**：本仓库没有测试套件，上面两组判定顺序证据都是一次性脚本，没有回归护栏；
+`subscription_source` / `subscription_fallback_reason` 只被生产日志与文档约束。另外这次没能造出「runner 出口
+被 403 的真实订阅主机」——旧订阅 `sub-1.smjcdh.top` 今天在 runner 出口已是 200（运行 `35926898998`，同样
+`subscription_source: direct`），所以中继回退在生产里只验证到「会发起请求、按契约收码」这一半；「中继带正确
+token 抓到订阅」最近一次生产证据是 2026-09-21，本次改动没有碰那条路径。
