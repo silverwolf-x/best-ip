@@ -30,11 +30,14 @@ export const COLUMNS = [
   { key: "rank", label: "#", width: "40px" },
   { key: "ident", label: "节点", width: "268px" },
   { key: "ip", label: "出口 IP", width: "168px" },
-  // 国家那列写过「国家 · 城市」，现在只写国家：真实数据里城市常与国家同名
-  // （Hong Kong Hong Kong），一列写两遍不增信息，116px 还被城市吃掉一半。
+  // 归属地列只写国家：真实数据里城市常与国家同名（Hong Kong Hong Kong），一列里写两遍
+  // 不增信息，116px 还被城市吃掉一半。表头写「国家和地区」而不是「国家」——这一列的值里
+  // 就有「香港」这类不是国家的地区；措辞的理由见 .agents/notes 里 2026-09-23 的表头笔记。
   // 96px 的来历：62 行真实+示例数据里最长的国家是 "United States"，含左右内边距实测
-  // 83.94px，留 12px 余量。城市仍在检索索引里（main.js），只是不占列宽。
-  { key: "geo", label: "国家", width: "96px" },
+  // 83.94px，留 12px 余量。表头「国家和地区」在 10.5px/800/0.07em 下含内边距实测 75.19px，
+  // 也装得下（th 是 nowrap，最小内容宽就是它，不会向表格算法多要宽度）。城市仍可搜
+  // （main.js 的检索索引），只是不占列宽。
+  { key: "geo", label: "国家和地区", width: "96px" },
   { key: "isp", label: "服务商 / ISP", width: "168px" },
   { key: "kind", label: "接入", width: "58px" },
   { key: "native", label: "原生性", width: "58px" },
