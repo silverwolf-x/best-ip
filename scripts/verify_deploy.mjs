@@ -33,29 +33,37 @@ function stripJsonComments(text) {
   return text.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/^[ \t]*\/\/.*$/gmu, "");
 }
 
-/** assets.directory → 仓库相对路径（`./frontend-next/` → `frontend-next`）。 */
+/** `./frontend-next/` → `frontend-next`；与 deploy_guard.mjs 的归一化保持一致。 */
+function normalizeAssetDir(value) {
+  return value.trim().replace(/^\.\//u, "").replace(/\/+$/u, "");
+}
+
+/** assets.directory → 仓库相对路径。 */
 function assetDirectoryOfWrangler(configPath = "wrangler.jsonc") {
   const config = JSON.parse(stripJsonComments(readFileSync(configPath, "utf8")));
   const directory = config?.assets?.directory;
   if (typeof directory !== "string" || !directory.trim()) {
     throw new Error(`${configPath} 里没有 assets.directory，无法确定该拿哪个目录当比对基准`);
   }
-  return directory.trim().replace(/^\.\//u, "").replace(/\/+$/u, "");
+  return normalizeAssetDir(directory);
 }
 
 const SITE = argOf("site", "https://best-ip.silverwolfx.workers.dev").replace(/\/+$/u, "");
 const COMMIT = argOf("commit", "HEAD");
 const PASSWORD = argOf("password", process.env.SITE_PASSWORD || "");
-const ASSETS_DIR = argOf("assets", assetDirectoryOfWrangler());
+// --assets 也要归一化：`--assets ./frontend-next` 不归一化时，后面切前缀会把
+// `frontend-next/index.html` 切成 `dex.html`，取不到 blob 而崩在 git show 上。
+const ASSETS_DIR = normalizeAssetDir(argOf("assets", assetDirectoryOfWrangler()));
 const UA = "best-ip-deploy-verify";
 const ATTEMPTS = 3;
 const TIMEOUT_MS = 20_000;
 const BLOB_CSP = "connect-src 'self' https://*.blob.core.windows.net";
 const SESSION_COOKIE = "__Host-best-ip-session";
 // 新资产在边缘生效有个窗口（见 fetchTrackedAsset 的注释）：内容不等于目标 blob 时继续重取。
-// 预算在整个比对过程里共用，所以真漂移最多拖住这么久，而不是每个文件各等一轮。
+// 预算是每段比对各自的窗口（armGrace），所以真漂移最多拖住 2 × 预算，而不是每个文件各等一轮。
+// 注意预算只约束宽限等待，不含 request() 自身对 5xx/网络的 3 次重试。
 const ASSET_GRACE_WAIT_MS = 5_000;
-const ASSET_GRACE_BUDGET_MS = 90_000;
+const ASSET_GRACE_BUDGET_MS = 180_000;
 
 const failures = [];
 const results = [];
@@ -134,9 +142,14 @@ function assetProbePath() {
  * 「内容是否已等于目标 blob」，不是「是不是 404」。
  * 等不到也不放弃比对：真正的漂移（发错版本、漏发文件）正是后面要判红的东西。
  *
- * 预算（ASSET_GRACE_BUDGET_MS）在整个比对过程里共用一份，所以真漂移最多拖住这么久。
+ * 预算是每段比对各自的窗口（探针一段、逐文件一段），所以真漂移最多拖住 2 × 预算。
  */
 let graceDeadline = 0;
+
+/** 为下一段比对开一段宽限窗口。 */
+function armGrace() {
+  graceDeadline = Date.now() + ASSET_GRACE_BUDGET_MS;
+}
 
 /** 还有宽限预算就等一轮再重取；返回 false 表示预算用尽，按最后一次的响应判定。 */
 async function waitForGrace(served, why) {
@@ -173,10 +186,28 @@ async function fetchTrackedAsset(path, session, expected) {
 async function waitForAssets(session) {
   const probePath = assetProbePath();
   const expected = blobAt(`${ASSETS_DIR}/${probePath}`);
-  graceDeadline = Date.now() + ASSET_GRACE_BUDGET_MS;
+  armGrace();
   const attempt = await fetchTrackedAsset(probePath, session, expected);
   const settled = attempt.status === 200 && Boolean(attempt.live) && attempt.live.equals(expected);
   return { probePath, status: attempt.status, rounds: attempt.rounds, settled };
+}
+
+/**
+ * 收尾：汇总 + 设置退出码。
+ *
+ * 必须由一个函数承担，而且 main() 的每条提前退出路径都要走它：`process.exitCode = 1` 只在这里设置，
+ * 之前写成 `return` 的那些分支（CSRF 缺失、登录失败）会把已经记进 failures 的 FAIL 连同退出码一起丢掉——
+ * 门禁在工作流里以 exit 0 收场，而「线上内容与 commit 逐字节一致」这一项根本没跑，正是 worker.yml
+ * 想避免的「绿灯但没验」。SITE_PASSWORD 轮换或填错时就会走到那条路。
+ */
+function finish() {
+  const passed = results.filter((entry) => entry.ok).length;
+  console.log(`\n结果：${passed}/${results.length} 项通过`);
+  if (failures.length) {
+    console.log("失败项：");
+    for (const failure of failures) console.log(`  - ${failure}`);
+    process.exitCode = 1;
+  }
 }
 
 async function main() {
@@ -212,7 +243,7 @@ async function main() {
     const csrf = /name="csrf" value="([A-Za-z0-9_-]{32})"/u.exec(loginHtml)?.[1] || "";
     const csrfCookie = cookiesOf(loginPage).find((entry) => entry.includes("login-csrf")) || "";
     record(Boolean(csrf && csrfCookie), "登录页下发 CSRF 令牌");
-    if (!csrf || !csrfCookie) return;
+    if (!csrf || !csrfCookie) return finish();
 
     const loginResponse = await request("/login", {
       method: "POST",
@@ -225,7 +256,7 @@ async function main() {
     });
     const session = cookiesOf(loginResponse).find((entry) => entry.startsWith(`${SESSION_COOKIE}=`)) || "";
     record(loginResponse.status === 303 && Boolean(session), "登录换取会话", `HTTP ${loginResponse.status}`);
-    if (!session) return;
+    if (!session) return finish();
 
     const grace = await waitForAssets(session);
     if (!grace.settled) {
@@ -234,6 +265,9 @@ async function main() {
       console.log(`      /${grace.probePath} 在第 ${grace.rounds} 次取到时到位。`);
     }
 
+    // 逐文件比对开自己的一段宽限窗口：探针可能已经把上一段预算耗在某一个边缘的传播上，
+    // 而这里每个文件面对的是同一个边缘的同一批资产，不该因为探针等得久而失去重取机会。
+    armGrace();
     // /site-config.js 不在这份清单里：它由 worker/router.js 现算（注入 mode 与公钥指纹），
     // 不是仓库里的文件，没有可比对的 blob。
     const files = trackedAssetFiles();
@@ -253,13 +287,7 @@ async function main() {
     if (mismatches.length > 5) console.log(`     …另有 ${mismatches.length - 5} 处不一致`);
   }
 
-  const passed = results.filter((entry) => entry.ok).length;
-  console.log(`\n结果：${passed}/${results.length} 项通过`);
-  if (failures.length) {
-    console.log("失败项：");
-    for (const failure of failures) console.log(`  - ${failure}`);
-    process.exitCode = 1;
-  }
+  finish();
 }
 
 await main();

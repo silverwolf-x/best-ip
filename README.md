@@ -64,7 +64,7 @@ npm run dev:no-reload
 1. **自动**：push 到 `main` → CI（Ruff、`npm run check` 语法检查、`wrangler deploy --dry-run`）成功后，`Deploy Cloudflare Worker` 工作流通过 `workflow_run` 自动发布，且发布的就是 CI 验过的那一个 commit。
 2. **手动重发一次**：`gh workflow run worker.yml --ref main`，或在 GitHub 页面上派发该工作流（`workflow_dispatch`）。
 
-为什么本地不许发布：本机检出可能是 CRLF（`core.autocrlf=true`，而仓库 blob 是 LF），也可能带着未提交的改动，`wrangler deploy` 会把这些字节原样发到线上，而它只报「上传成功」，不会说发上去的是不是仓库里的内容——历史上线上就这样跑过与任何 commit 都不一致的资产（`app/api.js` 线上 12327B vs blob 12089B）。Actions 检出固定是 LF，发布的就是那个 commit，「发布内容等于某个 commit」这条契约只有放在流水线上才守得住。门闩在 Actions 里还会再断言一次 assets 目录下的文本资产没有 CR 字节，把这类不一致挡在发布之前。
+为什么本地不许发布：本机检出可能是 CRLF（`core.autocrlf=true`，而仓库 blob 是 LF），也可能带着未提交的改动，`wrangler deploy` 会把这些字节原样发到线上，而它只报「上传成功」，不会说发上去的是不是仓库里的内容——历史上线上就这样跑过与任何 commit 都不一致的资产（`app/api.js` 线上 12327B vs blob 12089B，多出的 238 字节全是 CR）。所以守卫在发布前还要断言三件事：分支是 `main`（`--ref` 派发到别的分支不能上线）、`HEAD` 等于本次运行声明的 commit、以及 assets 目录下每个文件都被 git 跟踪且工作区字节逐字节等于该 commit 的 blob。这三条合起来，才把「发布内容等于某个 commit」从约定变成机械判据——发布后同一工作流还会对线上再做一遍逐字节比对。
 
 本地能做的只有只读检查：
 

@@ -21,6 +21,8 @@ jobs:
   deploy:
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
+    # 卡住的发布不能挂 6 小时：正常一次几十秒，超时上限给足。
+    timeout-minutes: 20
     steps:
       # 发布的就是 CI 验过的那一个 commit，而不是「触发时 main 上最新的那个」：
       # 连着推两次时，第二次会在 concurrency 组里取消第一次，最终上线的仍是最后那个通过的 commit。
@@ -37,8 +39,9 @@ jobs:
         run: npm ci --prefer-offline --no-audit
       - name: Verify Worker syntax
         run: npm run check
-      # 只走这里发布：npm run deploy 的第一步是 scripts/deploy_guard.mjs，
-      # 非 Actions 环境一律拒绝（exit 2），所以这条命令在本地跑不通。
+      # 只走这里发布：npm run deploy 的第一步是 scripts/deploy_guard.mjs，非 Actions 环境一律拒绝（exit 2），
+      # 所以这条命令在本地跑不通。守卫在发布前还会断言：分支是 main、HEAD == GITHUB_SHA、
+      # 且 assets 目录下每个文件的工作区字节逐字节等于该 commit 的 blob。
       - name: Deploy Worker and static assets
         run: npm run deploy
         env:
