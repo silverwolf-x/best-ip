@@ -37,6 +37,8 @@ jobs:
         run: npm ci --prefer-offline --no-audit
       - name: Verify Worker syntax
         run: npm run check
+      # 只走这里发布：npm run deploy 的第一步是 scripts/deploy_guard.mjs，
+      # 非 Actions 环境一律拒绝（exit 2），所以这条命令在本地跑不通。
       - name: Deploy Worker and static assets
         run: npm run deploy
         env:

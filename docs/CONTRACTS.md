@@ -20,8 +20,10 @@ materialize the same records. The documentation IP is deliberately non-productio
   The workflow decrypts with `scripts/decrypt_subscription.mjs`, then runs
   `scripts/run_scan.py` directly against the shared scan core. No HTTP server or
   acceptance script runs in production. See [CLI.md](CLI.md) for arguments and exits.
-- `npm run dry-run` checks bundling; `npm run deploy` publishes. Neither unit
-  tests nor dry-run prove real Mihomo or Actions execution.
+- `npm run dry-run` checks bundling read-only. `npm run deploy` is the pipeline's
+  publish step and refuses to run outside GitHub Actions (`scripts/deploy_guard.mjs`
+  exits 2 locally); releases only come from `.github/workflows/worker.yml`.
+  Neither unit tests nor dry-run prove real Mihomo or Actions execution.
 
 ## Local HTTP
 

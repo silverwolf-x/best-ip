@@ -9,7 +9,7 @@
     "verify-notes": "node scripts/verify-notes.mjs",
     "verify:deploy": "node scripts/verify_deploy.mjs",
     "test": "npm run check",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/deploy_guard.mjs && wrangler deploy",
     "dry-run": "wrangler deploy --dry-run"
   },
   "devDependencies": {

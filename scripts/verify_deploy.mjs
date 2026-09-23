@@ -52,9 +52,10 @@ const ATTEMPTS = 3;
 const TIMEOUT_MS = 20_000;
 const BLOB_CSP = "connect-src 'self' https://*.blob.core.windows.net";
 const SESSION_COOKIE = "__Host-best-ip-session";
-// 新资产在边缘生效有个窗口（见 waitForAssets 的注释）：探到生效为止，最多 6 轮 × 5 秒。
-const ASSET_GRACE_ROUNDS = 6;
+// 新资产在边缘生效有个窗口（见 fetchTrackedAsset 的注释）：内容不等于目标 blob 时继续重取。
+// 预算在整个比对过程里共用，所以真漂移最多拖住这么久，而不是每个文件各等一轮。
 const ASSET_GRACE_WAIT_MS = 5_000;
+const ASSET_GRACE_BUDGET_MS = 90_000;
 
 const failures = [];
 const results = [];
@@ -123,25 +124,59 @@ function assetProbePath() {
 }
 
 /**
- * 等线上资产真的生效，再进逐字节比对。Cloudflare 把新版本切到每个边缘有个窗口：
- * 2026-09-22 那次发布实测——版本创建后约 2 秒去看，嵌套目录下的文件全是 404；3 分钟后再看同一个
- * URL 是 200 且字节正确（`/app/api.js` 12089 B、`/app/main.js` 20001 B）。那不是漂移，但会把发布
- * 判红。所以这里用目录里第一个非 index.html 的文件探一次，404 就等 5 秒重探，最多 6 轮。
+ * 取线上资产时等它「到位」：HTTP 200 且字节等于该 commit 的 blob。
+ *
+ * Cloudflare 把新版本切到每个边缘有个窗口，而窗口不只表现为 404：2026-09-22 那次发布实测——
+ * 版本创建后约 2 秒去看，嵌套目录下的文件全是 404；3 分钟后再看同一个 URL 是 200 且字节正确
+ * （`/app/api.js` 12089 B、`/app/main.js` 20001 B）。2026-09-24 22:29:52→22:29:55 那次发布又撞上另一种
+ * 中间态：探针文件没走 404 分支（走了就至少等 5 秒，而这一步 3 秒就结束了），逐字节比对却当场判红；
+ * 三分钟后原样重跑同一个 run 是 18/18 全绿。两种都不是漂移，但都会把发布判红。所以宽限的判据是
+ * 「内容是否已等于目标 blob」，不是「是不是 404」。
  * 等不到也不放弃比对：真正的漂移（发错版本、漏发文件）正是后面要判红的东西。
+ *
+ * 预算（ASSET_GRACE_BUDGET_MS）在整个比对过程里共用一份，所以真漂移最多拖住这么久。
  */
-async function waitForAssets(session) {
-  const probePath = assetProbePath();
-  let status = 0;
-  for (let round = 1; round <= ASSET_GRACE_ROUNDS; round += 1) {
-    const response = await request(`/${probePath}`, { headers: { Cookie: session } });
-    status = response.status;
-    if (status !== 404) return { probePath, round, status };
-    if (round < ASSET_GRACE_ROUNDS) {
-      console.log(`      /${probePath} 还是 404（第 ${round} 轮）：新资产在边缘生效有个窗口，等 ${ASSET_GRACE_WAIT_MS / 1000} 秒再探。`);
-      await sleep(ASSET_GRACE_WAIT_MS);
+let graceDeadline = 0;
+
+/** 还有宽限预算就等一轮再重取；返回 false 表示预算用尽，按最后一次的响应判定。 */
+async function waitForGrace(served, why) {
+  const leftMs = graceDeadline - Date.now();
+  if (leftMs <= 0) return false;
+  const waitMs = Math.min(ASSET_GRACE_WAIT_MS, leftMs);
+  console.log(
+    `      ${served} ${why}：新资产在边缘生效有个窗口，等 ${Math.round(waitMs / 1000)} 秒再取一次（宽限预算剩 ${Math.round(leftMs / 1000)} 秒）。`,
+  );
+  await sleep(waitMs);
+  return true;
+}
+
+/** 取一个线上资产并与预期 blob 比对，未到位时在宽限预算内重取。 */
+async function fetchTrackedAsset(path, session, expected) {
+  const served = path === "index.html" ? "/" : `/${path}`; // 首页只挂在根路径上
+  let rounds = 0;
+  for (;;) {
+    rounds += 1;
+    const response = await request(served, { headers: { Cookie: session } });
+    if (response.status !== 200) {
+      if (await waitForGrace(served, `返回 HTTP ${response.status}`)) continue;
+      return { served, status: response.status, live: null, rounds };
+    }
+    const live = Buffer.from(await response.arrayBuffer());
+    if (live.equals(expected)) return { served, status: 200, live, rounds };
+    if (!(await waitForGrace(served, `仍是 ${live.length}B（目标 ${expected.length}B）`))) {
+      return { served, status: 200, live, rounds };
     }
   }
-  return { probePath, round: ASSET_GRACE_ROUNDS, status };
+}
+
+/** 先拿目录里一个真实文件探一次，看这个边缘上的新资产有没有到位（到位或预算用尽为止）。 */
+async function waitForAssets(session) {
+  const probePath = assetProbePath();
+  const expected = blobAt(`${ASSETS_DIR}/${probePath}`);
+  graceDeadline = Date.now() + ASSET_GRACE_BUDGET_MS;
+  const attempt = await fetchTrackedAsset(probePath, session, expected);
+  const settled = attempt.status === 200 && Boolean(attempt.live) && attempt.live.equals(expected);
+  return { probePath, status: attempt.status, rounds: attempt.rounds, settled };
 }
 
 async function main() {
@@ -193,10 +228,10 @@ async function main() {
     if (!session) return;
 
     const grace = await waitForAssets(session);
-    if (grace.status === 404) {
-      console.log(`      /${grace.probePath} 等满 ${ASSET_GRACE_ROUNDS} 轮仍是 404：按真实漂移处理。`);
-    } else if (grace.round > 1) {
-      console.log(`      /${grace.probePath} 在第 ${grace.round} 轮生效（HTTP ${grace.status}）。`);
+    if (!grace.settled) {
+      console.log(`      /${grace.probePath} 在宽限预算内没有到位（取了 ${grace.rounds} 次，最后一次 HTTP ${grace.status}）：按真实漂移处理。`);
+    } else if (grace.rounds > 1) {
+      console.log(`      /${grace.probePath} 在第 ${grace.rounds} 次取到时到位。`);
     }
 
     // /site-config.js 不在这份清单里：它由 worker/router.js 现算（注入 mode 与公钥指纹），
@@ -204,16 +239,14 @@ async function main() {
     const files = trackedAssetFiles();
     const mismatches = [];
     for (const path of files) {
-      const served = path === "index.html" ? "/" : `/${path}`; // 首页只挂在根路径上
-      const response = await request(served, { headers: { Cookie: session } });
-      if (response.status !== 200) {
-        mismatches.push(`${path} -> HTTP ${response.status}`);
+      const expected = blobAt(`${ASSETS_DIR}/${path}`);
+      const got = await fetchTrackedAsset(path, session, expected);
+      if (got.status !== 200) {
+        mismatches.push(`${path} -> HTTP ${got.status}`);
         continue;
       }
-      const live = Buffer.from(await response.arrayBuffer());
-      const expected = blobAt(`${ASSETS_DIR}/${path}`);
-      if (!live.equals(expected)) {
-        mismatches.push(`${path} -> ${live.length}B sha=${createHash("sha256").update(live).digest("hex").slice(0, 12)} ≠ ${expected.length}B sha=${createHash("sha256").update(expected).digest("hex").slice(0, 12)}`);
+      if (!got.live.equals(expected)) {
+        mismatches.push(`${path} -> ${got.live.length}B sha=${createHash("sha256").update(got.live).digest("hex").slice(0, 12)} ≠ ${expected.length}B sha=${createHash("sha256").update(expected).digest("hex").slice(0, 12)}`);
       }
     }
     record(mismatches.length === 0, `线上内容与 ${COMMIT} 逐字节一致`, mismatches.length === 0 ? `${files.length}/${files.length} 个文件` : mismatches.slice(0, 5).join("; "));
