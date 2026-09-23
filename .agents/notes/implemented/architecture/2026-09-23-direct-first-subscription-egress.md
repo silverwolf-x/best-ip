@@ -115,7 +115,9 @@ runner 直连这条更便宜的路已经实测能通，代价与收益不成比�
 `subscription_fetch_reason: http_status_403`。
 
 **生产闭环 B（页面发起，走 Worker 那条路）**：用 `SITE_PASSWORD` 登录线上站点后，订阅框是 `type="text"`
-明文输入，粘进同一条订阅地址 → `POST /api/scans` → dispatch → 轮询 → 浏览器直连 blob 取产物 → 落表：进度行
+明文输入（实测 `document.getElementById('subscriptionUrl').type === "text"`），粘进同一条订阅地址 →
+`POST /api/scans`（run `35926441941`，日志里同样 `subscription_source: direct`）→ dispatch → 轮询 → 浏览器
+直连 blob 取产物 → 落表：进度行
 「扫描已完成 · 已用时 28秒」，统计行「22 个节点·22 完整·0 部分·0 失败·真实扫描快照生成于 2026-09-24 06:06」，
 toast「扫描完成：已显示刚扫出来的 22 个节点。」，表格 22 行、十列表头齐全，首行「🇬🇧英国•电信01 / vless /
 51.24.48.151 / United Kingdom / Amazon.com AS16509·Hosting / 机房 / 广播 / Coffee 89 / IPure 44 /
