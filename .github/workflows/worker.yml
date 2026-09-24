@@ -37,7 +37,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit
-      - name: Verify Worker syntax
+      # 与 CI 同一条命令：发布前这个 commit 也已经把前端契约与 mhtml 往返跑过一遍
+      # （发布的是 CI 验过的那个 commit，见上面的 checkout ref）。
+      - name: Check JavaScript syntax, frontend contracts and mhtml roundtrip
         run: npm run check
       # 只走这里发布：npm run deploy 的第一步是 scripts/deploy_guard.mjs，非 Actions 环境一律拒绝（exit 2），
       # 所以这条命令在本地跑不通。守卫在发布前还会断言：分支是 main、HEAD == GITHUB_SHA、

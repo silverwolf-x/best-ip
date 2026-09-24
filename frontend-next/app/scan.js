@@ -25,11 +25,16 @@
 
 import { encryptSubscriptionUrl, requestId } from "./scan-crypto.js";
 import { readArtifactFrom, artifactUrlOf } from "./gateway.js";
+import { failure, gatewayStatusText } from "./failure.js";
+import { fetchWithTimeout, isTimeoutError, timeoutPair } from "./net.js";
 
 const SCANS_PATH = "/api/scans";
 const TOKEN_HEADER = "X-Best-IP-Scan-Token";
 const START_TIMEOUT_MS = 30_000;
 const POLL_TIMEOUT_MS = 30_000;
+// 取加密公钥打的是本站同源的一份 ~1KB PEM，与别的请求同量级；它比别处更该有上限——挂住时
+// 页面停在「正在加密订阅地址并交给扫描网关…」，连一个可以点的按钮都没有。
+const PUBLIC_KEY_TIMEOUT_MS = 15_000;
 const QUEUE_DEADLINE_MS = 13 * 60_000;
 const RUN_DEADLINE_MS = 31 * 60_000;
 const CANCEL_DEADLINE_MS = 2 * 60_000;
@@ -48,14 +53,8 @@ const RUN_LABEL = {
   failed: "扫描执行失败",
 };
 
-function failure(code, message, { retryable, title } = {}) {
-  const error = Object.assign(new Error(message), { code });
-  // 只有明确的瞬时故障才留重试余地：其余（形状不对、任务对不上、超过等待上限）重试也只是
-  // 把同一句真话推迟几十秒再说一遍。
-  error.retryable = retryable === true;
-  if (title) error.title = title;
-  return error;
-}
+// 失败对象与状态码文案来自 app/failure.js：原先本文件的 failure() 与 gateway.js 的 error()
+// 同形（都挂 code、可选 title），401/403/503 三句也各写一份。见该文件头部。
 
 /**
  * 提交前的快检查，与 frontend/src/transport/http.js 的 validateSubscriptionUrl 同文案。
@@ -75,10 +74,14 @@ export function validateSubscriptionUrl(value) {
   return url.toString();
 }
 
-function timeoutSignal(ms) {
-  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-    ? AbortSignal.timeout(ms)
-    : undefined;
+/**
+ * 给 scan-crypto.js 注入的 fetchImpl 套上超时。
+ * 那条取公钥的请求（importPublicKey 里的 fetchImpl(url, { cache: "no-store" })）原本没有超时，
+ * 挂住的话页面会永久停在「正在加密订阅地址并交给扫描网关…」。scan-crypto.js 不能改（它与
+ * frontend/src/crypto.js 是人工同步的副本），但 fetchImpl 是注入的，所以在注入点补上。
+ */
+function withPublicKeyTimeout(fetchImpl) {
+  return (input, init) => fetchWithTimeout(fetchImpl, input, init, PUBLIC_KEY_TIMEOUT_MS);
 }
 
 /**
@@ -91,6 +94,10 @@ async function requestJson(fetchImpl, path, { method = "GET", body = null, token
   // 只有发了扫描请求才带这张凭证；它是自定义头，只在同源请求里出现。
   if (token) headers[TOKEN_HEADER] = token;
 
+  // 超时信号走 app/net.js：在没有原生超时能力的环境里它退化成 AbortController + setTimeout，
+  // 而不是像原先那样返回 undefined（那等于超时静默消失，promise 可以永不 settle）。
+  // 这里不用 fetchWithTimeout 是因为 init 要由本函数自己拼，release() 也只能在这里收口。
+  const { signal, release } = timeoutPair(timeout);
   let response;
   try {
     response = await fetchImpl(path, {
@@ -100,13 +107,18 @@ async function requestJson(fetchImpl, path, { method = "GET", body = null, token
       cache: "no-store",
       headers,
       body: body === null ? undefined : JSON.stringify(body),
-      signal: timeoutSignal(timeout),
+      // signal 可能是 undefined（环境里连 AbortController 都没有）：那就是「没有取消能力」，
+      // 不会挤掉上面任何一项初始化参数。
+      signal,
     });
   } catch (cause) {
-    if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
+    if (isTimeoutError(cause)) {
       throw failure("gateway_timeout", `本站的扫描网关 ${Math.round(timeout / 1000)} 秒内没有响应`, { retryable: true });
     }
     throw failure("gateway_unreachable", `连不上本站的扫描网关（${cause?.name || "网络错误"}）`, { retryable: true });
+  } finally {
+    // 必须在 finally 里 release：退化分支用的是 setTimeout，不清掉会拖着页面（见 app/net.js）。
+    release();
   }
 
   let payload = null;
@@ -131,15 +143,19 @@ async function requestJson(fetchImpl, path, { method = "GET", body = null, token
   return payload;
 }
 
+// 401/403/503 三句与 gateway.js 共用 app/failure.js 的表（原先两边各抄一份，只差一两个词）；
+// 这里只留这张扫描路独有的那几条状态码，兜底句也保持本文件原来的说法。
 function httpMessage(status) {
-  if (status === 401) return "登录已过期：请重新用访问密码登录本站后再发起扫描。";
-  if (status === 403) return "本站拒绝了这次请求（403）：会话与请求来源不匹配。";
   if (status === 404) return "本站不认识这个扫描任务（404）。";
   if (status === 409) return "这次扫描的状态与请求对不上（409）。";
   if (status === 413) return "加密后的订阅地址超过本站上限（413）。";
   if (status === 429) return "本站正在限流（429）：稍等一会儿再发起扫描。";
-  if (status === 503) return "本站的扫描网关尚未配置完成（503）：缺少 GitHub Actions 相关的密钥。";
-  return `扫描网关返回 HTTP ${status}`;
+  return gatewayStatusText(status, {
+    sessionTail: "后再发起扫描",
+    action: "请求",
+    detail: "：缺少 GitHub Actions 相关的密钥",
+    fallback: (value) => `扫描网关返回 HTTP ${value}`,
+  });
 }
 
 function scanQuery(session) {
@@ -266,7 +282,21 @@ export async function startScan(subscriptionUrl, config, { fetchImpl = globalThi
   const id = requestId();
   // 公钥指纹在这一步被核对（importPublicKey 拿 PEM 的 DER SHA-256 比 config.keyId）：
   // 与 Worker 的 SCAN_KEY_ID 不是同一把时当场失败，不发出一个必然被 400 拒掉的请求。
-  const envelope = await encryptSubscriptionUrl(subscriptionUrl, id, config, { fetchImpl, baseURI });
+  // 公钥指纹在这一步被核对（importPublicKey 拿 PEM 的 DER SHA-256 比 config.keyId）：
+  // 与 Worker 的 SCAN_KEY_ID 不是同一把时当场失败，不发出一个必然被 400 拒掉的请求。
+  // 只有这一步需要单独收口：scan-crypto.js 自己只会为「没配 / 格式无效 / 指纹不符」给文案，
+  // 它那条取公钥的请求没有超时，超时错误得在这里翻译成一句能看懂的话。
+  let envelope;
+  try {
+    envelope = await encryptSubscriptionUrl(subscriptionUrl, id, config, {
+      fetchImpl: withPublicKeyTimeout(fetchImpl),
+      baseURI,
+    });
+  } catch (cause) {
+    if (!isTimeoutError(cause)) throw cause;
+    throw failure("public_key_timeout",
+      `GitHub Actions 加密公钥 ${PUBLIC_KEY_TIMEOUT_MS / 1000} 秒内没有返回`, { retryable: true });
+  }
   const payload = await requestJson(fetchImpl, SCANS_PATH, {
     method: "POST",
     body: { request_id: id, key_id: String(config.keyId), envelope },

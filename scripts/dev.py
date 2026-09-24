@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -22,8 +23,63 @@ MIHOMO_TAG = "v1.19.30"
 LOCAL_HOST = "127.0.0.1"
 DEFAULT_API_PORT = 8000
 DEFAULT_FRONTEND_PORT = 5173
+# 本地静态根 = 线上部署的那份前端（wrangler.jsonc 的 assets.directory 指向 frontend-next）。
+# 旧版 frontend/ 已不部署（死代码，保留不动）：本地再指着它跑，等于「本地看到的不是线上那份」，
+# 而且本地一切正常也证明不了线上那份源码能被实时跑起来。
+FRONTEND_DIR_NAME = "frontend-next"
+# CSP 的唯一真源是 Worker（每个 text/html 响应都挂这一串），本地不抄第二份。
+WORKER_RESPONSES = ROOT_DIR / "worker" / "responses.js"
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+
+def _worker_content_security_policy() -> str:
+    """从 worker/responses.js 里读出生产 CSP 字面量（唯一真源，别在本地抄第二份）。
+
+    本地 dev 与线上必须发**同一串** CSP：抄出来的第二份真值迟早漂移，而漂移的表现恰好就是
+    「本地看着正常、线上样式被静默丢弃」——这条分叉本身就是要消掉的东西。读不到时直接报错
+    退出，不猜也不降级：宁可 dev 起不来，也不要给一个「看起来对齐、其实没对齐」的本地环境。
+
+    实现只做「取 `"Content-Security-Policy"` 之后第一个以 default-src 开头的字符串字面量」，
+    不解析 JS：worker/responses.js:34-41 就是这么写的（中间只夹着一条注释）。
+    """
+    source = WORKER_RESPONSES.read_text(encoding="utf-8")
+    anchor = '"Content-Security-Policy"'
+    start = source.find(anchor)
+    if start < 0:
+        raise SystemExit(
+            f"{WORKER_RESPONSES} 里找不到 Content-Security-Policy，无法与线上对齐；"
+            "改过这个响应头的话请同步 scripts/dev.py。"
+        )
+    literal_window = source[start + len(anchor):start + len(anchor) + 600]
+    match = re.search(r'"(default-src[^"]*)"', literal_window)
+    if match is None:
+        raise SystemExit(f"{WORKER_RESPONSES} 里找不到以 default-src 开头的 CSP 字面量")
+    csp = match.group(1)
+    if "connect-src" not in csp or "frame-ancestors 'none'" not in csp:
+        raise SystemExit(f"从 {WORKER_RESPONSES} 读到的 CSP 不像完整那串：{csp}")
+    return csp
+
+
+def _dev_content_security_policy(api_url: str) -> str:
+    """生产 CSP + 本地 dev 唯一必须放开的一处：loopback 上的后端 API origin。
+
+    页面在 127.0.0.1:5173，API 在 127.0.0.1:8000——端口不同就是**另一个 origin**，既不在
+    `'self'` 里，也不在生产那串 connect-src 里。不放行它，页面上所有请求都会被 CSP 拦掉，
+    dev 就变成「静默坏掉」。放开的是 site-config.js 里那个真实 apiBase（app/api.js 的
+    resolveTarget 只认 127.0.0.1 / localhost / ::1 + 显式端口），不是通配符。
+    其余指令（script-src / style-src / img-src / form-action / frame-ancestors）与线上逐字相同。
+    """
+    directives = []
+    for directive in _worker_content_security_policy().split(";"):
+        directive = directive.strip()
+        if not directive:
+            continue
+        name, _, value = directive.partition(" ")
+        if name == "connect-src":
+            value = f"{value} {api_url}".strip()
+        directives.append(f"{name} {value}".strip())
+    return "; ".join(directives)
 
 
 def _default_mihomo_path() -> Path:
@@ -118,6 +174,7 @@ def _select_port(
 
 
 def _create_frontend_server(api_url: str, port: int) -> ThreadingHTTPServer:
+    content_security_policy = _dev_content_security_policy(api_url)
     site_config = (
         "window.BEST_IP_CONFIG = Object.freeze("
         f"{json.dumps({'mode': 'local', 'apiBase': api_url}, ensure_ascii=False)}"
@@ -125,6 +182,22 @@ def _create_frontend_server(api_url: str, port: int) -> ThreadingHTTPServer:
     ).encode()
 
     class FrontendHandler(SimpleHTTPRequestHandler):
+        # 只给「本次响应确实是 text/html」的响应挂 CSP，判断口径与 Worker 一致
+        # （worker/responses.js:34-41 是唯一真源）：静态服务器自己不做内容协商，
+        # 靠 SimpleHTTPRequestHandler 发出的 Content-Type 决定，别的一律不加头。
+        _is_html = False
+
+        def send_header(self, keyword: str, value: str) -> None:
+            if keyword.lower() == "content-type" and "text/html" in value.lower():
+                self._is_html = True
+            super().send_header(keyword, value)
+
+        def end_headers(self) -> None:
+            if self._is_html:
+                self.send_header("Content-Security-Policy", content_security_policy)
+                self._is_html = False
+            super().end_headers()
+
         def do_GET(self) -> None:
             if urlsplit(self.path).path == "/site-config.js":
                 self.send_response(200)
@@ -139,7 +212,7 @@ def _create_frontend_server(api_url: str, port: int) -> ThreadingHTTPServer:
         def log_message(self, _format: str, *_args: object) -> None:
             return
 
-    handler = partial(FrontendHandler, directory=str(ROOT_DIR / "frontend"))
+    handler = partial(FrontendHandler, directory=str(ROOT_DIR / FRONTEND_DIR_NAME))
     return ThreadingHTTPServer((LOCAL_HOST, port), handler)
 
 

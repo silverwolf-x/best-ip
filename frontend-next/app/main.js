@@ -24,27 +24,83 @@ import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABE
 import { comparableScore } from "./score-color.js";
 import { exportSnapshot } from "./snapshot.js";
 
+/* ------------------------------------------------------------- 元素解析 --- */
+// 页面是静态源码直上线的，没有构建期检查：id 被改名或删掉只会在运行时报错，而模块顶层拿一个
+// null 去 addEventListener 就是 TypeError、整页白屏——那是最难查的一种失败。所以「必需」的 id
+// 集中列在这里，缺了哪个都记下来，启动前统一处理（见 reportMissingElements）。
+const REQUIRED_ELEMENT_IDS = {
+  query: "query",
+  status: "statusFilter",
+  sort: "sortSelect",
+  grid: "grid",
+  gridColumns: "gridColumns",
+  gridHead: "gridHead",
+  rows: "rows",
+  empty: "emptyState",
+  count: "resultCount",
+  runStats: "runStats",
+};
+
+// toast 与两个导出按钮不在必需表里：它们只是反馈层与可选功能，缺了最多是少一条提示、
+// 少一个按钮（判空见 toast 与 syncExportAvailability），该显示的东西照旧显示。
 const elements = {
-  query: document.getElementById("query"),
-  status: document.getElementById("statusFilter"),
-  sort: document.getElementById("sortSelect"),
-  grid: document.getElementById("grid"),
-  gridColumns: document.getElementById("gridColumns"),
-  gridHead: document.getElementById("gridHead"),
-  rows: document.getElementById("rows"),
-  empty: document.getElementById("emptyState"),
-  count: document.getElementById("resultCount"),
-  runStats: document.getElementById("runStats"),
   toast: document.getElementById("toast"),
   exportMhtml: document.getElementById("exportMhtml"),
   exportHtml: document.getElementById("exportHtml"),
 };
 
+const missingElementIds = [];
+for (const [key, id] of Object.entries(REQUIRED_ELEMENT_IDS)) {
+  const node = document.getElementById(id);
+  if (node) elements[key] = node;
+  else missingElementIds.push(`#${id}`);
+}
+
+/**
+ * 缺任何必需元素时的唯一出路：把缺什么聚合说一次，而不是让它在后面某一行抛出去。
+ * 出口按「用户一定能看见」的程度往后退：空状态那块 → 结果计数那一行 → toast → <body>。
+ * 前两个是常驻文字，toast 只是过场提示，<body> 是整块骨架都没了之后唯一还能写字的地方；
+ * 无论如何都不留白屏。
+ */
+function reportMissingElements(ids) {
+  const message = `页面缺少必需的 DOM 元素：${ids.join("、")}，界面无法渲染。`;
+  console.error(message);
+  const empty = document.getElementById("emptyState");
+  const emptyTitle = empty?.querySelector(".empty-title");
+  const emptyDesc = empty?.querySelector(".empty-desc");
+  if (empty && emptyTitle && emptyDesc) {
+    emptyTitle.textContent = "页面结构不完整，无法渲染";
+    emptyDesc.textContent = message;
+    empty.hidden = false;
+    return;
+  }
+  if (elements.count) {
+    elements.count.textContent = message;
+    return;
+  }
+  if (elements.toast) {
+    toast(message);
+    return;
+  }
+  document.body.textContent = message;
+}
+
+/** 排序下拉的 value 形状是 "key:direction"（见 index.html 的 option），内存态由它派生。 */
+function readSortValue(value) {
+  const [key, direction] = String(value || "").split(":");
+  // 下拉的 value 被改坏时退回默认排序，而不是把 undefined 灌进 state（比较器会静默排错）。
+  return key && direction
+    ? { sortKey: key, sortDirection: direction }
+    : { sortKey: "coffee", sortDirection: "desc" };
+}
+
+// 初值从 DOM 读，不能假定 index.html 的默认值：刷新/后退时浏览器会恢复表单值（搜索框里还留着
+// 上次的关键字、状态下拉还停在「失败」），内存里若仍是「空搜索 + 全部状态」，页面就会显示一份
+// 与输入框对不上的列表，导出摘要还会把它写成「筛选：无」。
 const state = {
-  query: "",
-  status: "all",
-  sortKey: "coffee",
-  sortDirection: "desc",
+  query: elements.query?.value ?? "",
+  status: elements.status?.value ?? "all",
+  ...readSortValue(elements.sort?.value),
 };
 
 /* --------------------------------------------------------------- 检索索引 --- */
@@ -74,12 +130,17 @@ function buildSearchIndex(nodes) {
 }
 
 // 数据源是运行时可换的：示例数据打开页面就能渲染，真实数据要等 fetch 回来。两者共用
-// 同一条渲染链路，所以只有这四个字段会换，其余代码不需要知道数据来自哪里。
+// 同一条渲染链路，所以只有这几个字段会换，其余代码不需要知道数据来自哪里。
+// 这里没有「是不是真实来源」的布尔量：那件事由 meta 表达——真实数据的 meta 由
+// toSnapshotMeta() 现造，只有示例路径留着 data.js 的 SNAPSHOT_META，来源未到位时是 null。
+// 两个字段说同一件事就只能靠调用顺序保持一致，所以只留 meta（见 metaLabel）。
 const dataset = {
   nodes: NODES,
   meta: SNAPSHOT_META,
   index: buildSearchIndex(NODES),
-  real: false,
+  // 数据版本：setNodes 每次 +1。渲染的脏检查与状态计数缓存都用它判断「这份数据换过了没」，
+  // 不必逐条比较内容。
+  version: 0,
   // 空状态的两行文字（加载中/加载失败）是「当前数据状态」的一部分，不是一次性的；
   // 数据到位后必须清回默认文案，否则搜不到东西时会显示「正在读取真实扫描结果…」这种假话。
   // null = 用 index.html 里那两句静态文案（启动时抓下来，避免把文案抄成两份）。
@@ -91,6 +152,7 @@ const dataset = {
 function setNodes(nodes) {
   dataset.nodes = nodes;
   dataset.index = buildSearchIndex(nodes);
+  dataset.version += 1;
 }
 
 /* ------------------------------------------------------------------ 排序 --- */
@@ -142,19 +204,35 @@ function labelOf(select) {
 }
 
 // 「数据从哪来」这句话只有一处：示例是设计示例，真实数据是某一次真实扫描的导出。
-// 两者混着说会让人把合成 IP 当成真实结果（或反过来），所以文案跟着 dataset.real 切。
-// meta 为 null 表示真实数据还没到位/没加载成功：宁可不提来源，也不猜一个。
+// 两者混着说会让人把合成 IP 当成真实结果（或反过来），所以文案跟着来源切。
+//
+// 「是不是示例」用 meta 的**对象引用**判断，不另立一个布尔量：dataset.meta 只会取三个值——
+// SNAPSHOT_META（示例）、null（真实数据还没到位/加载失败，宁可不提来源也不猜）、
+// toSnapshotMeta() 现造的另一个对象（真实数据）。用引用而不是比 source 文案，是因为文案是
+// 会改的展示文字，改了这里就会悄悄判反。
 function metaLabel() {
   if (!dataset.meta) return null;
-  const prefix = dataset.real ? "真实扫描快照生成于" : "示例生成于";
+  const prefix = dataset.meta === SNAPSHOT_META ? "示例生成于" : "真实扫描快照生成于";
   return `${prefix} ${dataset.meta.generatedAt}`;
 }
 
+// 状态计数是整表遍历，顶部统计行和导出摘要都要它，所以按数据版本缓存一份：
+// 原来 renderStats 在局部算一遍，导出那边再用 countOf 对整份数据各 filter 三遍。
+let countsCache = { version: -1, counts: null };
+
+function statusCounts() {
+  if (countsCache.version !== dataset.version) {
+    const counts = { success: 0, partial: 0, failed: 0 };
+    dataset.nodes.forEach((result) => {
+      if (counts[result.status] !== undefined) counts[result.status] += 1;
+    });
+    countsCache = { version: dataset.version, counts };
+  }
+  return countsCache.counts;
+}
+
 function renderStats() {
-  const counts = { success: 0, partial: 0, failed: 0 };
-  dataset.nodes.forEach((result) => {
-    if (counts[result.status] !== undefined) counts[result.status] += 1;
-  });
+  const counts = statusCounts();
   const parts = [
     statText(String(dataset.nodes.length), " 个节点", true),
     statSep(),
@@ -209,23 +287,40 @@ function syncExportAvailability() {
   }
 }
 
+// 渲染输入指纹：数据版本（setNodes 时 +1）+ 搜索 + 状态 + 排序。这四样没变，可见行和每行的
+// DOM 就必然与上一帧逐字一样，于是整表重建（replaceChildren + 色带 + 复制接线）可以整段跳过：
+// 它会把滚动位置、按钮焦点和正在显示中的复制反馈一起丢掉，而什么都没换。
+let lastRenderKey = null;
+
+function renderKey() {
+  return `${dataset.version}|${state.query}|${state.status}|${state.sortKey}:${state.sortDirection}`;
+}
+
+// 渲染时算出来的可见行：导出要的「有多少行」就是这一份（见 runExport），不必再跑一次 filter+sort。
+let lastVisibleRows = [];
+
 function render() {
-  const results = visibleRows();
-  const ranked = state.sortKey !== "node" && state.sortDirection === "desc";
-  const fragment = document.createDocumentFragment();
+  const key = renderKey();
+  if (key !== lastRenderKey) {
+    lastRenderKey = key;
+    lastVisibleRows = visibleRows();
+    const ranked = state.sortKey !== "node" && state.sortDirection === "desc";
+    const fragment = document.createDocumentFragment();
 
-  results.forEach((result, index) => {
-    const position = index + 1;
-    // 只有「按分数降序」时前三名才真的是前三名；按名字排序时给第 1 名戴金牌是撒谎。
-    const tier = ranked && position <= 3 && numericValue(result, state.sortKey) !== null;
-    fragment.append(createRow(result, { position, tier }, document));
-  });
+    lastVisibleRows.forEach((result, index) => {
+      const position = index + 1;
+      // 只有「按分数降序」时前三名才真的是前三名；按名字排序时给第 1 名戴金牌是撒谎。
+      const tier = ranked && position <= 3 && numericValue(result, state.sortKey) !== null;
+      fragment.append(createRow(result, { position, tier }, document));
+    });
 
-  elements.rows.replaceChildren(fragment);
-  // 顺序不能颠倒：色带要等元素进了 DOM 之后再用 CSSOM 写，才不会被 CSP 当成内联样式拦掉。
-  applyScoreStyles(elements.rows);
-  attachCopy(elements.rows);
+    elements.rows.replaceChildren(fragment);
+    // 顺序不能颠倒：色带要等元素进了 DOM 之后再用 CSSOM 写，才不会被 CSP 当成内联样式拦掉。
+    applyScoreStyles(elements.rows);
+    attachCopy(elements.rows);
+  }
 
+  const results = lastVisibleRows;
   elements.empty.hidden = results.length > 0;
   elements.count.textContent = results.length === dataset.nodes.length
     ? `当前视图 ${dataset.nodes.length} 个节点`
@@ -245,6 +340,18 @@ function scheduleRender() {
   });
 }
 
+/**
+ * 把排队中的那一帧渲染立刻落下来。
+ *
+ * 单独一个函数是因为「导出」必须在一致的状态下读 DOM：见 runExport 开头那段。
+ */
+function flushPendingRender() {
+  if (frame === null) return;
+  cancelAnimationFrame(frame);
+  frame = null;
+  render();
+}
+
 function attachCopy(root) {
   if (globalThis.BestIpCopy) globalThis.BestIpCopy.attach(root);
 }
@@ -252,6 +359,8 @@ function attachCopy(root) {
 /* ---------------------------------------------------------------- 提示条 --- */
 let toastTimer = null;
 function toast(message) {
+  // toast 是可选的（见 elements 的注释）：它没被解析到时，少一个提示远好过让整条链路抛错。
+  if (!elements.toast) return;
   elements.toast.textContent = message;
   elements.toast.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
@@ -260,20 +369,37 @@ function toast(message) {
   }, 5200);
 }
 
+// pagehide 时把排队的帧与提示定时器清掉：留着它们会在文档已经不能画之后（或被塞进
+// bfcache 时）再跑一次渲染、再改一次可见性，而那两件事都不该发生在一个已经离开的页面上。
+globalThis.addEventListener("pagehide", () => {
+  if (frame !== null) {
+    cancelAnimationFrame(frame);
+    frame = null;
+  }
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+});
+
 /* ----------------------------------------------------------- 空状态文案 --- */
 // 空状态的两行文字就是「加载中 / 加载失败」的全部表达：复用现有的 #emptyState，
 // 不弹窗也不新增控件。示例路径从不调用它，静态文案原样保留。
+// 这两个节点在 index.html 里各只有一处，启动时抓一次引用就够：applyEmptyCopy 会在
+// 「加载中 / 加载失败 / 搜不到」之间来回切，原先每次调用都重新 querySelector 两个节点。
+const EMPTY_NODES = {
+  title: document.querySelector("#emptyState .empty-title"),
+  desc: document.querySelector("#emptyState .empty-desc"),
+};
 const EMPTY_DEFAULT = {
-  title: document.querySelector("#emptyState .empty-title")?.textContent?.trim() || "没有匹配的节点",
-  desc: document.querySelector("#emptyState .empty-desc")?.textContent?.trim() || "试试清空搜索框，或把状态切回「全部状态」。",
+  title: EMPTY_NODES.title?.textContent?.trim() || "没有匹配的节点",
+  desc: EMPTY_NODES.desc?.textContent?.trim() || "试试清空搜索框，或把状态切回「全部状态」。",
 };
 
 function applyEmptyCopy() {
   const copy = dataset.emptyCopy || EMPTY_DEFAULT;
-  const titleNode = document.querySelector("#emptyState .empty-title");
-  const descNode = document.querySelector("#emptyState .empty-desc");
-  if (titleNode) titleNode.textContent = copy.title;
-  if (descNode) descNode.textContent = copy.desc;
+  if (EMPTY_NODES.title) EMPTY_NODES.title.textContent = copy.title;
+  if (EMPTY_NODES.desc) EMPTY_NODES.desc.textContent = copy.desc;
 }
 
 function setEmptyState(title, description) {
@@ -303,8 +429,9 @@ function markRealSource(origin) {
  */
 function beginRealSource(origin, title, description) {
   setNodes([]);
+  // meta 置 null 这件事本身就是「真实来源」的载体（见 metaLabel）：真实数据的 meta 由
+  // toSnapshotMeta() 现造，只有示例路径才留着 data.js 的 SNAPSHOT_META。
   dataset.meta = null;
-  dataset.real = true;
   markRealSource(origin);
   renderStats();
   render();
@@ -332,8 +459,7 @@ function failRealData(message) {
   toast(`真实扫描加载失败：${message}`);
 }
 
-// 在线模式的失败没有 ?api= 这条退路（见 api.js 文件头），所以文案里不提它；
-// 真正的成因由 gateway.js 分条给出：没扫过 / 产物已过期 / 还没跑完 / 产物坏了 / 跨源被拦。
+
 // 在线模式的失败没有 ?api= 这条退路（见 api.js 文件头），所以文案里不提它；成因由 gateway.js
 // 分条给出：没扫过 / 产物已过期 / 还没跑完 / 产物坏了 / 跨源被拦。标题也照抄它给的那一份——
 // 「没有读到结果」套在「从没扫过」和「还在跑」上会把两件不同的事实说成同一次失败。
@@ -351,7 +477,7 @@ async function loadRealData(target) {
     applyRealPayload(payload, "local",
       "这次扫描没有任何节点记录", "任务本身是完成的，但导出里的 results 是空的。");
   } catch (error) {
-    failRealData(error.message);
+    failRealData(error?.message || String(error));
   }
 }
 
@@ -371,13 +497,20 @@ async function loadGatewayData() {
 }
 
 /* ------------------------------------------------------------------ 导出 --- */
-function countOf(status) {
-  return dataset.nodes.filter((result) => result.status === status).length;
-}
-
+/**
+ * 导出摘要里的状态计数与顶部统计行说的是同一件事，两边都用缓存过的 statusCounts()：
+ * 原来 countOf 在这里对整份数据各 filter 三遍，而 renderStats 已经算过一次同样的数字。
+ */
 async function runExport(format, button) {
-  const results = visibleRows();
   if (dataset.nodes.length === 0) return;
+  // 导出读的是渲染缓存（可见行 + elements.grid.outerHTML），而搜索框的输入是当下就写进 state、
+  // 表格重建只排在下一个 rAF 里。不把那一帧落下来，快照就会是「筛选：<刚敲的字>」配一张上一帧
+  // 的旧表——正文、行数、摘要三者必须取自同一时刻，所以这里先 flush。
+  flushPendingRender();
+  // 可见行直接用渲染时算好的那一份：原来为了取 length 又跑一遍 filter + sort，而且它读的是
+  // 「此刻内存态」的行数、正文却是上一帧的 outerHTML，两个数字能对不上。
+  const results = lastVisibleRows;
+  const counts = statusCounts();
   button.disabled = true;
   try {
     const artifact = await exportSnapshot(format, {
@@ -393,15 +526,19 @@ async function runExport(format, button) {
         source: dataset.meta?.source || "",
         generatedAt: dataset.meta?.generatedAt || "时间未知",
         exportedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
-        success: countOf("success"),
-        partial: countOf("partial"),
-        failed: countOf("failed"),
+        success: counts.success,
+        partial: counts.partial,
+        failed: counts.failed,
       },
     });
-    const warning = artifact.scriptWarning ? "；但快照内未内联复制脚本，复制按钮不可用" : "";
+    // .mhtml 从不内联复制脚本（那是决策、不是失败），所以「没读到 copy.js」只对 .html 有意义：
+    // 那边按钮本来能用，读不到才会真的按不动。原来两种格式共用这一句，mhtml 上说的是假成因。
+    const warning = format === "html" && artifact.scriptWarning
+      ? "；但快照内未内联复制脚本，复制按钮不可用"
+      : "";
     toast(`已导出 ${artifact.filename}（${formatBytes(artifact.bytes)}）${warning}`);
   } catch (error) {
-    toast(`导出失败：${error.message}`);
+    toast(`导出失败：${error?.message || String(error)}`);
   } finally {
     // 只恢复「这一次点击」的禁用状态；没有数据时由 render() 保持禁用。
     syncExportAvailability();
@@ -509,8 +646,10 @@ async function beginScan() {
     validateSubscriptionUrl(url);
   } catch (error) {
     // 地址本身写错时不动表格：清掉一屏已有结果去换一句「格式不对」不划算。
-    toast(error.message);
-    setScanProgress(error.message);
+    // 非 Error 的抛出（自定义抛字符串）也要有可读文案，不能显示 "undefined"。
+    const message = error?.message || String(error);
+    toast(message);
+    setScanProgress(message);
     scanElements.url?.focus();
     return;
   }
@@ -530,7 +669,7 @@ async function beginScan() {
   } catch (error) {
     if (generation !== scan.generation) return;
     // 派发就没被接受：表里还是上一轮的结果，留着它，只把原因说出来。
-    failScan(error.message, { keepTable: true });
+    failScan(error?.message || String(error), { keepTable: true });
     return;
   }
   if (generation !== scan.generation) return;
@@ -540,8 +679,11 @@ async function beginScan() {
   // 用户连带丢掉上一屏还能看的结果。清表与填表之间也没有「同框」窗口——一次扫描要么还没清，
   // 要么整屏换成这一轮的结果。
   beginRealSource("gateway", "正在扫描…", "扫描完成后这张表会自动填上刚扫出来的节点。");
-  // 首轮等 SCAN_POLL_FIRST_MS 再问：刚拿到 202 时运行往往还没建立，立刻问只是白问一次。
-  schedulePoll(generation, SCAN_POLL_FIRST_MS);
+  // 提交期间点过「停止」（onStopClick 的 starting 分支）：会话一到手就立刻发出去，
+  // 不等首轮轮询回来——pollOnce 里那条 pendingCancel 分支要等一轮状态请求才有机会跑。
+  // 没点过停止则照旧排首轮轮询：刚拿到 202 时运行往往还没建立，立刻问只是白问一次。
+  if (scan.pendingCancel) sendStopRequest(generation);
+  else schedulePoll(generation, SCAN_POLL_FIRST_MS);
 }
 
 /** 下一次轮询的间隔：每次 ×1.5，上限 SCAN_POLL_MAX_MS。 */
@@ -575,10 +717,10 @@ async function pollOnce(generation) {
     if (error.retryable !== true) {
       // 「等不到确认」这两种，任务可能还在后台跑：会话留着，用户才有「停止」可按。
       const keepSession = error.code === "cancel_timeout" || error.code === "scan_deadline";
-      failScan(error.message, { keepSession });
+      failScan(error?.message || String(error), { keepSession });
       return;
     }
-    setScanProgress(`读取扫描状态失败，正在重试：${error.message}`);
+    setScanProgress(`读取扫描状态失败，正在重试：${error?.message || String(error)}`);
     schedulePoll(generation, nextDelay());
     return;
   }
@@ -613,6 +755,9 @@ async function requestStop(generation) {
       scan.pendingCancel = true;
       setScanProgress("扫描运行还没建立，停止请求会在它出现后立刻补发…");
     } else {
+      // 请求已经发出去了，cancelling 必须在这里复位：它不复位就一直为真，onStopClick
+      // 会永久早退——用户再点「停止」毫无反应，只能等 cancel_timeout（最长 2 分钟）才恢复。
+      scan.cancelling = false;
       setScanProgress("已请求停止，等待执行端确认结束（取消不等于清理已完成）…");
     }
   } catch (error) {
@@ -621,87 +766,135 @@ async function requestStop(generation) {
     // scan.js 的「请再点一次「停止」」正是这么承诺的。
     scan.cancelling = false;
     scan.pendingCancel = true;
-    setScanProgress(`停止失败：${error.message}`);
+    setScanProgress(`停止失败：${error?.message || String(error)}`);
   }
   if (generation !== scan.generation || !scan.session) return;
   schedulePoll(generation, nextDelay());
 }
 
+/**
+ * 发一次停止请求。requestStop 内部的 try 只兜住 cancelScan 本身，它自己后面那几步
+ * （进度文案、续排轮询）任一处提前抛都会变成一条没人看的未捕获拒绝，而界面还停在
+ * 「正在请求停止…」。这里把那种失败收成一句界面文案。
+ */
+function sendStopRequest(generation) {
+  requestStop(generation).catch((error) => {
+    if (generation !== scan.generation) return;
+    scan.cancelling = false;
+    scan.pendingCancel = false;
+    setScanProgress(`停止失败：${error?.message || String(error)}`);
+  });
+}
+
 function onStopClick() {
-  if (!scan.session || scan.cancelling) return;
+  // 加密 + POST 那段窗口里「停止」已经显示，但会话要等 202 才有（scan.session 还是 null）。
+  // 原来这里直接 return，于是最长 START_TIMEOUT_MS（30 秒）里按钮按下去毫无反馈。
+  // 记下 pendingCancel，会话一到手就立刻把停止请求发出去（见 beginScan 的收尾）。
+  if (!scan.session) {
+    if (scan.starting) {
+      scan.pendingCancel = true;
+      scan.cancelling = true;
+      setScanProgress("扫描正在提交，已记下停止请求：一旦开始运行就立刻停止…");
+    }
+    return;
+  }
+  if (scan.cancelling) return;
   // 先掐掉已经排好的那一次轮询：不然它和这次停止请求同时在路上，白多一轮状态请求。
   stopPolling();
   scan.cancelling = true;
   scan.pendingCancel = true;
   setScanProgress("正在请求停止…");
-  requestStop(scan.generation);
+  sendStopRequest(scan.generation);
 }
 
 /* ------------------------------------------------------------------ 接线 --- */
-elements.query.addEventListener("input", () => {
-  state.query = elements.query.value;
-  scheduleRender();
-});
-
-elements.status.addEventListener("change", () => {
-  state.status = elements.status.value;
-  render();
-});
-
-elements.sort.addEventListener("change", () => {
-  const [key, direction] = elements.sort.value.split(":");
-  state.sortKey = key;
-  state.sortDirection = direction;
-  render();
-});
-
-elements.exportMhtml.addEventListener("click", () => runExport("mhtml", elements.exportMhtml));
-elements.exportHtml.addEventListener("click", () => runExport("html", elements.exportHtml));
-
-// 表单默认提交会让浏览器导航（这里没有 action，会重载当前地址，凭证与进度全丢），
-// 所以必须拦下来；扫描进行中重复提交也只认第一次。判据是 session 或 starting——
-// 加密 + POST 那一段里 session 还是 null，光看它会漏掉「连点两下」。
-if (scanElements.form) {
-  scanElements.form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (scan.session || scan.starting) return;
-    beginScan();
+// 接线与启动都收进函数，是为了给「必需元素缺失」留一条明确路径（见文件末尾）：
+// 逐条 addEventListener 都指着一个可能不存在的节点，缺一个就是模块顶层的 TypeError，
+// 整页白屏——那是最难查的一种失败。
+function wireControls() {
+  elements.query.addEventListener("input", () => {
+    state.query = elements.query.value;
+    scheduleRender();
   });
+
+  // change 与 input 走同一条 rAF 调度：change 里直接 render() 是同步重建整表，
+  // 而输入事件正排着一个 rAF，同一帧里就会连着重建两次（第二次的输入完全没变）。
+  elements.status.addEventListener("change", () => {
+    state.status = elements.status.value;
+    scheduleRender();
+  });
+
+  elements.sort.addEventListener("change", () => {
+    const next = readSortValue(elements.sort.value);
+    state.sortKey = next.sortKey;
+    state.sortDirection = next.sortDirection;
+    scheduleRender();
+  });
+
+  // 导出按钮是可选的（见 elements 的注释）：它们没解析到就不接线，页面照旧显示。
+  if (elements.exportMhtml) {
+    elements.exportMhtml.addEventListener("click", () => runExport("mhtml", elements.exportMhtml));
+  }
+  if (elements.exportHtml) {
+    elements.exportHtml.addEventListener("click", () => runExport("html", elements.exportHtml));
+  }
+
+  // 表单默认提交会让浏览器导航（这里没有 action，会重载当前地址，凭证与进度全丢），
+  // 所以必须拦下来；扫描进行中重复提交也只认第一次。判据是 session 或 starting——
+  // 加密 + POST 那一段里 session 还是 null，光看它会漏掉「连点两下」。
+  if (scanElements.form) {
+    scanElements.form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (scan.session || scan.starting) return;
+      beginScan();
+    });
+  }
+  if (scanElements.stop) scanElements.stop.addEventListener("click", onStopClick);
 }
-if (scanElements.stop) scanElements.stop.addEventListener("click", onStopClick);
 
 /* ------------------------------------------------------------ 表格骨架/启动 --- */
-// 表头文案与列宽都由 render.js 的 COLUMNS 生成，只在这里建一次；之后每帧只换 tbody，
-// 表头不重建，避免每次输入都重排整张表。
-elements.gridColumns.replaceChildren(createColGroup(document));
-elements.gridHead.replaceChildren(createHeadRow(document));
+function boot() {
+  // 表头文案与列宽都由 render.js 的 COLUMNS 生成，只在这里建一次；之后每帧只换 tbody，
+  // 表头不重建，避免每次输入都重排整张表。
+  elements.gridColumns.replaceChildren(createColGroup(document));
+  elements.gridHead.replaceChildren(createHeadRow(document));
 
-const target = resolveTarget({
-  search: globalThis.location?.search || "",
-  config: globalThis.BEST_IP_CONFIG,
-});
+  const target = resolveTarget({
+    search: globalThis.location?.search || "",
+    config: globalThis.BEST_IP_CONFIG,
+  });
 
-// 顺序不能反：`?job=`（写了但为空）会同时满足「jobId 为空」和「有 error」，
-// 先判 jobId 就会把它当成演示路径，给出一条满屏合成 IP、零提示的深链。
-// 在线模式排在最前面：它的「没有数据」和「读失败」都只有一条路（本站 Worker），
-// 拿本机那套 ?api= 文案去解释它只会把人指向一个在生产里根本不存在的地址。
-// 扫描入口只属于在线部署：那里才有本站的 Worker 网关与扫描公钥。它与下面三条分支无关——
-// 那三条决定这张表显示什么，这一块决定「能不能在本页发起一次扫描」。
-if (target.mode === "gateway") revealScanBar();
+  // 顺序不能反：`?job=`（写了但为空）会同时满足「jobId 为空」和「有 error」，
+  // 先判 jobId 就会把它当成演示路径，给出一条满屏合成 IP、零提示的深链。
+  // 在线模式排在最前面：它的「没有数据」和「读失败」都只有一条路（本站 Worker），
+  // 拿本机那套 ?api= 文案去解释它只会把人指向一个在生产里根本不存在的地址。
+  // 扫描入口只属于在线部署：那里才有本站的 Worker 网关与扫描公钥。它与下面三条分支无关——
+  // 那三条决定这张表显示什么，这一块决定「能不能在本页发起一次扫描」。
+  if (target.mode === "gateway") revealScanBar();
 
-if (target.error) {
-  // 两处失败能走的退路不同，所以按来源分岔，而不是共用一句「加载失败」。
-  if (target.mode === "gateway") failGateway(target.error);
-  else failRealData(target.error);
-} else if (target.mode === "gateway") {
-  // 同样不 await：先让页面把「正在读取」那一帧显示出来。
-  loadGatewayData();
-} else if (!target.jobId) {
-  // 静态示例路径：不解析 API 地址、不发任何请求，打开即是一屏完整内容。
-  renderStats();
-  render();
+  if (target.error) {
+    // 两处失败能走的退路不同，所以按来源分岔，而不是共用一句「加载失败」。
+    if (target.mode === "gateway") failGateway(target.error);
+    else failRealData(target.error);
+  } else if (target.mode === "gateway") {
+    // 同样不 await：先让页面把「正在读取」那一帧显示出来。
+    loadGatewayData();
+  } else if (!target.jobId) {
+    // 静态示例路径：不解析 API 地址、不发任何请求，打开即是一屏完整内容。
+    renderStats();
+    render();
+  } else {
+    // 不 await：加载是异步的，成败都已在 loadRealData 内部转成渲染结果，
+    // 先让页面把「正在读取」这一帧显示出来。
+    loadRealData(target);
+  }
+}
+
+// 必需元素缺任何一个就既不接线也不加载：整条链路都指着一个不存在的节点，继续跑只会在
+// 某个 undefined 上抛错，把剩下的半张页面也带走。缺什么就说什么，静态骨架照旧可见。
+if (missingElementIds.length) {
+  reportMissingElements(missingElementIds);
 } else {
-  // 不 await：加载是异步的，成败都已在 loadRealData 内部转成渲染结果，
-  // 先让页面把「正在读取」这一帧显示出来。
-  loadRealData(target);
+  wireControls();
+  boot();
 }

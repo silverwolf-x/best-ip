@@ -25,6 +25,8 @@
    决定显示哪种提示；真正发请求的 fetchExport 仍旧抛错，让调用方用 try/catch 收口。
    ========================================================================== */
 
+import { fetchWithTimeout, isTimeoutError } from "./net.js";
+
 export const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 
 // IPv6 字面量在 URL 里带方括号，hostname 拿到的是 "[::1]"，两种写法都收。
@@ -63,8 +65,9 @@ function queryParams(search) {
   return new URLSearchParams(typeof search === "string" ? search : "");
 }
 
-function readParam(search, name) {
-  const value = queryParams(search).get(name);
+// 收已解析好的查询串：一次调用里要读多个参数时，不必把同一份 search 反复解析。
+function readParam(params, name) {
+  const value = params.get(name);
   return value === null ? "" : value.trim();
 }
 
@@ -97,7 +100,10 @@ export function isGatewayMode(config) {
  */
 export function resolveTarget({ search = "", config = null } = {}) {
   const gateway = isGatewayMode(config);
-  const jobId = readParam(search, "job");
+  // 只解析一次：下面要读 ?job=、传给 resolveApiBase 读 ?api=、以及判断「有没有写 ?job=」，
+  // 原先每处各 new 一个 URLSearchParams，等于把同一个查询串解析三遍。
+  const params = queryParams(search);
+  const jobId = readParam(params, "job");
 
   if (gateway) {
     // 在线模式下 ?job= 只可能是一条永远失败的链接（见文件头），当场说清楚而不是默默忽略。
@@ -117,7 +123,7 @@ export function resolveTarget({ search = "", config = null } = {}) {
   // 「没写 ?job=」与「写了 ?job= 但是空的」必须分开：后者多半是个没替换成功的模板链接，
   // 当成演示路径处理就会给出一条满屏合成 IP、零提示的深链——正是真实通路最该防的错。
   if (!jobId) {
-    const wroteJob = queryParams(search).has("job");
+    const wroteJob = params.has("job");
     if (!wroteJob) return Object.freeze({ mode: "demo", jobId: "", apiBase: "", error: "" });
     return Object.freeze({ mode: "demo", jobId: "", apiBase: "", error: "URL 参数 ?job= 是空的" });
   }
@@ -126,7 +132,7 @@ export function resolveTarget({ search = "", config = null } = {}) {
   if (invalid) return Object.freeze({ mode: "local", jobId, apiBase: "", error: invalid });
 
   try {
-    return Object.freeze({ mode: "local", jobId, apiBase: resolveApiBase({ search, config }), error: "" });
+    return Object.freeze({ mode: "local", jobId, apiBase: resolveApiBase({ params, config }), error: "" });
   } catch (cause) {
     return Object.freeze({ mode: "local", jobId, apiBase: "", error: cause.message });
   }
@@ -136,10 +142,13 @@ export function resolveTarget({ search = "", config = null } = {}) {
  * API base 的优先级：dev 服务器注入的 site-config（window.BEST_IP_CONFIG.apiBase）
  * → `?api=` → 默认 8000。注入值优先于查询参数，因为它来自应用自己的配置而不是
  * 一条可以被随意转发/篡改的链接。
+ * @param {{search?: string, config?: object, params?: URLSearchParams | null}} [options]
+ *   params 是上游（resolveTarget）已经解析好的查询串，给了它就不再解析 search。
  */
-export function resolveApiBase({ search = "", config = null } = {}) {
+export function resolveApiBase({ search = "", config = null, params = null } = {}) {
   const injected = config && typeof config.apiBase === "string" ? config.apiBase.trim() : "";
-  return validateApiBase(injected || readParam(search, "api") || DEFAULT_API_BASE);
+  const query = params || queryParams(search);
+  return validateApiBase(injected || readParam(query, "api") || DEFAULT_API_BASE);
 }
 
 function httpError(status) {
@@ -171,16 +180,17 @@ export async function fetchExport(apiBase, jobId, { fetchImpl = globalThis.fetch
 
   let response;
   try {
-    response = await fetchImpl(url, {
+    response = await fetchWithTimeout(fetchImpl, url, {
       method: "GET",
       credentials: "omit",
       headers: { Accept: "application/json" },
-      // 没有超时的话，后端活着但导出卡住时这个 promise 永不 settle，页面会永久停在
-      // 「正在读取」的空表上——既没有报错也没有重试入口，只能重新加载页面。
-      signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(EXPORT_TIMEOUT_MS) : undefined,
-    });
+    }, EXPORT_TIMEOUT_MS);
   } catch (cause) {
-    if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
+    // 超时和普通失败必须分开说：前者等一会儿再试就可能好了，后者（服务没起、端口不对）
+    // 再点一次还是同一句话。判定走 app/net.js 的 isTimeoutError，不自己比 name。
+    // 这一条超时不能省：没有它的话，后端活着但导出卡住时 promise 永不 settle，页面会永久
+    // 停在空表上——既没有报错也没有重试入口，只能重新加载页面。
+    if (isTimeoutError(cause)) {
       throw new Error(`本地扫描服务 ${EXPORT_TIMEOUT_MS / 1000} 秒内没有返回导出结果`, { cause });
     }
     throw new Error(`连不上本地扫描服务 ${apiBase}：请先启动 backend（npm run dev）`, { cause });

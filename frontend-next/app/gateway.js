@@ -18,6 +18,8 @@
    ========================================================================== */
 
 import { readArtifact } from "./artifact/reader.js";
+import { failure, gatewayStatusText } from "./failure.js";
+import { fetchWithTimeout, isTimeoutError } from "./net.js";
 
 const LATEST_PATH = "/api/scans/latest";
 const LATEST_TIMEOUT_MS = 30_000;
@@ -60,11 +62,8 @@ const STATUS_REPORT = {
 
 const UNKNOWN_STATUS = { title: "没有读到真实扫描结果", text: "网关没有说明原因。" };
 
-function error(code, message, cause, title) {
-  const failure = Object.assign(new Error(message, cause ? { cause } : undefined), { code });
-  if (title) failure.title = title;
-  return failure;
-}
+// 失败对象与状态码文案来自 app/failure.js：原先本文件的 error() 与 scan.js 的 failure()
+// 同形（都挂 code、可选 title），只有 error() 多接收一个 cause。见该文件头部。
 
 function reasonOf(cause) {
   return cause && cause.name ? cause.name : "未知错误";
@@ -78,14 +77,6 @@ function statusReport(status) {
   };
 }
 
-// 没有超时的话，Worker 侧卡在 GitHub API 上时这个 promise 永不 settle：页面会一直停在
-// 「正在读取」，既没有报错也没有重试入口。
-function timeoutSignal(ms) {
-  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-    ? AbortSignal.timeout(ms)
-    : undefined;
-}
-
 /**
  * 签名产物地址只允许 https + GitHub 产物主机；不符合就抛错而不是硬取。
  * 空值也算错：artifact_ready 为 true 却没有地址，是网关自相矛盾的响应。
@@ -95,55 +86,61 @@ export function artifactUrlOf(raw) {
   try {
     parsed = new URL(String(raw || ""));
   } catch {
-    throw error("artifact_url_invalid", "网关返回的产物地址无效");
+    throw failure("artifact_url_invalid", "网关返回的产物地址无效");
   }
   if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(ARTIFACT_HOST_SUFFIX)) {
-    throw error("artifact_url_invalid", `网关返回的产物地址不是 GitHub 产物主机：${parsed.hostname || "(空)"}`);
+    throw failure("artifact_url_invalid", `网关返回的产物地址不是 GitHub 产物主机：${parsed.hostname || "(空)"}`);
   }
   return parsed.toString();
 }
 
+// 401/403/503 三句与 scan.js 共用 app/failure.js 的表（原先两边各抄一份，只差一两个词）；
+// 这里的说法是「读取」而不是「请求」，兜底句保持本文件原来的「本站的扫描网关返回 HTTP N」。
 function httpTextFor(status) {
-  if (status === 401) return "登录已过期：请重新用访问密码登录本站。";
-  if (status === 403) return "本站拒绝了这次读取（403）：会话与请求来源不匹配。";
-  if (status === 503) return "本站的扫描网关尚未配置完成（503）。";
-  return `本站的扫描网关返回 HTTP ${status}`;
+  return gatewayStatusText(status, {
+    sessionTail: "",
+    action: "读取",
+    detail: "",
+    fallback: (value) => `本站的扫描网关返回 HTTP ${value}`,
+  });
 }
 
+// 没有超时的话，Worker 侧卡在 GitHub API 上时这个 promise 永不 settle：页面会一直停在
+// 「正在读取」，既没有报错也没有重试入口。本文件这两次出网都走 app/net.js 的
+// fetchWithTimeout()，超时信号与它的 release 都在那里收口。
 /** 取回并校验 GET /api/scans/latest 的响应；形状不对就当网关坏了，不猜。 */
 async function fetchLatestState(fetchImpl) {
   let response;
   try {
-    response = await fetchImpl(LATEST_PATH, {
+    response = await fetchWithTimeout(fetchImpl, LATEST_PATH, {
       method: "GET",
       // 同源 + 带会话 cookie：这条路径的门就是站点的访问密码。
       credentials: "same-origin",
       headers: { Accept: "application/json" },
       cache: "no-store",
-      signal: timeoutSignal(LATEST_TIMEOUT_MS),
-    });
+    }, LATEST_TIMEOUT_MS);
   } catch (cause) {
-    if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
-      throw error("gateway_timeout", `本站的扫描网关 ${LATEST_TIMEOUT_MS / 1000} 秒内没有响应`, cause);
+    if (isTimeoutError(cause)) {
+      throw failure("gateway_timeout", `本站的扫描网关 ${LATEST_TIMEOUT_MS / 1000} 秒内没有响应`, { cause });
     }
-    throw error("gateway_unreachable", `读不到本站的扫描网关（${reasonOf(cause)}）`, cause);
+    throw failure("gateway_unreachable", `读不到本站的扫描网关（${reasonOf(cause)}）`, { cause });
   }
-  if (!response.ok) throw error("gateway_http", httpTextFor(response.status));
+  if (!response.ok) throw failure("gateway_http", httpTextFor(response.status));
 
   let payload;
   try {
     payload = await response.json();
   } catch (cause) {
-    throw error("gateway_json", "扫描网关返回的不是 JSON", cause);
+    throw failure("gateway_json", "扫描网关返回的不是 JSON", { cause });
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw error("gateway_shape", "扫描网关返回的结构无效");
+    throw failure("gateway_shape", "扫描网关返回的结构无效");
   }
   if (payload.artifact_ready !== true) {
     // 没有产物时只信 status 那句话；此时 run/artifact 字段一律不读，避免用半个身份拼出一行数据。
     const report = statusReport(payload.status);
-    throw error(typeof payload.status === "string" && payload.status ? payload.status : "gateway_status",
-      report.text, undefined, report.title);
+    throw failure(typeof payload.status === "string" && payload.status ? payload.status : "gateway_status",
+      report.text, { title: report.title });
   }
   const { request_id: requestId, run } = payload;
   const runId = run?.id;
@@ -151,7 +148,7 @@ async function fetchLatestState(fetchImpl) {
   if (typeof requestId !== "string" || !requestId
     || !Number.isInteger(runId) || runId < 1
     || !Number.isInteger(runAttempt) || runAttempt < 1) {
-    throw error("gateway_shape", "扫描网关说产物就绪，却没给全扫描身份（request_id / run_id / run_attempt）");
+    throw failure("gateway_shape", "扫描网关说产物就绪，却没给全扫描身份（request_id / run_id / run_attempt）");
   }
   return { requestId, runId, runAttempt, url: artifactUrlOf(payload.artifact_url) };
 }
@@ -160,31 +157,30 @@ async function fetchLatestState(fetchImpl) {
 async function downloadArtifact(url, fetchImpl) {
   let response;
   try {
-    response = await fetchImpl(url, {
+    response = await fetchWithTimeout(fetchImpl, url, {
       method: "GET",
       // 不带凭据、不带自定义头：Azure 侧回 Access-Control-Allow-Origin: *，一旦带上
       // cookie 或自定义头就会变成预检请求，反而取不到字节。
       credentials: "omit",
       cache: "no-store",
-      signal: timeoutSignal(ARTIFACT_TIMEOUT_MS),
-    });
+    }, ARTIFACT_TIMEOUT_MS);
   } catch (cause) {
-    if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
-      throw error("artifact_timeout", `产物地址 ${ARTIFACT_TIMEOUT_MS / 1000} 秒内没有返回字节`, cause);
+    if (isTimeoutError(cause)) {
+      throw failure("artifact_timeout", `产物地址 ${ARTIFACT_TIMEOUT_MS / 1000} 秒内没有返回字节`, { cause });
     }
-    throw error("artifact_blocked", `浏览器没能取到产物字节（${reasonOf(cause)}）：产物主机拒绝了这次跨源请求`, cause);
+    throw failure("artifact_blocked", `浏览器没能取到产物字节（${reasonOf(cause)}）：产物主机拒绝了这次跨源请求`, { cause });
   }
-  if (!response.ok) throw error("artifact_http", `产物地址返回 HTTP ${response.status}`);
+  if (!response.ok) throw failure("artifact_http", `产物地址返回 HTTP ${response.status}`);
 
   let buffer;
   try {
     buffer = await response.arrayBuffer();
   } catch (cause) {
-    throw error("artifact_truncated", `产物字节没有读完（${reasonOf(cause)}）`, cause);
+    throw failure("artifact_truncated", `产物字节没有读完（${reasonOf(cause)}）`, { cause });
   }
-  if (buffer.byteLength === 0) throw error("artifact_truncated", "产物地址返回了空响应（0 字节）");
+  if (buffer.byteLength === 0) throw failure("artifact_truncated", "产物地址返回了空响应（0 字节）");
   if (buffer.byteLength > MAX_ARTIFACT_BYTES) {
-    throw error("artifact_too_large", `产物 ${buffer.byteLength} 字节，超过 ${MAX_ARTIFACT_BYTES} 字节上限`);
+    throw failure("artifact_too_large", `产物 ${buffer.byteLength} 字节，超过 ${MAX_ARTIFACT_BYTES} 字节上限`);
   }
   return buffer;
 }
@@ -202,7 +198,7 @@ async function downloadArtifact(url, fetchImpl) {
  * @returns {Promise<object>} 校验通过的 result.json
  */
 export async function readArtifactFrom(rounds, { fetchImpl = globalThis.fetch } = {}) {
-  if (typeof fetchImpl !== "function") throw error("no_fetch", "当前环境没有可用的 fetch");
+  if (typeof fetchImpl !== "function") throw failure("no_fetch", "当前环境没有可用的 fetch");
   for (let attempt = 1; attempt <= ARTIFACT_ATTEMPTS; attempt += 1) {
     // 身份与地址必须取自同一轮响应：拿上一轮的身份去校验这一轮取回的字节，等于把
     // 「地址换了一批内容」这种漂移判成「产物被改动过」。
@@ -213,7 +209,7 @@ export async function readArtifactFrom(rounds, { fetchImpl = globalThis.fetch } 
     } catch (cause) {
       if (cause?.code !== "artifact_truncated") throw cause;
       if (attempt === ARTIFACT_ATTEMPTS) {
-        throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, cause);
+        throw failure("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, { cause });
       }
       // 字节没读完、且还有重试机会：丢掉这一份，下一轮重新问地址再取一次。
       continue;
@@ -226,18 +222,18 @@ export async function readArtifactFrom(rounds, { fetchImpl = globalThis.fetch } 
       // 「产物被改动过」，而且没有第二发。
       if (cause?.code === "artifact_truncated") {
         if (attempt === ARTIFACT_ATTEMPTS) {
-          throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, cause);
+          throw failure("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`, { cause });
         }
         continue;
       }
       // 校验失败不是「没有数据」：产物要么被改动过，要么和这次运行对不上，必须说出来。
       // 这里不重试：字节已经完整到手，内容不对是确定的结论。
-      throw error("artifact_invalid", `扫描产物校验失败：${cause.message}`, cause);
+      throw failure("artifact_invalid", `扫描产物校验失败：${cause.message}`, { cause });
     }
   }
   // 循环只可能 return 或 throw；走到这里说明上面的分支被改坏了——宁可报「没读完」，
   // 也不要静默返回 undefined 让调用方以为数据到手。
-  throw error("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`);
+  throw failure("artifact_truncated", `产物字节连续 ${ARTIFACT_ATTEMPTS} 次都没有读完`);
 }
 
 /**

@@ -27,10 +27,15 @@ Status: implemented
 还有一处只在线上成立的问题：详情弹窗的 IPure 分数**从来没有上过色**。生产的 CSP 是
 `style-src 'self'`（不含 `'unsafe-inline'`，见 `worker/responses.js`），而详情弹窗的分数节点是用
 `innerHTML` 拼好 `style="color:…"` 再插进 DOM 的——由标记解析出来的 `style` 属性会被浏览器拦掉，
-只有 CSSOM（`element.style.*`）赋值不算内联样式。本地 `scripts/dev.py` 不经 Worker、不发这个头，
+只有 CSSOM（`element.style.*`）赋值不算内联样式。当时本地 `scripts/dev.py` 不经 Worker、也不发这个头，
 所以这个缺陷**只在生产可见**，本地怎么看都是对的。表格分数格用 `style.cssText` 因而一直正常，
 同一份色带在两个出口表现不一致。机制与规则见
 [前端样式必须走 CSSOM](../architecture/2026-09-22-frontend-csp-blocks-markup-styles.md)。
+
+**（后续事实更新（2026-09-24）：本地已经没有这条分叉——`scripts/dev.py` 现在改指 `frontend-next/`，并从
+`worker/responses.js` 读出同一串 CSP 发给 `text/html` 响应，本地也能看到标记样式被拦；见
+[本地 dev 改指 frontend-next，并发出与生产同源的 CSP](../process/2026-09-24-dev-serves-frontend-next-with-csp.md)。
+上面那句「只在生产可见」描述的是当时的现场。）**
 
 ## Decision
 

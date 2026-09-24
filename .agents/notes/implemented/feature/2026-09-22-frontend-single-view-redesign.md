@@ -80,8 +80,8 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 两条共同要求：
 
 - 导出取的是**整张表**的实时 `outerHTML`（含 `thead` 与 CSSOM 写出的色带通道），所以快照里表格结构完整，不只是一个裸露的 `tbody`。
-- 快照内联 `app/copy.js` 的**原文**，而不是把复制逻辑抄一份进模板：同一份文本既能被页面当经典脚本加载，也能被快照原样内联。两份实现必然漂移。
-- 快照正文不含 `http(s)` 外链，也不写 `<meta>` CSP —— 快照靠内联 `<script>` 挂复制行为，写上 CSP 就会把自己的脚本拦掉。
+- 快照内联 `app/copy.js` 的**原文**，而不是把复制逻辑抄一份进模板（同一份文本既能被页面当经典脚本加载，也能被快照原样内联；两份实现必然漂移）——但**只有 `.html` 内联**：`.mhtml` 不再内联，因为 Chrome 把 `file://` 打开的 `.mhtml` 放进不设 `allow-scripts` 的沙箱 frame，脚本一律不执行，内联进去只是给每份快照白塞约 6.9KB 死代码。`.mhtml` 的零 JS 复制路径是 `.ip { user-select: all }`，见 [离线 .mhtml 不再内联 app/copy.js](../simplification/2026-09-24-offline-mhtml-drops-copyjs-inline.md)。
+- 快照正文不含 `http(s)` 外链，也不写 `<meta>` CSP：`.html` 版仍有内联 `<script>` 挂复制行为，写上 CSP 就会把自己的脚本拦掉；`.mhtml` 版现在没有内联脚本，但为两个产物保持同一条规则，同样不写 `<meta>` CSP。
 - 文件名自证来源：真实扫描产物的名字里带 `real-`（`best-ip-snapshot-real-<时间戳>.mhtml`），示例路径不加后缀、名字与上一轮完全一致。快照标题与摘要里的「来源：…」要打开文件才看得见，而人是在下载列表里选文件的。
 
 `navigator.clipboard` 只在安全上下文可用，`file://` 打开的快照拿不到它，所以 `copy.js` 必须有 `execCommand("copy")` + 临时 textarea 的回退路径。快照要能离线复制，这条回退是必需路径，不是锦上添花。
@@ -140,6 +140,6 @@ COLUMNS = [ { key, label, width?, align? } × 10 ]
 - **代价**：信息量被物理限制在十列内，以后每加一项「值得一眼看见」的字段，都要在「加列变窄」和「删别的列」之间取舍一次，扩展空间比卡片布局小。
 - **代价**：删掉逐列筛选器后，按 ISP / ASN 精确过滤并统计这种复杂查询没有入口，只剩「全局搜索（节点名 / 协议 / IP / 国家 / 城市 / ISP / ASN / 公司类型 / 原生性 / 失败原因）+ 状态筛选」。
 - **已知限制**：`file://` 直接打开页面时导出会失败——同源策略拒掉 `fetch('./styles.css')` 与 `cssRules`，这不是代码能绕开的事，只能把「请用本地静态服务打开」写进报错文案。
-- **已知限制**：`.mhtml` 里的复制按钮在 Chrome 下永久不可用（`file://` 打开的 `.mhtml` 被放进不设 `allow-scripts` 的沙箱 frame，脚本一律不执行）。补救是零 JS 的全选路径 + 快照顶部说明条 + 同批 `.html` 兜底，但「快照里的复制按钮」这件事本身无法两全。
+- **已知限制**：`.mhtml` 里的复制按钮在 Chrome 下永久不可用（`file://` 打开的 `.mhtml` 被放进不设 `allow-scripts` 的沙箱 frame，脚本一律不执行），所以 `.mhtml` 里也不再内联 `copy.js`（那份约 6.9KB 的代码永远不会运行）。**要在快照里用复制按钮就打开同批导出的 `.html` 那份**（它的脚本真的会执行）；`.mhtml` 只有零 JS 的全选路径（`.ip` 的 `user-select: all`，单击出口 IP 即全选）加顶部那条说明条。见 [离线 .mhtml 不再内联 app/copy.js](../simplification/2026-09-24-offline-mhtml-drops-copyjs-inline.md)。但「快照里的复制按钮」这件事本身无法两全。
 - **已知限制**：快照内色带依赖 CSSOM 写出的自定义属性；若在带 CSP `style-src 'self'` 的 http 环境打开，色带退化为兜底灰。手工双击离线打开不受影响。
 - **已被后续两步消掉的两条风险**（原文写在 proposal 的 Risks 里，这里改成事实）：①「两套前端短期共存」——线上入口已切到 `frontend-next`（`wrangler.jsonc` 的 `assets.directory`），`frontend/` 不再被提供但保留在仓库里作回退；发布证据是 Cloudflare 版本 `28222f32-f622-49bd-8662-29f26ef3d51d` 上 `Verify deployed release` 7/7 项通过、15/15 个文件与 commit 逐字节一致。②「生产 CSP 会挡掉 `?job=` 那条跨源 fetch」——生产改走同源 `GET /api/scans/latest` + 浏览器直连签名 blob，CSP 不必放开 loopback 地址；`?job=` 仍是本机专用深链，在线模式遇到它当场报错而不是默默失败。两条的依据见 [新前端的在线只读通路](../architecture/2026-09-22-frontend-next-online-readonly-gateway.md)。
