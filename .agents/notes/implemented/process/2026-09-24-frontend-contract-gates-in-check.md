@@ -67,4 +67,5 @@ Status: implemented
   `PASS 契约 c：frontend-next/index.html 的 <script> 全部带 src（无内联脚本）`、
   `PASS 契约 d：14 个 app/ 模块（除 net.js）没有裸 fetch(`，随后 `全部前端契约通过` 与 mhtml 往返的 `全部断言通过`。
 - 契约 a 的正则边界与「宁窄勿宽」的取向已在脚本注释里逐条登记（见 Decision 里的边界清单）。
-- 未验证（如实记）：没有为这四条断言各造一个"故意违规"的负向夹具跑一遍（脚本自己不带自测）；命中分支的格式化输出因此只在读代码层面确认过。
+- **负向夹具实跑（在 `$PI_SCRATCH_DIR` 的镜像副本上做，仓库未动）**：四类违规各注入一处，四条断言逐条都命中并给出「文件:行号 + 怎么修」——`4 处前端契约违规`、exit 1（`index.html:19` 标记 style、`index.html:109` 表头内控件、`index.html:124` 内联 script、`app/api.js:252` 裸 `fetch(`）；同批放入的合法写法（`el.style.width = …`、`data-style="…"`、注释里写 `style="x"` 与 `fetch(`、注入式 `fetchImpl(…)`）**一条都没误报**，违规总数恰好 4。干净镜像则 `全部前端契约通过`、exit 0。
+- 未验证（如实记）：没有在 CI 里加重负向夹具的自动化（上面那次是人工在镜像上跑的，仓库不带自测）；契约 b 在 `<thead>` 整段缺失时的 `SKIP` 分支只从代码上确认过，没有实跑。

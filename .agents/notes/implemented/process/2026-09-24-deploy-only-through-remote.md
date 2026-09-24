@@ -79,3 +79,15 @@ Status: implemented
   - 本机真实 CRLF 工作区 + Actions 环境 → `exit 1`，`15/18 个文件的工作区字节 ≠ blob`，逐条给出「多出的 N 字节全是 CR（CRLF 检出）」——正是那次事故的形态（`app/api.js` 工作区 12327B vs blob 12089B，多 238 字节）。
 - `verify:deploy` 实测：正确 `SITE_PASSWORD` → `7/7`、18/18 文件、exit 0；故意用错误密码 → 打印 `结果：5/6 项通过` + 失败项并 **exit 1**（改之前这条路是退出码 0、连结果行都没有）。
 - 端到端：push 到 `main` → CI 成功 → `workflow_run` 自动发布；`Deploy Worker and static assets` 步骤日志出现 `发布前检查通过：… commit <sha>`，`Verify deployed release` 步骤 `7/7`。第一次这样发布的是运行 `35929389626`（commit `38f78b1`，版本 `07454fc9-7d07-4a9e-aaeb-945f5508389e`）。
+
+## 发布实录（2026-09-24，本批前端改动的上线证据）
+
+PR #12 squash merge 成 `f1f95e1`，随后 CI 在 main 上运行 `35941931938` 绿（head 就是 `f1f95e1`），
+`workflow_run` 自动派发 `Deploy Cloudflare Worker` 运行 `35941960147` 绿：
+`Deploy Worker and static assets` 打印「发布前检查通过：frontend-next/ 下 20 个文件与 commit `f1f95e1`
+的 blob 逐字节一致（分支 main）」，wrangler 读 24 个文件、11 个新增或修改、`Total Upload: 51.31 KiB /
+gzip: 13.74 KiB`，**Version ID `981677a9-a4c8-437d-aeac-36eba6489d9f`**；`Verify deployed release` `7/7`
+项通过，其中「线上内容与 HEAD 逐字节一致」为 **20/20 个文件**（上一批是 18/18，多出来的两个正是本批新增的
+`app/net.js` 与 `app/failure.js`）。发布后由本机带会话复跑
+`npm run verify:deploy -- --site https://best-ip.silverwolfx.workers.dev` 拿到同样的 `7/7`，
+不是只信流水线日志。
