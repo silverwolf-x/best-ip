@@ -50,12 +50,18 @@ export const COLUMNS = [
 // 用一个 colspan 单元格说明原因，比摆五个「—」更省地方也更诚实。
 const ABSENT_KEYS = ["ip", "geo", "isp", "kind", "native"];
 
+// labelOf 是每个单元格都要走一次的热路径（一行十个 td），每次 find 线性扫一遍 COLUMNS 不划算：
+// 映射在模块加载时建一次，之后只查表。用 ?? 而不是 ||：label 为空串时也要原样返回。
+const LABEL_BY_KEY = new Map(COLUMNS.map((column) => [column.key, column.label]));
+
 function labelOf(key) {
-  const column = COLUMNS.find((item) => item.key === key);
-  return column ? column.label : key;
+  return LABEL_BY_KEY.get(key) ?? key;
 }
 
 /* -------------------------------------------------------------- 表头 --- */
+// col-<key> 是 colgroup 与 thead 共用的命名契约（styles.css 只消费 col-scn 的 min-width，
+// 其余九个暂时没有规则）。这十个 class 保留：删掉就得给表头另起一套命名，而 colgroup 的
+// 宽度本来就靠 COLUMNS 生成，两处的钩子名必须对得上。
 export function createColGroup(document) {
   const group = document.createDocumentFragment();
   COLUMNS.forEach((column) => {
@@ -237,11 +243,17 @@ function nativeCell(document, result) {
 function scorePill(document, { kind, value, note }) {
   const pill = el(document, "span", "score");
   if (kind === "ipure") {
-    const hasBand = ipureScoreInlineStyle(value) !== "";
+    // 通道串只在这里算一次：applyScoreStyles 直接取用，不再对同一个分数重算第二遍。
+    const scoreStyle = ipureScoreInlineStyle(value);
+    const hasBand = scoreStyle !== "";
     pill.dataset.band = hasBand ? "band" : "na";
-    // 通道挂在元素上，等进 DOM 后由 applyScoreStyles 用 CSSOM 写进去（CSP 拦标记里的
-    // style）。漏掉这一行，分数就只能吃 CSS 里的兜底灰，永远不变色。
-    if (hasBand) pill.dataset.ipureScore = String(value);
+    // 通道挂在元素上（data-* 是属性不是 style 属性，CSP 不管），等进 DOM 后由
+    // applyScoreStyles 用 CSSOM 写进去。漏掉这一步，分数就只能吃 CSS 里的兜底灰，
+    // 永远不变色 —— 它必须留在「元素已进 DOM」之后的执行路径上。
+    if (hasBand) {
+      pill.dataset.ipureScore = String(value);
+      pill.dataset.ipureStyle = scoreStyle;
+    }
     pill.textContent = value === null || value === undefined ? "—" : String(value);
     if (value === -1) pill.title = "该地区受限";
     else if (hasBand) pill.title = `IPure 纯净度总分 ${value}`;
@@ -374,8 +386,12 @@ export function createRow(result, { position, tier }, document) {
 }
 
 export function applyScoreStyles(root) {
+  // 顺序契约：赋值必须发生在元素进了 DOM 之后 —— 生产 CSP 是 style-src 'self'，标记里的
+  // style 属性会被拦掉，CSSOM 赋值不算内联样式。药丸的通道串由 scorePill 算好挂在
+  // data-ipure-style 上，这里直接取用；场景 chip 只挂了分数，到这里才合成通道串。
   root.querySelectorAll("[data-ipure-score]").forEach((element) => {
-    element.style.cssText = ipureScoreInlineStyle(element.dataset.ipureScore);
+    const precomputed = element.dataset.ipureStyle;
+    element.style.cssText = precomputed ?? ipureScoreInlineStyle(element.dataset.ipureScore);
   });
 }
 

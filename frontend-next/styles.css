@@ -54,6 +54,17 @@
 
   --radius: 12px;
   --radius-sm: 8px;
+  /* 圆角只在这一处定义：4 / 5 / 6 / 999 散在规则里就会各自漂移。5px 与 6px 特意分成两档——
+     .chip/.score 和复制按钮、场景 chip、示例标签只差 1px，合成一档会真的改变渲染。 */
+  --radius-xs: 4px;
+  --radius-tag: 5px;
+  --radius-chip: 6px;
+  --radius-pill: 999px;
+
+  /* 等宽栈只写一份，三处引用（code / .ip / .isp-sub）以前各抄一遍。取短的这一版：`code`
+     原来多写的 "Liberation Mono" 对页面里唯一一类 <code>（带 .ip，特异性更高）从不生效，
+     去掉它不会有任何渲染差异。 */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -114,14 +125,14 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+code { font-family: var(--font-mono); }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-xs); }
 
 .shell {
   max-width: 1400px;
@@ -157,7 +168,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 
 .brand-mark {
   display: grid; place-items: center;
-  width: 26px; height: 26px; border-radius: 8px;
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
   background: var(--accent); color: var(--accent-ink);
 }
 
@@ -171,7 +182,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 
 .tag-demo {
   display: inline-flex; align-items: center; height: 18px; padding: 0 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-tag);
   border: 1px dashed var(--line-2);
   color: var(--ink-3);
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
@@ -185,7 +196,12 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   font-variant-numeric: tabular-nums;
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
 }
-.run-stats b { color: var(--ink); font-weight: 700; }
+/* 四处 `<b>` 的强调配方逐字相同（运行统计、结果计数、快照状态、快照说明），共用一条规则。
+   各自的父级决定字号与基调，`b` 只负责「比周围的次级灰更黑更重」，合并不改任何外观。 */
+.run-stats b,
+.result-count b,
+.snapshot-state b,
+.snapshot-note b { color: var(--ink); font-weight: 700; }
 /* 分隔点也是文字流的一部分，同样按 AA 取色：--ink-faint(#8b949e) 在白底上只有
    2.77:1，只配去画描边和导轨，不配当任何字符的墨色。 */
 .sep { color: var(--ink-3); }
@@ -207,7 +223,11 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   border-radius: var(--radius-sm);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.field:focus-within { border-color: var(--line-2); box-shadow: 0 0 0 3px rgb(31 77 138 / 0.14); }
+/* 焦点晕染从 --focus 派生，而不是写死浅色的 rgb(31 77 138 / 0.14)：深色主题的 --focus 是
+   #58a6ff，写死值在那两级深表面上合成后只有 1.08:1，等于这层晕染根本不存在。这不是无障碍
+   违规——真正的键盘焦点指示是上面 :focus-visible 的 outline（深色下 6.42:1，合规）——只是
+   装饰性弱化。color-mix 与 .topbar 的用法同源（Chrome 111+），不必为此再定义一条主题变量。 */
+.field:focus-within { border-color: var(--line-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 14%, transparent); }
 .field-icon { color: var(--ink-3); flex: none; }
 .field input, .field select {
   appearance: none;
@@ -274,7 +294,6 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
-.result-count b { color: var(--ink); font-weight: 700; }
 
 /* ------------------------------------------------------------------ 表格 --- */
 /* 信息密度靠一张真表格：十列就是十件事实，行高实测 50.5px、整表 645px，1440 视口下
@@ -376,7 +395,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .ident .node { font-size: 13.5px; font-weight: 700; color: var(--ink); }
 .proto {
   margin-left: 5px;
-  padding: 1px 5px; border-radius: 4px;
+  padding: 1px 5px; border-radius: var(--radius-xs);
   background: var(--surface-3); color: var(--ink-3);
   font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
 }
@@ -385,20 +404,24 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
   height: 19px; padding: 0 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-chip);
   border: 1px solid transparent;
   font-size: 11px; font-weight: 700; line-height: 1;
   white-space: nowrap;
 }
-.chip-good    { color: var(--good);   background: var(--good-soft);   border-color: var(--good-line); }
-.chip-warn    { color: var(--warn);   background: var(--warn-soft);   border-color: var(--warn-line); }
-.chip-bad     { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
-.chip-neutral { color: var(--ink-3);  background: var(--surface-2);   border-color: var(--line); }
+/* 通用药丸与分数药丸的四档语义配色完全同构（color / background / border-color 逐字相同），
+   合成一份。两组各自的基础规则（.chip / .score）只管尺寸与中性兜底，档位配色都在这里：
+   合并是安全的，特异性按单个选择器算（.chip-* 是 0,1,0，.score[data-band] 是 0,2,0），
+   都不低于各自的基础规则，所以 .score 的基础规则写在后面也盖不掉这里的 border-color。 */
+.chip-good, .score[data-band="good"] { color: var(--good); background: var(--good-soft); border-color: var(--good-line); }
+.chip-warn, .score[data-band="warn"] { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line); }
+.chip-bad, .score[data-band="bad"] { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+.chip-neutral, .score[data-band="na"] { color: var(--ink-3); background: var(--surface-2); border-color: var(--line); }
 
 /* --- 出口 IP --- */
 .cell-ip { white-space: nowrap; }
 .ip {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px; font-weight: 700; color: var(--ink); letter-spacing: 0.01em;
   /* 零 JS 的复制路径：单击即选中整个 IP，再 Ctrl+C。这条在 .mhtml 里是**唯一**能用的
      复制方式——Chrome 把 file:// 打开的 mhtml 放进沙箱且不设 allow-scripts，
@@ -409,7 +432,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   display: inline-flex; align-items: center; gap: 3px;
   height: 18px; padding: 0 5px; margin-left: 5px;
   vertical-align: middle;
-  border-radius: 5px;
+  border-radius: var(--radius-tag);
   border: 1px solid var(--line);
   background: var(--surface-2);
   color: var(--ink-3);
@@ -438,7 +461,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 }
 .cell-isp .isp-sub {
   display: block; margin-top: 1px; color: var(--ink-3); font-size: 10.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cell-isp .route { color: var(--ink-3); }
@@ -450,15 +473,13 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .score {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 38px; height: 22px; padding: 0 7px;
-  border-radius: 6px; border: 1px solid var(--line);
+  border-radius: var(--radius-chip); border: 1px solid var(--line);
   background: var(--surface-2); color: var(--ink-3);
   font-size: 13px; font-weight: 800; line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.score[data-band="good"] { color: var(--good);   background: var(--good-soft);   border-color: var(--good-line); }
-.score[data-band="warn"] { color: var(--warn);   background: var(--warn-soft);   border-color: var(--warn-line); }
-.score[data-band="bad"]  { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
-.score[data-band="na"]   { color: var(--ink-3);  background: var(--surface-2);   border-color: var(--line); }
+  /* 四档配色的规则与 .chip-* 合并到上面的「通用药丸」段：两组的 color / background /
+     border-color 逐字相同，改一处等于同时改两处。 */
 
 /* --- IPure 六项场景评分 --- */
 .scenarios {
@@ -468,7 +489,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 .scn {
   display: inline-flex; align-items: center; gap: 3px;
   height: 19px; padding: 0 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-tag);
   border: 1px solid transparent;
   font-size: 10.5px; font-weight: 700; line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -491,6 +512,10 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 }
 
 .scn-lbl { font-weight: 600; }
+/* 场景分数是多位数（-1 到 100），等宽数字才能让同一列的不同行对齐。父级 .scn 已经设了
+   tabular-nums 并会继承下来，这里再显式钉一次：将来若给 .scn 换字体，数字不会跟着变比例字。 */
+.scn-num { font-variant-numeric: tabular-nums; }
+
 .scn-none { display: inline-flex; align-items: center; color: var(--ink-3); font-size: 11px; }
 
 /* --- 失败行不留白：原因与卡住的步骤占住本该显示网络信息的跨列单元格 --- */
@@ -524,7 +549,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   z-index: 40;
   max-width: min(92vw, 560px);
   padding: 10px 16px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent); color: var(--accent-ink);
   box-shadow: var(--shadow-pop);
   font-size: 12.5px; font-weight: 600;
@@ -549,7 +574,22 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
 @media (max-width: 900px) {
   .table-wrap { background: none; border: 0; box-shadow: none; overflow: visible; }
   .grid { display: block; min-width: 0; }
-  .grid colgroup, .grid thead { display: none; }
+  .grid colgroup { display: none; }
+  /* 卡片态的表头不能 display:none —— 那会把十个列名从可访问性树里一起删掉，而卡片态的
+     字段标签只剩 `td[data-label]::before` 的 CSS 生成内容（各读屏器对生成内容的支持不一致）。
+     这里复用本文件 `.sr-only` 的 clip-rect 手法：绝对定位后脱离文档流、不占卡片高度；
+     thead/tr/th 显式 block 化，然后被祖先的 clip 整个裁掉——连第一个 th 的底色都不落像素。 */
+  .grid thead {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .grid thead tr, .grid thead th { display: block; }
   .grid tbody { display: block; }
   .grid .row {
     display: block;
@@ -595,7 +635,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
     margin-bottom: 6px;
     padding: 0 9px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     background: var(--surface-2);
     line-height: 24px;
   }
@@ -638,7 +678,6 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
-.snapshot-state b { color: var(--ink); font-weight: 700; }
 
 /* 只在 .mhtml 快照里出现的那条提示：浏览器把 mhtml 的脚本关在沙箱里，复制按钮不会
    被绑定，所以必须把「单击 IP 全选再 Ctrl+C」这条零 JS 路径写在人看得见的地方。
@@ -650,4 +689,3 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liber
   font-size: 12px;
   line-height: 1.5;
 }
-.snapshot-note b { color: var(--ink); font-weight: 700; }

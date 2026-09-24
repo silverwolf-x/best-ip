@@ -26,7 +26,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --prefer-offline --no-audit
-      - name: Check JavaScript and Worker syntax
+      # npm run check = 语法（scripts/check_js.mjs）+ 前端契约（scripts/check_frontend_contracts.mjs）
+      # + MHTML 序列化往返（frontend-next/tools/mhtml-roundtrip.mjs）。新断言接在 check 里，
+      # 所以只要这条在跑，CI 就自动覆盖它们，不必在这里逐条罗列。
+      - name: Check JavaScript syntax, frontend contracts and mhtml roundtrip
         run: npm run check
       - name: Wrangler dry-run
         run: npm run dry-run

@@ -12,9 +12,12 @@ Status: implemented
 - **通过 CSSOM 写入的不算内联样式，不受限制**：`element.style.cssText`、`element.style.setProperty()`、
   `element.style.color = …`。整段颜色写进去也照生效。
 
-也就是说，同一句「给这个元素一个颜色」，拼进标记在线上静默失效，进 DOM 之后用 CSSOM 写则生效——而**两者在本地表现完全相同**：
-`scripts/dev.py` 是纯静态文件服务器，不经过 Worker、也不发任何 CSP 头（`grep -i content-security scripts/dev.py` 无命中），
-本地浏览器对两种写法一样放行。这个差异只在生产成立。
+也就是说，同一句「给这个元素一个颜色」，拼进标记在线上静默失效，进 DOM 之后用 CSSOM 写则生效——而**（当时）两者在本地表现完全相同**：
+`scripts/dev.py` 那时候是纯静态文件服务器，不经过 Worker、也不发任何 CSP 头（`grep -i content-security scripts/dev.py` 无命中），
+本地浏览器对两种写法一样放行。这个差异只在生产成立。**（后续事实更新（2026-09-24）：dev 现在也发同一串 CSP——
+静态根改指 `frontend-next/`、那串字面量从 `worker/responses.js` 读出，见
+[本地 dev 改指 frontend-next，并发出与生产同源的 CSP](../process/2026-09-24-dev-serves-frontend-next-with-csp.md)。
+本节其余文字描述的是当时的现场。）**
 
 这次就撞上了。详情弹窗的 IPure 分数节点是把 `color` / `border-color` / `background` 拼进 `innerHTML` 的
 （`frontend/src/views/detail-view.js`），**线上从来没上过色**：`data-ipure-score` 还不存在的时候，
@@ -48,6 +51,10 @@ Status: implemented
 逐个补齐是把 dev 变成半个 Worker。**正确的收敛方向是消掉分叉本身**：改成 CSP 下两种环境都合法的 CSSOM 写法之后，
 本地与线上的行为一致，dev 侧不需要任何 CSP。
 
+（**后续事实更新（2026-09-24）**：这条做法后来被采纳——`scripts/dev.py` 现在从 `worker/responses.js` 读出**同一串** CSP 发给 `text/html` 响应。
+本节保留原文，记录当时的判断与依据；它仍然是这条做法最强的反对意见，采纳的依据与代价见
+[本地 dev 改指 frontend-next，并发出与生产同源的 CSP](../process/2026-09-24-dev-serves-frontend-next-with-csp.md)。）
+
 ## Alternatives considered
 
 **给 `style-src` 补 `'unsafe-inline'`，让原来的 `innerHTML` 写法直接生效。** 最强理由：一个头的改动，前端一行都不用动，
@@ -75,16 +82,19 @@ Status: implemented
 ## Consequences
 
 - 收益：详情弹窗的 IPure 分数在生产上**第一次真正带上色**；表格分数格、场景 chip、详情 hero 三个出口第一次一致。
-- 收益：规则可机械判定——`frontend/` 下 `style=` 为 0 处。这条目前靠在本文与
-  [IPure 色带笔记](../bug-fix/2026-09-22-ipure-score-band-coffee-tone.md) 里写明的约定，
-  **没有进 `npm run check`**（那支脚本只做 `node --check` 语法检查）；要变成门禁需要在 `scripts/check_js.mjs` 加一条扫描。
+- 收益：规则可机械判定——`frontend-next/` 下标记形式的 `style=` 为 0 处。这条已经从【约定】变成**门禁**：
+  `scripts/check_frontend_contracts.mjs` 的契约 a 扫描 `frontend-next/index.html` 与 `app/`、`export/`、`tools/`
+  下的脚本，经 `npm run check` 进 CI 与发布前置；落地范围、正则边界与代价见
+  [前端契约门禁进 npm run check](../process/2026-09-24-frontend-contract-gates-in-check.md)。
+  （原文写的是「没有进 `npm run check`、要变成门禁需要在 `scripts/check_js.mjs` 加一条扫描」——已被这条取代。）
 - 代价：视图层的「一步渲染」被拆成两步——先插标记，再写样式。新增着色点必须记得写第二步，
   漏写不会报错，只会退回兜底灰，与本缺陷的失效形态相同（这也是为什么兜底通道要选一个能看的颜色，而不是透明的无效值）。
 - 代价：CSSOM 写法要求节点先在 DOM 里。本仓库没有服务端渲染，故无影响；若将来引入 SSR 或把视图当字符串生成，
   这条约束需要重新处理。
-- 未处理（相邻发现，未纳入本次改动）：`style-src` 与 `script-src` 在**本地开发环境下都不存在**，
-  因此任何「拼标记样式」或「依赖内联脚本」的新代码都不会在本地报错。是否给 `scripts/dev.py` 加一层
-  与生产同构的 CSP 是独立决定，本文只把写法约束定下来。
+- 已处理（相邻发现，后来落地；本文定下写法约束之后的事）：`style-src` 与 `script-src` 当时在**本地开发环境下都不存在**，
+  因此任何「拼标记样式」或「依赖内联脚本」的新代码都不会在本地报错。`scripts/dev.py` 现在已改指 `frontend-next/`，
+  并从 `worker/responses.js` 读出**同一串** CSP（只往 `connect-src` 追加本地真实 apiBase 的 origin）发给 `text/html` 响应——
+  见 [本地 dev 改指 frontend-next，并发出与生产同源的 CSP](../process/2026-09-24-dev-serves-frontend-next-with-csp.md)。
 
 ## Testing
 
