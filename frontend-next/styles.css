@@ -3,7 +3,7 @@
    ----------------------------------------------------------------------------
    设计取向：单视图、无弹窗、无展开、无二级页，**信息密度靠一张十列宽表**——一行
    就是一个节点的全部结论（9 项有用信息 + 排名），没有折叠、没有表头逐列筛选行。
-   因此这一份 CSS 只服务一个职责：把 9 项有用信息排进一行（实测行高 50.5px，两行文案的失败行 54.1px）而不互相挤压。
+   桌面以十列宽表保留密度，窄屏以流式卡片完整显示字段，行高由内容决定。
 
    色彩契约（有意继承 frontend/styles.css 里已验证的那一套语义色）：
    - good / warn / danger / info 两组主题的取值逐字照搬旧版，避免重算对比度时
@@ -18,15 +18,15 @@
   color-scheme: light dark;
 
   /* 版面 */
-  --bg: #f1f3f7;
+  --bg: #eef1f6;
   --surface: #ffffff;
-  --surface-2: #f6f8fa;
-  --surface-3: #eaeef3;
-  --line: #dfe4ea;
-  --line-2: #cbd3dc;
-  --shadow-row: 0 1px 2px rgba(16, 21, 27, 0.04);
-  --shadow-pop: 0 10px 30px rgba(16, 21, 27, 0.14);
-
+  --surface-2: #f5f7fb;
+  --surface-3: #e9edf5;
+  --surface-row: #fcfdff;
+  --line: #dfe4ec;
+  --line-2: #c8d0dc;
+  --shadow-row: 0 1px 3px rgba(16, 21, 27, 0.035);
+  --shadow-pop: 0 8px 24px rgba(16, 21, 27, 0.12);
   /* 文字：三级墨色，每一级都对 --surface / --surface-2 过 AA */
   --ink: #10151b;
   --ink-2: #3f4753;
@@ -48,9 +48,9 @@
   --info: #1f4d8a;
   --info-soft: #e7f0fc;
 
-  --accent: #10151b;
+  --accent: #121a2b;
   --accent-ink: #ffffff;
-  --accent-hover: #2a323d;
+  --accent-hover: #24365a;
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -61,6 +61,10 @@
   --radius-chip: 6px;
   --radius-pill: 999px;
 
+  /* 页面左右留白：窄屏 8px、宽屏 24px，中间连续过渡。shell 的正留白与 topbar 的
+     负外边距共用同一个值，两处写死 24px 的话改一处就会错位。 */
+  --gutter: clamp(8px, 2.4vw, 24px);
+
   /* 等宽栈只写一份，三处引用（code / .ip / .isp-sub）以前各抄一遍。取短的这一版：`code`
      原来多写的 "Liberation Mono" 对页面里唯一一类 <code>（带 .ip，特异性更高）从不生效，
      去掉它不会有任何渲染差异。 */
@@ -69,15 +73,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0f14;
-    --surface: #141a21;
-    --surface-2: #1a212a;
-    --surface-3: #222b36;
-    --line: #263140;
-    --line-2: #38455a;
-    --shadow-row: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
-
+    --bg: #0b1018;
+    --surface: #141b25;
+    --surface-2: #1a2330;
+    --surface-3: #242f3e;
+    --surface-row: #17202b;
+    --line: #263344;
+    --line-2: #3a4a61;
+    --shadow-row: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4);
     --ink: #e8eef5;
     --ink-2: #c2ccd8;
     --ink-3: #9aa6b4;
@@ -135,9 +139,11 @@ code { font-family: var(--font-mono); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-xs); }
 
 .shell {
-  max-width: 1400px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 0 20px 56px;
+  /* 左右留白是「流」的：窄屏 8px、宽屏 24px，中间连续过渡。原先靠 620px 那条
+     断点把 24px 直接跳成 8px，断点两侧各留一段谁都别扭的宽度。 */
+  padding: 0 var(--gutter) 56px;
 }
 
 /* ---------------------------------------------------------------- 顶部条 --- */
@@ -147,11 +153,10 @@ code { font-family: var(--font-mono); }
   position: sticky;
   top: 0;
   z-index: 10;
-  margin: 0 -20px 14px;
-  padding: 12px 20px 12px;
-  background: var(--bg);
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
-  backdrop-filter: saturate(1.4) blur(12px);
+  margin: 0 calc(-1 * var(--gutter)) 12px;
+  padding: 12px var(--gutter);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
 }
 
@@ -159,7 +164,7 @@ code { font-family: var(--font-mono); }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 18px;
+  gap: 8px 18px;
   flex-wrap: wrap;
   min-height: 26px;
 }
@@ -174,9 +179,9 @@ code { font-family: var(--font-mono); }
 
 .brand h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 750;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.02em;
   white-space: nowrap;
 }
 
@@ -217,12 +222,14 @@ code { font-family: var(--font-mono); }
 /* 输入控件统一外壳，保证三种控件等高、圆角一致 */
 .field {
   display: flex; align-items: center; gap: 7px;
-  height: 34px; padding: 0 10px;
+  height: 34px; padding: 0 11px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 1px 2px rgba(16, 21, 27, 0.03);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
+.field:hover { border-color: var(--line-2); }
 /* 焦点晕染从 --focus 派生，而不是写死浅色的 rgb(31 77 138 / 0.14)：深色主题的 --focus 是
    #58a6ff，写死值在那两级深表面上合成后只有 1.08:1，等于这层晕染根本不存在。这不是无障碍
    违规——真正的键盘焦点指示是上面 :focus-visible 的 outline（深色下 6.42:1，合规）——只是
@@ -240,8 +247,9 @@ code { font-family: var(--font-mono); }
 .field input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
 .field-compact { padding-right: 6px; }
 .field-compact select {
-  width: auto; min-width: 92px;
+  width: auto; min-width: 96px;
   padding-right: 18px;
+  font-weight: 550;
   background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
     linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
   background-position: right 8px center, right 3px center;
@@ -260,13 +268,21 @@ code { font-family: var(--font-mono); }
   font: inherit; font-size: 13px; font-weight: 650;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  box-shadow: 0 1px 2px rgba(16, 21, 27, 0.04);
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
-.btn:hover { background: var(--surface-3); border-color: var(--line-2); }
-.btn:active { transform: translateY(1px); }
-.btn[disabled] { opacity: 0.55; cursor: progress; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn:hover { background: var(--surface-3); border-color: var(--line-2); box-shadow: 0 2px 6px rgba(16, 21, 27, 0.08); }
+.btn:active { transform: translateY(1px); box-shadow: none; }
+.btn[disabled] { opacity: 0.55; cursor: progress; box-shadow: none; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
 .btn-ghost { color: var(--ink-2); }
 .export-group { display: flex; align-items: center; gap: 0; }
 .export-group .btn-primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -296,8 +312,7 @@ code { font-family: var(--font-mono); }
 }
 
 /* ------------------------------------------------------------------ 表格 --- */
-/* 信息密度靠一张真表格：十列就是十件事实，行高实测 50.5px、整表 645px，1440 视口下
-   12 行连同表头全在屏内。表头是静态列名，不挂逐列筛选器——筛选只有全局搜索 + 状态筛选。 */
+/* 十列宽表保持紧凑的双行节奏。表头只放列名，筛选与排序集中在顶部。 */
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -327,23 +342,30 @@ code { font-family: var(--font-mono); }
 .grid thead th.col-scn { min-width: 346px; }
 
 .grid thead th {
-  padding: 8px 9px;
+  padding: 9px 10px;
   text-align: left;
   font-size: 10.5px;
   font-weight: 800;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-3);
-  background: var(--surface-2);
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--surface-2) 90%, var(--surface-3) 10%);
   border-bottom: 1px solid var(--line-2);
   white-space: nowrap;
 }
-.grid thead th + th { border-left: 1px solid var(--line); }
+.grid thead th + th { border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent); }
 .grid thead th[data-align="center"],
 .grid tbody td[data-align="center"] { text-align: center; }
 
 /* --- 行 --- */
-.row { transition: background 120ms ease; }
+.row {
+  background: var(--surface);
+  transition: background 120ms ease;
+}
+.row:nth-child(even) { background: var(--surface-row); }
+/* `> td` 这一层必须留着：给单元格设 display:flex 会让整行错位，而这条规则一旦丢了
+   前导选择器，浏览器会把整段声明当成非法 qualified rule 静默丢弃——单元格的
+   内边距、分隔线、字号与垂直居中会同时消失，页面上看不出任何报错。 */
 .row > td {
   padding: 7px 9px;
   border-bottom: 1px solid var(--line);
@@ -351,7 +373,11 @@ code { font-family: var(--font-mono); }
   font-size: 12.5px;
   vertical-align: middle;
 }
-.grid tbody tr:last-child > td { border-bottom: 0; }
+/* 末行不画分隔线（下面就是表格外框，两条线会挤成一条重线），但**高度必须留着**：
+   用 `border-bottom: 0` 会让末行比其余行矮 1px，而「数据行行高一致」是这张表的可读性
+   来源（行高忽高忽低，眼睛就没法沿着一列往下扫）。所以这里只把线改成透明——
+   1px 照旧占位，视觉上等同于没有这条线。 */
+.grid tbody tr:last-child > td { border-bottom-color: transparent; }
 /* hover 反馈：`--surface-3`（#eaeef3）才看得出来（`--surface-2` 对白底只有约 1.03:1）。
    这条必须排在 `.row[data-status="failed"] > td` **之后**：两者特异性相同，靠后者胜出，
    否则失败行（自己带 surface-2 底色）hover 时一动不动。 */
@@ -377,27 +403,53 @@ code { font-family: var(--font-mono); }
 .row[data-tier="top"] > td.rank { color: var(--warn); background: var(--warn-soft); }
 
 /* --- 节点 --- */
-/* td 保持 table-cell：给单元格设 display:flex 会让整行错位。这里靠单行 +
-   省略号处理过长节点名，完整名字留在 title 里。 */
+/* 节点做双行：第一行放节点名，第二行放协议与异常状态药丸 */
 .ident {
-  max-width: 0; /* 配合 table-layout 的默认算法，让 ellipsis 真的生效 */
-  /* 左右内边距比别的格窄：这一列的内容（节点名 + 协议 tag + 状态药丸）是十列里唯一
-     还会溢出的一处，实测最长的一行要 275.83px，而列宽只给 268px。把这一格的左右
-     内边距从 9px 收到 5px，内容整体左移 4px、右沿又让出 4px，合计 8px 就把那
-     8.83px 的裁切消掉了——不必把列加到 276px（那会让十列实测和超过 1440 视口可用
-     的 1358px，用横向滚动去换一个圆角不划算）。 */
-  padding-left: 5px;
-  padding-right: 5px;
+  /* max-width: 0 是这套省略号的前提：table-layout 是 auto，单元格若按内容要宽度，
+     一个长节点名就能把整列撑宽、把别的列挤走。压成 0 之后这一列只吃 colgroup 给的
+     268px 预算，超出的名字由 .node 自己省略。
+     min-width 是它的下限：只有 max-width 时，邻居列里出现一段不可断的长内容（实测是
+     一个长 ISP 名）会把这列一路挤到 82px——名字、协议、状态药丸一起溢出到出口 IP 列上，
+     变成两段文字叠在一起。给一个下限，挤到 200px 就停：名字仍读得完，也不会再撞到隔壁。
+     （CSS 里 min-width 压过 max-width，所以两条并不打架。） */
+  min-width: 200px;
+  max-width: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: hidden;
+}
+.ident .node {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ident .node { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.ident .ident-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  white-space: nowrap;
+  /* 协议行统一给到 19px（= 状态药丸的高度）。不给下限时，「部分」行的这一行是 19px、
+     「完整」行只有协议本身（14.82px），整张表的横线就在两种行之间差 3px 来回错位。
+     行高在这里是结构算出来的，不是给 tr 写死一个数——写死的话，节点名一旦折行就被截。 */
+  min-height: 19px;
+}
 .proto {
-  margin-left: 5px;
-  padding: 1px 5px; border-radius: var(--radius-xs);
-  background: var(--surface-3); color: var(--ink-3);
-  font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.35;
 }
 
 /* --- 通用药丸 --- */
@@ -459,12 +511,12 @@ code { font-family: var(--font-mono); }
   display: block; color: var(--ink); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* AS 号保持普通等宽次级文本，不搞成丸子 */
 .cell-isp .isp-sub {
-  display: block; margin-top: 1px; color: var(--ink-3); font-size: 10.5px;
+  display: block; margin-top: 2px; color: var(--ink-3); font-size: 11px;
   font-family: var(--font-mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.cell-isp .route { color: var(--ink-3); }
 
 /* --- 接入 / 原生性 --- */
 .cell-kind, .cell-native { white-space: nowrap; }
@@ -516,13 +568,15 @@ code { font-family: var(--font-mono); }
    tabular-nums 并会继承下来，这里再显式钉一次：将来若给 .scn 换字体，数字不会跟着变比例字。 */
 .scn-num { font-variant-numeric: tabular-nums; }
 
+/* 「未连接成功」的行不画六个 -1，只写一句话。 */
 .scn-none { display: inline-flex; align-items: center; color: var(--ink-3); font-size: 11px; }
 
 /* --- 失败行不留白：原因与卡住的步骤占住本该显示网络信息的跨列单元格 --- */
-/* 失败行与数据行同一个行高：数据行是两行（服务商 + ASN·公司类型）自然撑到 51px，
-   失败行只有一行解释，不给下限就塌到 37px——真实数据里 25 行有 11 行失败，表的
-   横线在失败行处突然收紧，读起来像两种表拼在一起。height 在 td 上是「至少这么高」。 */
-.cell-absent { color: var(--ink-3); height: 51px; }
+/* 失败行与数据行同一个行高，靠的是「节点」格里那条固定 19px 的状态行（见 .ident-sub）：
+   失败行一定带「失败」药丸，所以它和「部分」行一样是两行，高度自然对齐。
+   原先这里给 `.cell-absent` 写死 height: 51px——那是「节点」列还只有单行时的补丁，
+   现在行高由两行结构决定，再写死一个数只会和数据行打架。 */
+.cell-absent { color: var(--ink-3); }
 .cell-absent .failure {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--danger); font-size: 12.5px; font-weight: 600;
@@ -566,19 +620,32 @@ code { font-family: var(--font-mono); }
 }
 
 /* --------------------------------------------------------------- 响应式 --- */
-/* 表格只有两种命运：宽度够就十列平铺，不够就整张横向滚动。列宽与密度在任何宽度下
-   都不变——删列等于把「一行 9 项」偷偷减配，压列宽等于把 6 个场景 chip 折成三行。 */
+/* 整份样式只有一个断点，而且它是一个「模式切换」而不是一套补丁：
+   可用宽度够就十列平铺（列宽是量出来的预算，见上），不够就折成「一行一节点」。
 
-/* 再窄就不滚了：表格折成「一行一卡片」，每个单元格用 data-label 自报家门，
-   9 项内容依旧零点击可见，只是从横向排列改成纵向排列。 */
+   折成卡片之后，卡片内部不再出现任何轨道数。写死 `grid-template-columns: 26px 1fr
+   auto auto` 那种做法看着整齐，实际是把「数据正好长这样」当成了契约：换一条长 IPv6、
+   一个长 ISP 名，或者视口落在两个断点之间，格子就会互相压上去。这里改用
+   `display: flex` + `flex-wrap: wrap`——排不下就换行，宽度连续变化不会翻车；
+   `min-width: 0` + `overflow-wrap: anywhere` 保证长内容肯折行而不是溢出到邻居身上。
+   间距和留白用 clamp() 连续缩放，所以 620px 那种「再补一刀」的断点整条删掉了。 */
+
 @media (max-width: 900px) {
+  .topbar-controls { gap: 6px; }
+  .topbar-controls > .field:not(.field-compact) { flex: 1 1 100%; min-width: 0; }
+  .topbar-controls > .field-compact { flex: 1 1 140px; min-width: 0; }
+  .topbar-controls .field-compact select { width: 100%; min-width: 0; }
+  .topbar-controls .export-group { flex: 1 1 240px; }
+  .topbar-controls .export-group .btn { flex: 1 1 0; }
+  .topbar-controls .field, .topbar-controls .btn { height: 36px; }
+
   .table-wrap { background: none; border: 0; box-shadow: none; overflow: visible; }
   .grid { display: block; min-width: 0; }
   .grid colgroup { display: none; }
-  /* 卡片态的表头不能 display:none —— 那会把十个列名从可访问性树里一起删掉，而卡片态的
-     字段标签只剩 `td[data-label]::before` 的 CSS 生成内容（各读屏器对生成内容的支持不一致）。
+  /* 卡片态的表头不能 display:none —— 那会把十个列名从可访问性树里一起删掉。
      这里复用本文件 `.sr-only` 的 clip-rect 手法：绝对定位后脱离文档流、不占卡片高度；
-     thead/tr/th 显式 block 化，然后被祖先的 clip 整个裁掉——连第一个 th 的底色都不落像素。 */
+     thead/tr/th 显式 block 化，然后被祖先的 clip 整个裁掉——连第一个 th 的底色都不落像素。
+     它仍是 DOM 里的一段文本，但一个像素都不画，也不参与重叠判定。 */
   .grid thead {
     position: absolute;
     width: 1px; height: 1px;
@@ -591,71 +658,170 @@ code { font-family: var(--font-mono); }
   }
   .grid thead tr, .grid thead th { display: block; }
   .grid tbody { display: block; }
+
   .grid .row {
-    display: block;
+    --card-gap: clamp(6px, 2vw, 10px);
+    --rank-width: 22px;
+    --score-width: 38px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px var(--card-gap);
     margin-bottom: 8px;
-    padding: 10px 12px 11px 13px;
+    padding: 10px clamp(10px, 2.6vw, 14px);
     background: var(--surface);
     border: 1px solid var(--line);
-    border-left: 3px solid var(--ink-faint);
+    border-left: 2px solid var(--ink-faint);
     border-radius: var(--radius);
     box-shadow: var(--shadow-row);
+    transition: border-color 120ms ease;
   }
+  .grid .row:hover { border-right-color: var(--line-2); }
   .grid .row[data-verdict="good"] { border-left-color: var(--good); }
   .grid .row[data-verdict="mixed"] { border-left-color: var(--warn); }
   .grid .row[data-verdict="bad"] { border-left-color: var(--danger); }
+
+  /* 每个格子都是一个可收缩的 flex 项。min-width:0 允许长内容折行而不是顶破卡片，
+     overflow-wrap 让没有空格可断的长串（IPv6、ISP 全名）也肯断。 */
   .grid .row > td {
-    display: block;
-    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 0;
     border-bottom: 0;
     background: none;
+    overflow-wrap: anywhere;
   }
-  .grid .row > td[data-align="center"] { text-align: left; }
-  .grid .row > td[data-label]::before {
-    content: attr(data-label);
-    display: inline-block;
-    min-width: 88px;
-    color: var(--ink-3);
-    font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
-    vertical-align: middle;
-  }
-  /* 节点名与出口 IP 自己就说明了是什么，再顶一个标签只是噪声。 */
-  .grid .row > td.ident::before,
-  .grid .row > td.cell-ip::before { display: none; }
-  /* 卡片模式必须放开 .ident 的单行裁切：max-width:0 是为表格算法准备的，
-     到了 block 布局它会把整格内容裁成 0 宽——节点名与协议 tag 直接消失。 */
-  .grid .row > td.ident { max-width: none; overflow: visible; white-space: normal; }
-  /* 同上：max-width:0 只服务于表格算法，block 布局里会把国名裁成 0 宽。 */
-  .grid .row > td.cell-geo { max-width: none; overflow: visible; white-space: normal; }
-  /* 卡片模式整行都是块级元素，这条给表格算列宽的硬下限必须撤销，否则窄屏会被它
-     撑出横向滚动（375px 下实测 18px），chip 照样折行。 */
-  .grid .row > td.cell-scn { min-width: 0; }
+
+  /* --- 第一行：排名 + 节点名 + 两个总分 --- */
   .grid .row > td.rank {
-    display: inline-block;
-    margin-bottom: 6px;
-    padding: 0 9px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
-    background: var(--surface-2);
+    order: 1;
+    flex: 0 0 auto;
+    justify-content: center;
+    width: var(--rank-width); height: 24px;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--ink-3);
+    font-size: 11px;
+    font-weight: 700;
     line-height: 24px;
   }
   .grid .row[data-tier="top"] > td.rank {
     color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line);
   }
-  /* 卡片模式宽度够，服务商名与 ASN 不必再截断。 */
-  .grid .row .isp, .grid .row .isp-sub { white-space: normal; }
-  /* 卡片模式是纵向堆叠，高度由内容决定，必须撤掉表格模式给失败行的 51px 下限。 */
-  .grid .row > td.cell-absent { height: auto; }
-}
+  .grid .row > td.ident {
+    order: 2;
+    /* 首行由排名、名称和两项总分组成；名称吃掉剩余宽度，网络字段从下一行开始。 */
+    flex: 1 1 calc(100% - var(--rank-width) - 2 * var(--score-width) - 3 * var(--card-gap));
+    display: block;
+    max-width: none;
+    padding: 0;
+    overflow: visible;
+  }
+  .grid .row > td.ident .node {
+    font-size: clamp(13px, 3.6vw, 14px);
+    font-weight: 750;
+    /* 卡片态不裁节点名：桌面那套 nowrap + 省略号在这里会把名字咬掉，
+       而卡片没有「列宽预算」这个约束，折行是免费的。 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .grid .row > td.ident .ident-sub { white-space: normal; flex-wrap: wrap; }
 
-@media (max-width: 620px) {
-  .shell { padding: 0 12px 32px; }
-  .topbar { margin: 0 -12px 12px; padding: 10px 12px; }
-  .field:not(.field-compact) { flex: 1 1 100%; }
-  .field-compact { flex: 1 1 auto; }
-  .export-group { flex: 1 1 100%; }
-  .export-group .btn { flex: 1 1 0; }
-  .grid .row > td[data-label]::before { min-width: 76px; }
+  /* order 把两个总分提到名字后面：DOM 顺序里它们排在最后（导出与快照都按那个顺序），
+     这里只改视觉次序——榜单第一眼看的就是分数，不该压在卡片底部。 */
+  .grid .row > td.cell-coffee,
+  .grid .row > td.cell-ipure {
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .grid .row > td.cell-coffee { order: 3; }
+  .grid .row > td.cell-ipure { order: 4; }
+  /* 两个分数只差一个数字，卡片里必须标出谁是谁。生成内容只是视觉冗余：
+     两个格子的 title 与 data-label 都写着全称。 */
+  .grid .row > td.cell-coffee::before { content: "Coffee"; }
+  .grid .row > td.cell-ipure::before { content: "IPure"; }
+  .grid .row > td.cell-coffee::before,
+  .grid .row > td.cell-ipure::before {
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ink-3);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .grid .row > td.cell-coffee .score,
+  .grid .row > td.cell-ipure .score {
+    min-width: var(--score-width); height: 25px; padding: 0 5px; font-size: 16px;
+  }
+
+  /* --- 第二行：出口 IP + 归属地 + 接入 + 原生性 --- */
+  .grid .row > td.cell-ip { order: 5; flex: 1 1 auto; gap: 5px; }
+  .grid .row > td.cell-ip .ip { font-size: 12.5px; white-space: normal; }
+  .grid .row > td.cell-geo {
+    order: 6;
+    flex: 0 1 auto;
+    max-width: none;
+    color: var(--ink-2);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .grid .row > td.cell-kind { order: 7; flex: 0 0 auto; }
+  .grid .row > td.cell-native { order: 8; flex: 0 0 auto; }
+
+  /* --- 第三行：服务商 + AS，独占一行，长名字折行 --- */
+  .grid .row > td.cell-isp {
+    order: 9;
+    flex: 1 1 100%;
+    display: block;
+  }
+  .grid .row > td.cell-isp .isp { font-size: 12px; white-space: normal; }
+  .grid .row > td.cell-isp .isp-sub {
+    margin: 2px 0 0;
+    color: var(--ink-3);
+    font-size: 11px;
+    white-space: normal;
+  }
+
+  /* --- 第四行：六项场景评分，窄了就折行，不挤不留白 --- */
+  .grid .row > td.cell-scn {
+    order: 11;
+    flex: 1 1 100%;
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px solid var(--line);
+  }
+  .grid .row > td.cell-scn .scenarios {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: clamp(2px, 1vw, 4px);
+  }
+  .grid .row > td.cell-scn .scn {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 22px;
+    justify-content: center;
+    padding: 0 4px;
+    font-size: 11px;
+  }
+  .grid .row > td.cell-scn .scn-lbl { font-size: 10.5px; }
+  .grid .row > td.cell-scn .scn-num { font-size: 11px; }
+
+  /* --- 失败节点：原因与配置服务商占住接着的整行，不留白也不冒充数据格 --- */
+  .grid .row > td.cell-absent {
+    order: 9;
+    flex: 1 1 100%;
+    display: block;
+    height: auto;
+    padding: 2px 0 0;
+  }
+  .grid .row > td.cell-absent .failure { font-size: 12.5px; }
+  .grid .row > td.cell-absent .failure-isp { margin-top: 2px; font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

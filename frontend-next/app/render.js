@@ -145,27 +145,24 @@ function identCell(document, result) {
   const td = textCell(document, "ident", "ident");
   const name = el(document, "span", "node");
   name.textContent = result.node || "未命名节点";
-  name.title = result.node || "未命名节点";
   td.append(name);
 
+  // 节点做双行：第一行放节点名，协议与状态药丸放在第二行
+  const sub = el(document, "span", "ident-sub");
   if (result.type) {
     const proto = el(document, "span", "proto");
     proto.textContent = result.type;
-    td.append(proto);
+    sub.append(proto);
   }
 
-  // 行状态药丸只在非「完整」时出现：完整是常态，每行都挂一个「完整」就是噪声。
-  // 失败行的原因写在后面的 colspan 单元格里，这里只标记状态本身。
-  if (result.status === "partial") td.append(chip(document, STATUS_LABELS.partial, "warn"));
-  else if (result.status === "failed") td.append(chip(document, STATUS_LABELS.failed, "bad"));
+  if (result.status === "partial") sub.append(chip(document, STATUS_LABELS.partial, "warn"));
+  else if (result.status === "failed") sub.append(chip(document, STATUS_LABELS.failed, "bad"));
 
-  // 这一列是十列里唯一还可能省略号的（最长的一行要 275.83px，列宽 268px）：会被吃掉
-  // 的是末尾状态药丸，所以整格带上 title，鼠标停上去（不论停在哪一段）都能读到状态。
+  if (sub.childNodes.length) td.append(sub);
+
   td.title = result.status && result.status !== "success"
     ? `${result.node || "未命名节点"}（${STATUS_LABELS[result.status]}）`
     : result.node || "未命名节点";
-  // 节点名自己也有 title，而它盖在整格上面：两处写一样的内容，否则鼠标停在节点名上
-  // （最自然的悬停位置）反而读不到状态——实测 elementFromPoint 命中的是 span.node。
   name.title = td.title;
 
   return td;
@@ -205,14 +202,10 @@ function ispCell(document, result) {
   isp.title = result.isp || "服务商未知";
   td.append(isp);
 
-  // ASN 与公司类型是同一条「这个地址是谁的」的事实，合成一行的次级说明。
+  // 去掉机房/托管、住宅宽带等冗余字样，第二行只保留纯文本 ASN，不搞成丸子
   const sub = el(document, "span", "isp-sub");
   const asnText = formatAsn(result.asn);
   if (asnText) sub.append(document.createTextNode(asnText));
-  if (result.company_type) {
-    if (asnText) sub.append(el(document, "span", "route"), document.createTextNode("·"));
-    sub.append(document.createTextNode(result.company_type));
-  }
   if (sub.childNodes.length) td.append(sub);
 
   return td;
