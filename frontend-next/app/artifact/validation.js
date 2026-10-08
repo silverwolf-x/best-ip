@@ -36,7 +36,7 @@ function validIp(value) {
   try { return new URL('http://[' + value + ']/').hostname.startsWith('['); } catch { return false; }
 }
 // IPure 优先的归属字段：旧产物没有它们（可缺），有就必须是字符串；network_source 记每组取值的来源。
-const networkSourceKeys = ['exit_ip', 'geo', 'isp'];
+const networkSourceKeys = ['exit_ip', 'geo', 'isp', 'kind', 'native'];
 function validateNetworkIdentity(record) {
   for (const key of ['country', 'country_code', 'region', 'city']) {
     if (record[key] != null && typeof record[key] !== 'string') throw new Error(`节点记录的 ${key} 无效`);

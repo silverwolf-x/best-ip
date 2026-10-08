@@ -379,7 +379,9 @@ function kindCell(document, result) {
   const td = cell(document, "kind", "cell-kind");
   const value = kindOf(result);
   const tone = value === "住宅" ? "good" : value === "机房" ? "warn" : "neutral";
-  td.append(quickFilter(chip(document, value, tone), "kind", value));
+  const chipEl = quickFilter(chip(document, value, tone), "kind", value);
+  chipEl.title = `${value}${sourceNote(result.sources?.kind)}`;
+  td.append(chipEl);
   return td;
 }
 
@@ -390,7 +392,7 @@ function nativeCell(document, result) {
   const chipEl = quickFilter(chip(document, value, tone), "native", value);
   // 三态 chip 只有三个词，而 native_status 是上游原话（如「广播 IP (AE)」「任播服务」）。
   const status = typeof result.native_status === "string" ? result.native_status.trim() : "";
-  if (status) chipEl.title = status;
+  chipEl.title = `${status || value}${sourceNote(result.sources?.native)}`;
   td.append(chipEl);
   return td;
 }

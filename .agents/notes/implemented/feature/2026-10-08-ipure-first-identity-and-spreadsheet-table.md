@@ -6,15 +6,15 @@ Status: implemented
 
 用户的要求是两件事：
 
-1. 出口 IP、国家和地区、服务商 / ISP 这三列要从 [IPure `/api/lookup`](https://ipure.dev/docs/api) 取，而不是 Coffee。此前这三列全部来自 Coffee 的 trace + lookup，IPure 只贡献评分；IPure 报告里关于这个 IP 的归属描述被解析时直接丢掉了。
+1. 出口 IP、国家和地区、服务商 / ISP 这三列（并举一反三到接入与原生性）要从 [IPure `/api/lookup`](https://ipure.dev/docs/api) 取，而不是 Coffee。此前这三列全部来自 Coffee 的 trace + lookup，IPure 只贡献评分；IPure 报告里关于这个 IP 的归属描述被解析时直接丢掉了。
 2. 表格「僵硬」：排序只能用顶部下拉里的六个固定选项（Coffee / IPure / 名称各升降），筛选只有全局搜索与状态下拉。想按国家排、按服务商筛、按流媒体分排序都做不到——IPure 六项场景评分挤在同一列里，连单独排序的对象都没有。
 
 ## Decision
 
 ### 归属信息：IPure 优先，按组回落
 
-- `ipure._parse_ipure_report` 多解析一个 `network = {ip, country, country_code, region, city, isp, org, asn}`，留在 `requests.ipure.data.network` 作原始证据。开发容器的网络策略拦了 ipure.dev，拿不到一份真实响应，所以解析器是**宽容**的：同一组键在顶层或 `geo` / `location` / `network` / `asn` / `connection` / `data` 等已知容器里找第一处非空值；`asn` 接受 `4713`、`"AS4713 NTT"`、`{"asn":4713,"name":…}`；只给两位字母的 `country` 当国家代码。找不到就是 null，不猜。
-- `collector._network_identity` 按组合并：地区组（国家 / 代码 / 地区 / 城市）与服务商组（ISP / AS 组织 / ASN）各自先看 IPure，IPure 那组全空才回落 Coffee。来源写进新字段 `network_source = {exit_ip, geo, isp}`。出口 IP 仍由 trace 发现——IPure 的查询必须带上一个 IP——IPure 回显的 `ip` 与之一致时记 `"ipure"`。
+- `ipure._parse_ipure_report` 多解析一个 `network`，留在 `requests.ipure.data.network` 作原始证据。字段按用户贴出的真实响应（8.8.8.8，2026-10-06）逐个对应：`geo.countryName` 是国名、`geo.country` 是**国家代码**（第一版宽容解析器把它当国名，于是国名丢了、只剩 "US"）；`asn.org` 是运营组织（"Google Public DNS"），`asn.name` 是 "GOOGLE - Google LLC, US" 形状的 AS 名，清洗成 "Google LLC"；`registry.org / country` 是 RIR 登记；`usageType`（"hosting"）与 `nativeType`（"native"）只在能下结论时给出布尔值。缺失或类型不对一律 null，不猜。
+- `collector._network_identity` 按五组合并：地区（国家 / 代码 / 地区 / 城市）、服务商（ISP = `asn.org`、AS 组织、ASN）、接入（住宅 / 机房）、原生性（含「广播 IP (登记国)」文案），每组先看 IPure，IPure 那组为空才回落 Coffee。来源写进 `network_source = {exit_ip, geo, isp, kind, native}`。出口 IP 仍由 trace 发现——IPure 的查询必须带上一个 IP——IPure 回显的 `ip` 与之一致时记 `"ipure"`。
 - 节点记录新增可选字段 `country`、`country_code`、`region`、`city`、`network_source`；后端 `validate_node` 与两份前端 `artifact/validation.js` 都放行并做类型校验。旧产物没有这些字段照常能读：`records.js` 先读顶层 `country / city`，没有再走原来的 `requests.lookup.data` → `coffee.lookup` → `location` 串。
 - 状态判定与「五项基础采集检查」没动：success / partial 仍要求 Coffee 的 page / trace / lookup 成功。这一轮只换显示值的来源，不改「什么算扫成功」的契约。
 

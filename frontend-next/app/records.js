@@ -136,9 +136,9 @@ function sourcesOf(record) {
   const source = record?.network_source;
   if (source && typeof source === "object" && !Array.isArray(source)) {
     const pick = (key) => (SOURCES.has(source[key]) ? source[key] : null);
-    return { ip: pick("exit_ip"), geo: pick("geo"), isp: pick("isp") };
+    return { ip: pick("exit_ip"), geo: pick("geo"), isp: pick("isp"), kind: pick("kind"), native: pick("native") };
   }
-  return { ip: null, geo: null, isp: null };
+  return { ip: null, geo: null, isp: null, kind: null, native: null };
 }
 
 /** 国家代码：两到三位字母才算，统一大写；其余一律 null。 */

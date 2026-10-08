@@ -131,9 +131,7 @@ async def request(
             error_type="ResponseTooLarge",
         )
     except _IPURE_TRANSIENT_ERRORS:
-        fallback = await _direct_report(
-            transport.proxy_url, url, timeout_seconds=timeout_seconds
-        )
+        fallback = await _direct_report(transport.proxy_url, url, timeout_seconds=timeout_seconds)
         if fallback is not None:
             return fallback
         return _ipure_request_result(
@@ -351,159 +349,91 @@ def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
     }
 
 
-# 出口 IP / 国家和地区 / 服务商 / ASN 的取值键。IPure 把这几项放在报告顶层还是放进某个子对象
-# （geo / network / asn …），官方文档没有承诺稳定的嵌套层级，所以按「先顶层、再已知容器」的
-# 顺序逐个找第一处非空值；找不到就是 None，由 collector 回落到 Coffee 的归属查询。
-_NETWORK_CONTAINERS = (
-    "geo",
-    "geoip",
-    "location",
-    "network",
-    "connection",
-    "asn",
-    "as",
-    "isp",
-    "ipInfo",
-    "ip_info",
-    "info",
-    "basic",
-    "summary",
-    "data",
-)
-_IP_KEYS = ("ip", "query", "address")
-_COUNTRY_KEYS = ("country", "countryName", "country_name")
-_COUNTRY_CODE_KEYS = ("countryCode", "country_code", "countryIso", "country_iso", "iso_code", "cc")
-_REGION_KEYS = ("region", "regionName", "region_name", "province", "subdivision")
-_CITY_KEYS = ("city", "cityName", "city_name")
-_ISP_KEYS = ("isp", "ispName", "isp_name", "carrier")
-_ORG_KEYS = (
-    "org",
-    "organization",
-    "organisation",
-    "asOrganization",
-    "as_org",
-    "asName",
-    "as_name",
-    "asnName",
-    "asn_name",
-    "company",
-)
-_ASN_KEYS = ("asn", "asNumber", "as_number", "as")
-_ASN_PATTERN = re.compile(r"^\s*(?:AS)?\s*(\d{1,10})\b", re.IGNORECASE)
+# 报告里关于这个 IP 本身的描述（2026-10 实测 8.8.8.8 的 /api/lookup 响应）：
+#   ip                                  回显的被查 IP
+#   geo.country / geo.countryName       国家代码（"US"）/ 国名（"United States"）；region / city
+#   asn.asn / asn.name / asn.org        AS 号 / AS 名（"GOOGLE - Google LLC, US"）/
+#                                       组织（"Google Public DNS"）
+#   registry.org / registry.country     RIR 登记的持有者与登记国
+#   usageType                           "hosting" 等使用类型
+#   nativeType                          "native" 等原生性判定
+# 字段缺失或类型不对一律记 None，由 collector 回落到 Coffee。
+_AS_NAME = re.compile(r"^\S+\s+-\s+(.+?)(?:,\s*[A-Z]{2})?$")
+# usageType / nativeType 只认能下结论的取值；其余（mobile、business 之类）不改 Coffee 的判断。
+_RESIDENTIAL_USAGE = {"residential", "isp", "home"}
+_DATACENTER_USAGE = {"hosting", "datacenter", "data_center", "cdn"}
+_NATIVE_TYPES = {"native"}
+_NON_NATIVE_TYPES = {"broadcast", "non-native", "nonnative", "non_native"}
 
 
-def _network_sources(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    sources = [payload]
-    for container in (payload, payload.get("data")):
-        if not isinstance(container, dict):
-            continue
-        for key in _NETWORK_CONTAINERS:
-            value = container.get(key)
-            if isinstance(value, dict) and value not in sources:
-                sources.append(value)
-    return sources
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
-def _first_text(sources: list[dict[str, Any]], keys: tuple[str, ...]) -> str | None:
-    for source in sources:
-        for key in keys:
-            value = source.get(key)
-            if isinstance(value, dict):
-                value = value.get("name")
-            text = _clean_text(value) if isinstance(value, str) else ""
-            if text:
-                return text
-    return None
+def _text_or_none(value: Any) -> str | None:
+    return _clean_text(value) or None if isinstance(value, str) else None
 
 
-def _asn_number(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None:
+def _as_name(value: Any) -> str | None:
+    """ "GOOGLE - Google LLC, US" → "Google LLC"；不是这个形状就原样返回（去掉末尾国家代码）。"""
+
+    text = _text_or_none(value)
+    if not text:
         return None
-    if isinstance(value, dict):
-        for key in ("asn", "number", "id", "as"):
-            number = _asn_number(value.get(key))
-            if number is not None:
-                return number
-        return None
-    if isinstance(value, int):
-        number = value
-    elif isinstance(value, float) and value.is_integer():
-        number = int(value)
-    elif isinstance(value, str):
-        match = _ASN_PATTERN.match(value)
-        if not match:
-            return None
-        number = int(match.group(1))
-    else:
-        return None
-    return number if 0 < number <= 4_294_967_295 else None
+    match = _AS_NAME.match(text)
+    if match:
+        return match.group(1).strip() or text
+    return re.sub(r",\s*[A-Z]{2}$", "", text) or text
 
 
 def _parse_ipure_network(payload: dict[str, Any]) -> dict[str, Any]:
-    """Pull exit IP, country/region, ISP and ASN out of one /api/lookup report.
+    """Pull the exit IP's identity out of one /api/lookup report; nothing is guessed."""
 
-    Every value is optional and stays None when IPure does not state it; nothing is guessed.
-    `asn` accepts 4713, "AS4713", "AS4713 NTT" and {"asn": 4713, "name": "NTT"}; the name
-    carried next to an ASN counts as the AS organization.
-    """
+    geo = _dict(payload.get("geo"))
+    asn_info = _dict(payload.get("asn"))
+    registry = _dict(payload.get("registry"))
 
-    sources = _network_sources(payload)
-    data = payload.get("data")
-    ip_text = _first_text([payload, *([data] if isinstance(data, dict) else [])], _IP_KEYS)
+    ip_text = _text_or_none(payload.get("ip"))
     try:
         ip = str(ipaddress.ip_address(ip_text)) if ip_text else None
     except ValueError:
         ip = None
 
-    country_code = _first_text(sources, _COUNTRY_CODE_KEYS)
-    if country_code is None:
-        for source in sources:
-            country = source.get("country")
-            if isinstance(country, dict):
-                country_code = _clean_text(country.get("code") or country.get("iso_code")) or None
-                if country_code:
-                    break
+    code = _text_or_none(geo.get("country"))
+    country_code = code.upper() if code and re.fullmatch(r"[A-Za-z]{2}", code) else None
 
-    asn: int | None = None
-    asn_org: str | None = None
-    for source in sources:
-        for key in _ASN_KEYS:
-            value = source.get(key)
-            number = _asn_number(value)
-            if number is None:
-                continue
-            asn = number
-            if isinstance(value, dict):
-                asn_org = _first_text([value], ("name", *_ORG_KEYS))
-            elif isinstance(value, str):
-                rest = _ASN_PATTERN.sub("", value, count=1).strip(" -·,")
-                asn_org = rest or None
-            break
-        if asn is not None:
-            break
+    asn = asn_info.get("asn")
+    asn = (
+        asn
+        if isinstance(asn, int) and not isinstance(asn, bool) and 0 < asn <= 4_294_967_295
+        else None
+    )
 
-    org = _first_text(sources, _ORG_KEYS)
-    # ipinfo 风格的 org 是 "AS15169 Google LLC"：AS 号与名字拆开，名字才是组织。
-    if org and _ASN_PATTERN.match(org) and org.upper().startswith("AS"):
-        if asn is None:
-            asn = _asn_number(org)
-        org = _ASN_PATTERN.sub("", org, count=1).strip(" -·,") or None
-
-    country = _first_text(sources, _COUNTRY_KEYS)
-    # 只给了两位字母的 country（"JP"）是国家代码，不是国名：挪到 country_code，国名留给 Coffee 补。
-    if country and len(country) == 2 and country.isascii() and country.isalpha():
-        country_code = country_code or country
-        country = None
+    usage = (_text_or_none(payload.get("usageType")) or "").lower()
+    native = (_text_or_none(payload.get("nativeType")) or "").lower()
+    registered = _text_or_none(registry.get("country"))
 
     return {
         "ip": ip,
-        "country": country,
-        "country_code": country_code.upper() if country_code and len(country_code) <= 3 else None,
-        "region": _first_text(sources, _REGION_KEYS),
-        "city": _first_text(sources, _CITY_KEYS),
-        "isp": _first_text(sources, _ISP_KEYS),
-        "org": org or asn_org,
+        "country": _text_or_none(geo.get("countryName")),
+        "country_code": country_code,
+        "region": _text_or_none(geo.get("region")),
+        "city": _text_or_none(geo.get("city")),
         "asn": asn,
+        "as_name": _as_name(asn_info.get("name")),
+        "org": _text_or_none(asn_info.get("org")),
+        "registry_org": _text_or_none(registry.get("org")),
+        "registered_country": registered.upper() if registered else None,
+        "usage_type": usage or None,
+        "is_residential": (
+            True if usage in _RESIDENTIAL_USAGE else False if usage in _DATACENTER_USAGE else None
+        ),
+        "native_type": native or None,
+        "is_native": True
+        if native in _NATIVE_TYPES
+        else False
+        if native in _NON_NATIVE_TYPES
+        else None,
     }
 
 
@@ -519,9 +449,7 @@ def _ipure_scores(result: dict[str, Any]) -> dict[str, int | None]:
     """Flatten a report into the node record's score map; every key is always present."""
 
     data = result.get("data") if isinstance(result.get("data"), dict) else None
-    scores: dict[str, int | None] = {
-        key: None for key in ("total", *IPURE_SCENARIOS)
-    }
+    scores: dict[str, int | None] = {key: None for key in ("total", *IPURE_SCENARIOS)}
     if data is None:
         return scores
     scores["total"] = _ipure_score(data.get("total"), data.get("level"))

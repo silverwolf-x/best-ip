@@ -314,7 +314,7 @@ def validate_ipure_evidence(evidence: dict[str, Any], requests: dict[str, Any]) 
         raise ResultStoreError("节点 IPure 出口证据无效")
 
 
-_NETWORK_SOURCE_KEYS = ("exit_ip", "geo", "isp")
+_NETWORK_SOURCE_KEYS = ("exit_ip", "geo", "isp", "kind", "native")
 _NETWORK_SOURCES = {"ipure", "coffee", None}
 
 
