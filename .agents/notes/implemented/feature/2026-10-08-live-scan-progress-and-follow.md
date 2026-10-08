@@ -22,6 +22,8 @@ Status: implemented
 
 报告里**没有节点名、出口 IP 或订阅内容**——这些只在终态 artifact 里，而 artifact 要过脱敏与逐字节校验。进度是过程中的读数，不进表、不进导出；完成那一刻面板改用终态 artifact 的计数，两边数字在那一刻是同一份。
 
+> 后续：[逐节点实时视图](2026-10-08-per-node-live-view-and-leaner-scan.md) 起，报告多了每个节点的名字、阶段、用时与白名单原因（含禁用值的名字换成「节点 N」）；出口 IP、评分与订阅内容仍然不进报告。
+
 ### Durable Object，而不是别的存储
 
 两次 HTTP 请求（runner 的报告、浏览器的轮询）会落在不同的 Worker 实例上，必须有共享状态。Durable Object 用 `wrangler.jsonc` 的 `durable_objects` 绑定 + `migrations: [{ tag: "v1", new_sqlite_classes: ["ScanProgress"] }]` 声明，发布时由迁移自动创建，Workers 免费计划可用，**不需要在控制台事先建任何资源**——这和「发布只走远程流水线」的约定兼容。

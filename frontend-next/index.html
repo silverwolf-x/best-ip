@@ -56,9 +56,7 @@
              的属性表达，不写 style（CSP 是 style-src 'self'）。 -->
         <div class="scan-panel" id="scanPanel" hidden>
           <ol class="scan-steps" aria-label="扫描进度">
-            <li data-step="submit" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">提交</span></li>
-            <li data-step="queue" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">排队</span></li>
-            <li data-step="prepare" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">准备环境</span></li>
+            <li data-step="start" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">启动</span></li>
             <li data-step="scan" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">扫描节点</span></li>
             <li data-step="verify" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">校验结果</span></li>
           </ol>
@@ -70,6 +68,7 @@
             <span id="scanProgress" role="status" aria-live="polite"></span>
             <span class="scan-counts" id="scanCounts" hidden></span>
           </p>
+          <ol class="scan-nodes" id="scanNodes" aria-label="每个节点的检测过程" hidden></ol>
         </div>
       </form>
 

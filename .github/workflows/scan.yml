@@ -29,98 +29,90 @@ jobs:
   scan:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # 精简过的准备段（约 2~3 秒）：
+    # - 校验输入、写 IPure 配置、解密订阅合成一步，私钥用完立刻删，不再留到收尾；
+    # - Python 解释器（uv 管理的 3.13）+ .venv + Mihomo 压缩包放进同一个缓存：命中时一次还原，
+    #   不装 uv、不跑 uv sync，直接用 .venv/bin/python；只有 uv.lock / pyproject.toml / Mihomo 版本
+    #   变了才走一次「装 uv → uv sync」的慢路，并在 job 成功后存回缓存。
+    env:
+      BEST_IP_PYTHON_DIR: /home/runner/.best-ip/python
+      BEST_IP_MIHOMO_ARCHIVE_DIR: /home/runner/.best-ip/mihomo-archive
     steps:
-      - name: Validate dispatch envelope
-        env:
-          REQUEST_ID: ${{ inputs.request_id }}
-          KEY_ID: ${{ inputs.key_id }}
-          EXPECTED_KEY_ID: ${{ vars.SCAN_KEY_ID }}
-          ENVELOPE: ${{ inputs.encrypted_subscription_url }}
-        shell: bash
-        run: |
-          [[ "$REQUEST_ID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]
-          [[ "$KEY_ID" =~ ^[A-Za-z0-9:_-]{8,256}$ ]]
-          [[ -n "$ENVELOPE" && ${#ENVELOPE} -le 65535 ]]
-          [[ -n "$EXPECTED_KEY_ID" && "$KEY_ID" == "$EXPECTED_KEY_ID" ]]
-
       - name: Checkout default branch
         uses: actions/checkout@v5
         with:
           ref: main
           persist-credentials: false
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          enable-cache: true
-          cache-python: true
-          python-version: "3.13"
-
-      - name: Install Python
-        run: uv python install 3.13
-
-      - name: Sync locked dependencies
-        run: uv sync --frozen --no-dev
-
-      - name: Materialize IPure request configuration
+      - name: Validate inputs and decrypt subscription URL
         env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          KEY_ID: ${{ inputs.key_id }}
+          EXPECTED_KEY_ID: ${{ vars.SCAN_KEY_ID }}
+          BEST_IP_ENVELOPE: ${{ inputs.encrypted_subscription_url }}
+          RELAY_URL: ${{ vars.SCAN_RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.SCAN_RELAY_TOKEN }}
           IPURE_CONFIG_YAML: ${{ secrets.IPURE_CONFIG_YAML }}
-        shell: bash
-        run: |
-          test -n "$IPURE_CONFIG_YAML"
-          mkdir -p config
-          umask 077
-          printf '%s\n' "$IPURE_CONFIG_YAML" > config/ipure.yml
-          uv run --no-sync python -c 'from backend.app.sources.ipure_config import load_ipure_headers; headers = load_ipure_headers(); assert headers.get("cookie"), "IPure verification cookie is required"'
-
-      - name: Restore pinned Mihomo archive
-        uses: actions/cache@v5
-        with:
-          path: ${{ runner.tool_cache }}/best-ip-mihomo
-          key: mihomo-${{ runner.os }}-v1.19.30-cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
-
-      - name: Download pinned Mihomo
-        run: >-
-          uv run --no-sync python scripts/download_mihomo.py
-          --tag v1.19.30
-          --archive-sha256 cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
-          --archive-cache-dir "${RUNNER_TOOL_CACHE}/best-ip-mihomo"
-
-      - name: Materialize private key in runner temp
-        env:
           SCAN_PRIVATE_KEY_PEM: ${{ secrets.SCAN_PRIVATE_KEY_PEM }}
         shell: bash
         run: |
-          test -n "$SCAN_PRIVATE_KEY_PEM"
-          key_path="$RUNNER_TEMP/scan-private.pem"
-          printf '%s\n' "$SCAN_PRIVATE_KEY_PEM" > "$key_path"
-          chmod 600 "$key_path"
-          printf 'SCAN_PRIVATE_KEY_PATH=%s\n' "$key_path" >> "$GITHUB_ENV"
-
-      - name: Decrypt subscription URL to runner temp
-        env:
-          BEST_IP_ENVELOPE: ${{ inputs.encrypted_subscription_url }}
-          REQUEST_ID: ${{ inputs.request_id }}
-          KEY_ID: ${{ inputs.key_id }}
-        shell: bash
-        run: >-
-          node scripts/decrypt_subscription.mjs
-          --private-key "$SCAN_PRIVATE_KEY_PATH"
-          --output "$RUNNER_TEMP/subscription-url"
-          --request-id "$REQUEST_ID"
-          --key-id "$KEY_ID"
-
-      - name: Validate subscription relay configuration
-        env:
-          RELAY_URL: ${{ vars.SCAN_RELAY_URL }}
-          RELAY_TOKEN: ${{ secrets.SCAN_RELAY_TOKEN }}
-        shell: bash
-        run: |
+          [[ "$REQUEST_ID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]
+          [[ "$KEY_ID" =~ ^[A-Za-z0-9:_-]{8,256}$ ]]
+          [[ -n "$BEST_IP_ENVELOPE" && ${#BEST_IP_ENVELOPE} -le 65535 ]]
+          [[ -n "$EXPECTED_KEY_ID" && "$KEY_ID" == "$EXPECTED_KEY_ID" ]]
           [[ -n "$RELAY_URL" && "$RELAY_URL" == https://* ]]
           [[ -n "$RELAY_TOKEN" && ${#RELAY_TOKEN} -ge 16 ]]
+          test -n "$IPURE_CONFIG_YAML"
+          test -n "$SCAN_PRIVATE_KEY_PEM"
+          umask 077
+          mkdir -p config
+          printf '%s\n' "$IPURE_CONFIG_YAML" > config/ipure.yml
+          key_path="$RUNNER_TEMP/scan-private.pem"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$SCAN_PRIVATE_KEY_PEM" > "$key_path"
+          node scripts/decrypt_subscription.mjs \
+            --private-key "$key_path" \
+            --output "$RUNNER_TEMP/subscription-url" \
+            --request-id "$REQUEST_ID" \
+            --key-id "$KEY_ID"
 
-      # 这一步也会把扫描进度（只有计数与阶段）回报给 Worker 的 /api/scan-progress，
-      # 与订阅中继同一个 Worker、同一把 SCAN_RELAY_TOKEN；回报失败不影响扫描。
+      - name: Restore Python environment and Mihomo archive
+        id: env-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .venv
+            /home/runner/.best-ip
+          key: best-ip-env-${{ runner.os }}-cpython3.13-${{ hashFiles('uv.lock', 'pyproject.toml') }}-mihomo-v1.19.30-cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
+
+      - name: Set up uv
+        if: steps.env-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+
+      # 解释器必须装进缓存目录（只用 uv 管理的那份，不用 runner 镜像自带的）：.venv/bin/python 指向它，
+      # 两样一起缓存才自洽，镜像升级也不会让缓存里的 .venv 指向一个不存在的解释器。
+      - name: Install Python and locked dependencies
+        if: steps.env-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          UV_PYTHON=3.13 UV_PYTHON_PREFERENCE=only-managed UV_PYTHON_INSTALL_DIR="$BEST_IP_PYTHON_DIR" \
+            uv sync --frozen --no-dev
+          interpreter="$(readlink -f .venv/bin/python)"
+          [[ "$interpreter" == "$BEST_IP_PYTHON_DIR"/* ]]
+
+      - name: Verify pinned Mihomo and IPure configuration
+        shell: bash
+        run: |
+          .venv/bin/python scripts/download_mihomo.py \
+            --tag v1.19.30 \
+            --archive-sha256 cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84 \
+            --archive-cache-dir "$BEST_IP_MIHOMO_ARCHIVE_DIR"
+          .venv/bin/python -c 'from backend.app.sources.ipure_config import load_ipure_headers; headers = load_ipure_headers(); assert headers.get("cookie"), "IPure verification cookie is required"'
+
+      # 这一步也会把扫描进度（计数与每个节点的阶段，不含出口 IP 与评分）回报给 Worker 的
+      # /api/scan-progress，与订阅中继同一个 Worker、同一把 SCAN_RELAY_TOKEN；回报失败不影响扫描。
       - name: Run production scan
         env:
           BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
@@ -132,7 +124,7 @@ jobs:
           REQUEST_ID: ${{ inputs.request_id }}
         shell: bash
         run: >-
-          uv run --no-sync python scripts/run_scan.py
+          .venv/bin/python scripts/run_scan.py
           --request-id "$REQUEST_ID"
           --subscription-file "$RUNNER_TEMP/subscription-url"
           --output-dir "$RUNNER_TEMP/action-artifact"

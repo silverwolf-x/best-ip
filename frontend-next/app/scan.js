@@ -45,6 +45,12 @@ const CANCEL_DEADLINE_MS = 2 * 60_000;
 // GitHub API 读（GitHub App 每小时 5000 次额度），4 秒一轮跑满 30 分钟上限也只用掉一成出头。
 export const SCAN_POLL_FIRST_MS = 1_500;
 export const SCAN_POLL_MAX_MS = 4_000;
+// 节点检测完（runner 报了 packaging/done）之后，运行再过两三秒就结束：这时改成每秒问一次，
+// 运行一结束就能取结果，不再白等最多 4 秒。
+export const SCAN_POLL_FINISH_MS = 1_000;
+// 逐节点读数（GET /api/scans/<id>/progress）只读 Worker 的 Durable Object、不碰 GitHub API，
+// 所以可以每秒问一次——节点的阶段是秒级变化的。
+export const SCAN_PROGRESS_POLL_MS = 1_000;
 
 // 失败对象与状态码文案来自 app/failure.js：原先本文件的 failure() 与 gateway.js 的 error()
 // 同形（都挂 code、可选 title），401/403/503 三句也各写一份。见该文件头部。
@@ -211,8 +217,8 @@ function runStatusOf(run) {
  * 这一轮的说明文字。读不到 job 明细时如实说一句，不让「准备环境」这段看起来像卡住了。
  */
 function stageMessage(stage, remote, progress) {
-  if (stage === "prepare" && progress?.phase === "subscription") return "正在拉取并解析订阅";
-  if (stage === "scan" && !progress) return `${STAGE_TEXT.scan}（这次读不到实时计数）`;
+  if (stage === "prepare" && progress?.phase === "subscription") return "启动中：正在拉取并解析订阅";
+  if (stage === "scan" && !progress) return `${STAGE_TEXT.scan}（这次读不到实时进度）`;
   const base = STAGE_TEXT[stage] || STAGE_TEXT.prepare;
   return remote?.jobs_available === false ? `${base} · 这一步的明细暂时读不到` : base;
 }
@@ -337,6 +343,20 @@ export async function pollScan(session, { fetchImpl = globalThis.fetch, now = Da
     };
   }, { fetchImpl });
   return { ...base, message: "扫描完成", done: true, payload };
+}
+
+/**
+ * 问一次逐节点读数（GET /api/scans/<id>/progress）。target 是 { id, runId, runAttempt }：
+ * 自己发起的扫描用 session，刷新后跟进的用 latest 交回的 active——这个端点只要站点会话，
+ * 不要 scan token。读不到（还没报上来、run 对不上）时返回 null。
+ */
+export async function pollProgress(target, { fetchImpl = globalThis.fetch } = {}) {
+  if (!target?.id || !positiveInteger(target.runId) || !positiveInteger(target.runAttempt)) return null;
+  const query = new URLSearchParams({ run_id: String(target.runId), run_attempt: String(target.runAttempt) });
+  const remote = await requestJson(fetchImpl, `${SCANS_PATH}/${encodeURIComponent(target.id)}/progress?${query}`, {
+    timeout: 10_000,
+  });
+  return normalizeProgress(remote?.progress);
 }
 
 /**

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -48,7 +49,9 @@ class CoffeeCollector:
         node_type: str,
         selected_proxy: str,
         mihomo_instance: str,
+        on_exit_ip: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
+        """on_exit_ip：trace 取到出口 IP、开始查 IP 资料的那一刻回调一次（只给实时进度用）。"""
         started_at = _now()
         started = perf_counter()
         async with self.transport.client() as client:
@@ -69,6 +72,8 @@ class CoffeeCollector:
                 ),
             )
             exit_ip = _trace_ip(trace.get("data"))
+            if exit_ip and on_exit_ip is not None:
+                on_exit_ip()
             gpt_requests: dict[str, dict[str, Any]] = {}
 
             lookup_url = (
