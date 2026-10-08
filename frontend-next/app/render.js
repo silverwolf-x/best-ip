@@ -4,7 +4,7 @@
    旧版是 12 列宽表再挂一个详情弹窗补全字段。新版**保留宽表的信息密度**，但把两级
    合成一级：一行的十列就是全部结论——排名、节点、出口 IP、国家/地区、服务商/ISP、
    住宅或机房、原生性、Coffee 评分、IPure 总分、六项场景评分。没有折叠、没有弹窗、
-   没有二级页；表头也不挂逐列筛选器，筛选只留全局搜索 + 状态筛选。
+   没有二级页。表头的列名可点击排序，列名下方是该列的筛选格；全局搜索与状态筛选仍在顶部。
 
    COLUMNS 是**唯一**的列真值：表头文案、colgroup 宽度、单元格在窄屏折叠时用的
    data-label 全部由它生成。三处各写一份必然漂移，所以这里只写一份。
@@ -26,10 +26,12 @@ const STATUS_LABELS = { success: "完整", partial: "部分", failed: "失败" }
 // 从 9px 收到 5px 后再省 8px → 266.83px，取 268 留 1px 余量。
 // width 为空表示吃掉剩余宽度；align=center 用于分数列，等宽数字右对齐反而不齐。
 // 注意：col 元素不支持 min-width，「IPure 场景评分」那列不允许折行的硬下限写在 CSS 里。
+// sort 是点表头时用的排序键（main.js 的 sortValue 按它取值）；filter 是表头里那格筛选控件：
+// text = 包含匹配，select = 三态枚举，min = 「分数不低于」。没有 sort/filter 的列表头只放列名。
 export const COLUMNS = [
   { key: "rank", label: "#", width: "40px" },
-  { key: "ident", label: "节点", width: "268px" },
-  { key: "ip", label: "出口 IP", width: "168px" },
+  { key: "ident", label: "节点", width: "268px", sort: "node", filter: { type: "text", placeholder: "节点 / 协议" } },
+  { key: "ip", label: "出口 IP", width: "168px", sort: "ip", filter: { type: "text", placeholder: "IP" } },
   // 归属地列只写国家：真实数据里城市常与国家同名（Hong Kong Hong Kong），一列里写两遍
   // 不增信息，116px 还被城市吃掉一半。表头写「国家和地区」而不是「国家」——这一列的值里
   // 就有「香港」这类不是国家的地区；措辞的理由见 .agents/notes 里 2026-09-23 的表头笔记。
@@ -37,12 +39,12 @@ export const COLUMNS = [
   // 83.94px，留 12px 余量。表头「国家和地区」在 10.5px/800/0.07em 下含内边距实测 75.19px，
   // 也装得下（th 是 nowrap，最小内容宽就是它，不会向表格算法多要宽度）。城市仍可搜
   // （main.js 的检索索引），只是不占列宽。
-  { key: "geo", label: "国家和地区", width: "96px" },
-  { key: "isp", label: "服务商 / ISP", width: "168px" },
-  { key: "kind", label: "接入", width: "58px" },
-  { key: "native", label: "原生性", width: "58px" },
-  { key: "coffee", label: "Coffee", width: "62px", align: "center" },
-  { key: "ipure", label: "IPure", width: "58px", align: "center" },
+  { key: "geo", label: "国家和地区", width: "96px", sort: "geo", filter: { type: "text", placeholder: "国家/城市" } },
+  { key: "isp", label: "服务商 / ISP", width: "168px", sort: "isp", filter: { type: "text", placeholder: "服务商 / ASN" } },
+  { key: "kind", label: "接入", width: "58px", sort: "kind", filter: { type: "select", options: [["", "全部"], ["yes", "住宅"], ["no", "机房"], ["unknown", "未知"]] } },
+  { key: "native", label: "原生性", width: "58px", sort: "native", filter: { type: "select", options: [["", "全部"], ["yes", "原生"], ["no", "广播"], ["unknown", "未知"]] } },
+  { key: "coffee", label: "Coffee", width: "62px", align: "center", sort: "coffee", filter: { type: "min", placeholder: "≥" } },
+  { key: "ipure", label: "IPure", width: "58px", align: "center", sort: "ipure", filter: { type: "min", placeholder: "≥" } },
   { key: "scn", label: "IPure 场景评分" },
 ];
 
@@ -80,10 +82,53 @@ export function createHeadRow(document) {
     th.scope = "col";
     th.className = `col-${column.key}`;
     if (column.align) th.dataset.align = column.align;
-    th.textContent = column.label;
+    if (column.sort) {
+      // 列名本身就是排序按钮：再点一次换方向。方向由 aria-sort 表达，箭头由 CSS 画。
+      const button = el(document, "button", "th-sort");
+      button.type = "button";
+      button.dataset.sort = column.sort;
+      button.textContent = column.label;
+      button.title = `按「${column.label}」排序`;
+      th.append(button);
+    } else {
+      const label = el(document, "span", "th-label");
+      label.textContent = column.label;
+      th.append(label);
+    }
+    if (column.filter) th.append(createFilterControl(document, column));
     row.append(th);
   });
   return row;
+}
+
+function createFilterControl(document, column) {
+  const { filter } = column;
+  let control;
+  if (filter.type === "select") {
+    control = el(document, "select", "th-filter");
+    filter.options.forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      control.append(option);
+    });
+  } else {
+    control = el(document, "input", "th-filter");
+    control.autocomplete = "off";
+    control.spellcheck = false;
+    if (filter.type === "min") {
+      control.type = "number";
+      control.inputMode = "numeric";
+      control.min = "0";
+      control.max = "100";
+    } else {
+      control.type = "search";
+    }
+    control.placeholder = filter.placeholder;
+  }
+  control.dataset.filter = column.key;
+  control.setAttribute("aria-label", filter.type === "min" ? `${column.label} 不低于` : `筛选${column.label}`);
+  return control;
 }
 
 /* ------------------------------------------------------------- 小工具 --- */

@@ -1,7 +1,7 @@
 /* ============================================================================
    页面主控 —— 筛选 / 排序 / 渲染 / 导出接线
    ----------------------------------------------------------------------------
-   页面只有三个输入（搜索、状态、排序）和两类按钮（导出、复制）。所有筛选都在内存里
+   顶部两个输入（搜索、状态），表头每列一个排序按钮与一格筛选，另有两类按钮（导出、复制）。所有筛选都在内存里
    对整份数据跑一遍：示例 12 条、真实扫描几十条，都不值得为它上虚拟列表。
 
    与旧版的差别不只是数量：旧版每次改动都要重算 10 个逐列筛选器 + 全局搜索 + 表格
@@ -23,7 +23,7 @@ import {
   SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS, SCAN_POLL_FINISH_MS, SCAN_PROGRESS_POLL_MS,
 } from "./scan.js";
 import { toRows, toSnapshotMeta } from "./records.js";
-import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
+import { COLUMNS, createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
 import { comparableScore } from "./score-color.js";
 import { exportSnapshot } from "./snapshot.js";
 import { createScanPanel, laterStage, nodesAllFinal, stageOf, stageOfProgress, STAGE_TEXT } from "./progress.js";
@@ -35,7 +35,6 @@ import { createScanPanel, laterStage, nodesAllFinal, stageOf, stageOfProgress, S
 const REQUIRED_ELEMENT_IDS = {
   query: "query",
   status: "statusFilter",
-  sort: "sortSelect",
   grid: "grid",
   gridColumns: "gridColumns",
   gridHead: "gridHead",
@@ -89,23 +88,22 @@ function reportMissingElements(ids) {
   document.body.textContent = message;
 }
 
-/** 排序下拉的 value 形状是 "key:direction"（见 index.html 的 option），内存态由它派生。 */
-function readSortValue(value) {
-  const [key, direction] = String(value || "").split(":");
-  // 下拉的 value 被改坏时退回默认排序，而不是把 undefined 灌进 state（比较器会静默排错）。
-  return key && direction
-    ? { sortKey: key, sortDirection: direction }
-    : { sortKey: "coffee", sortDirection: "desc" };
-}
-
 // 初值从 DOM 读，不能假定 index.html 的默认值：刷新/后退时浏览器会恢复表单值（搜索框里还留着
 // 上次的关键字、状态下拉还停在「失败」），内存里若仍是「空搜索 + 全部状态」，页面就会显示一份
 // 与输入框对不上的列表，导出摘要还会把它写成「筛选：无」。
+// 排序与列筛选跟着表头走：表头由 JS 建，浏览器不会替它恢复表单值，所以这里直接给默认值。
+// filters 的键是 COLUMNS 的 key，值是该列筛选格的原始输入（空串 = 不筛）。
 const state = {
   query: elements.query?.value ?? "",
   status: elements.status?.value ?? "all",
-  ...readSortValue(elements.sort?.value),
+  sortKey: "coffee",
+  sortDirection: "desc",
+  filters: {},
 };
+
+// 文本列第一次点按 A→Z，分数与枚举列第一次点按「好的在前」。
+const SCORE_SORT_KEYS = new Set(["coffee", "ipure"]);
+const TEXT_SORT_KEYS = new Set(["node", "ip", "geo", "isp"]);
 
 /* --------------------------------------------------------------- 检索索引 --- */
 // 一次算好可搜索文本，避免每次按键都对整份数据重新拼字段。
@@ -166,6 +164,35 @@ function numericValue(result, key) {
   return comparableScore(result.score);
 }
 
+function triState(value) {
+  if (value === true) return 2;
+  if (value === false) return 1;
+  return null;
+}
+
+// IPv4 按四段数值排（10.0.0.9 在 10.0.0.10 前面）；IPv6 与其他写法退回字符串比较。
+function ipSortValue(ip) {
+  if (!ip) return null;
+  const parts = String(ip).split(".");
+  if (parts.length === 4 && parts.every((part) => /^\d{1,3}$/u.test(part))) {
+    return parts.map((part) => part.padStart(3, "0")).join(".");
+  }
+  return `~${String(ip).toLowerCase()}`;
+}
+
+/** 每个排序键取一个可比的值：数字或字符串；null 表示「没有值」，永远沉底。 */
+function sortValue(result, key) {
+  switch (key) {
+    case "node": return String(result.node || "");
+    case "ip": return ipSortValue(result.exit_ip);
+    case "geo": return result.country || null;
+    case "isp": return result.isp || null;
+    case "kind": return triState(result.is_residential);
+    case "native": return triState(result.is_native);
+    default: return numericValue(result, key);
+  }
+}
+
 function byNodeName(a, b) {
   return String(a.node).localeCompare(String(b.node), "zh-CN");
 }
@@ -174,27 +201,108 @@ function comparator() {
   const sign = state.sortDirection === "desc" ? -1 : 1;
   const key = state.sortKey;
   return (a, b) => {
-    if (key === "node") return sign * byNodeName(a, b);
-    const left = numericValue(a, key);
-    const right = numericValue(b, key);
-    // 没分的节点永远沉底，而不是在升序时冒充「分数最低」。
+    const left = sortValue(a, key);
+    const right = sortValue(b, key);
+    // 没值的节点永远沉底，而不是在升序时冒充「分数最低」。
     if (left === null && right === null) return byNodeName(a, b);
     if (left === null) return 1;
     if (right === null) return -1;
-    if (left === right) return byNodeName(a, b);
-    return sign * (left - right);
+    const diff = typeof left === "number" && typeof right === "number"
+      ? left - right
+      : String(left).localeCompare(String(right), "zh-CN", { numeric: true });
+    return diff === 0 ? (key === "node" ? 0 : byNodeName(a, b)) : sign * diff;
   };
 }
 
 /* ------------------------------------------------------------ 过滤 + 排序 --- */
+function includesText(haystack, needle) {
+  return haystack.filter(Boolean).join(" ").toLocaleLowerCase("zh-CN").includes(needle);
+}
+
+function matchesTriState(value, wanted) {
+  if (wanted === "yes") return value === true;
+  if (wanted === "no") return value === false;
+  return value !== true && value !== false;
+}
+
+/** 每一列的筛选判据；value 已去掉首尾空白，文本类已转小写。 */
+const COLUMN_FILTERS = {
+  ident: (result, value) => includesText([result.node, result.type], value),
+  ip: (result, value) => includesText([result.exit_ip], value),
+  geo: (result, value) => includesText([result.country, result.city], value),
+  isp: (result, value) => includesText([result.isp, result.asn ? `AS${result.asn}` : ""], value),
+  kind: (result, value) => matchesTriState(result.is_residential, value),
+  native: (result, value) => matchesTriState(result.is_native, value),
+  coffee: (result, value) => (numericValue(result, "coffee") ?? -Infinity) >= Number(value),
+  ipure: (result, value) => (numericValue(result, "ipure") ?? -Infinity) >= Number(value),
+};
+
+function activeColumnFilters() {
+  return Object.entries(state.filters)
+    .map(([key, raw]) => [key, String(raw).trim().toLocaleLowerCase("zh-CN")])
+    // 分数格里输入了非数字（例如只敲了一个「-」）时不筛，而不是把整表筛空。
+    .filter(([key, value]) => value && COLUMN_FILTERS[key]
+      && (!SCORE_SORT_KEYS.has(key) || Number.isFinite(Number(value))));
+}
+
 function visibleRows() {
   const needle = state.query.trim().toLocaleLowerCase("zh-CN");
+  const columnFilters = activeColumnFilters();
   const filtered = dataset.nodes.filter((result) => {
     if (state.status !== "all" && result.status !== state.status) return false;
-    if (!needle) return true;
-    return dataset.index.get(result).includes(needle);
+    if (needle && !dataset.index.get(result).includes(needle)) return false;
+    return columnFilters.every(([key, value]) => COLUMN_FILTERS[key](result, value));
   });
   return filtered.sort(comparator());
+}
+
+/** 表头的排序状态只靠 aria-sort 表达，CSS 据此画箭头；屏幕阅读器读到的也是它。 */
+function syncSortIndicators() {
+  elements.gridHead.querySelectorAll("th").forEach((th) => {
+    const button = th.querySelector(".th-sort");
+    if (button && button.dataset.sort === state.sortKey) {
+      th.setAttribute("aria-sort", state.sortDirection === "asc" ? "ascending" : "descending");
+    } else {
+      th.removeAttribute("aria-sort");
+    }
+  });
+}
+
+/** 导出摘要里的「排序：…」：列名 + 方向，与表头箭头说的是同一件事。 */
+function sortLabel() {
+  const column = COLUMNS.find((item) => item.sort === state.sortKey);
+  const arrow = TEXT_SORT_KEYS.has(state.sortKey)
+    ? (state.sortDirection === "asc" ? "A→Z" : "Z→A")
+    : (state.sortDirection === "asc" ? "↑" : "↓");
+  return `${column ? column.label : state.sortKey} ${arrow}`;
+}
+
+/** 导出摘要里的「筛选：…」：全局搜索与各列筛选合成一句，选项型的写选项文字而不是内部值。 */
+function filterSummary() {
+  const parts = [];
+  if (state.query.trim()) parts.push(state.query.trim());
+  activeColumnFilters().forEach(([key]) => {
+    const column = COLUMNS.find((item) => item.key === key);
+    const raw = String(state.filters[key]).trim();
+    const shown = column.filter.type === "select"
+      ? column.filter.options.find(([value]) => value === raw)?.[1] || raw
+      : column.filter.type === "min" ? `≥${raw}` : raw;
+    parts.push(`${column.label}：${shown}`);
+  });
+  return parts.join("；");
+}
+
+/** 快照里的表头只留列名：离线文件里的按钮与输入框点了也不会动，留着只会误导。 */
+function staticGridHtml() {
+  const clone = elements.grid.cloneNode(true);
+  clone.querySelectorAll("thead .th-filter").forEach((control) => control.remove());
+  clone.querySelectorAll("thead .th-sort").forEach((button) => {
+    const label = document.createElement("span");
+    label.className = "th-label";
+    label.textContent = button.textContent;
+    button.replaceWith(label);
+  });
+  return clone.outerHTML;
 }
 
 /* -------------------------------------------------------------- 渲染一帧 --- */
@@ -297,7 +405,7 @@ function syncExportAvailability() {
 let lastRenderKey = null;
 
 function renderKey() {
-  return `${dataset.version}|${state.query}|${state.status}|${state.sortKey}:${state.sortDirection}`;
+  return `${dataset.version}|${state.query}|${state.status}|${state.sortKey}:${state.sortDirection}|${JSON.stringify(state.filters)}`;
 }
 
 // 渲染时算出来的可见行：导出要的「有多少行」就是这一份（见 runExport），不必再跑一次 filter+sort。
@@ -308,7 +416,7 @@ function render() {
   if (key !== lastRenderKey) {
     lastRenderKey = key;
     lastVisibleRows = visibleRows();
-    const ranked = state.sortKey !== "node" && state.sortDirection === "desc";
+    const ranked = SCORE_SORT_KEYS.has(state.sortKey) && state.sortDirection === "desc";
     const fragment = document.createDocumentFragment();
 
     lastVisibleRows.forEach((result, index) => {
@@ -525,13 +633,13 @@ async function runExport(format, button) {
   button.disabled = true;
   try {
     const artifact = await exportSnapshot(format, {
-      rowsHtml: elements.grid.outerHTML,
+      rowsHtml: staticGridHtml(),
       total: dataset.nodes.length,
       shown: results.length,
       state: {
-        query: state.query.trim(),
+        query: filterSummary(),
         statusLabel: labelOf(elements.status),
-        sortLabel: labelOf(elements.sort),
+        sortLabel: sortLabel(),
         // 快照会被归档、被转发，来源必须跟着页面一起走，否则一份真实结果和一个
         // 设计示例在文件里长得一模一样。
         source: dataset.meta?.source || "",
@@ -1072,12 +1180,29 @@ function wireControls() {
     scheduleRender();
   });
 
-  elements.sort.addEventListener("change", () => {
-    const next = readSortValue(elements.sort.value);
-    state.sortKey = next.sortKey;
-    state.sortDirection = next.sortDirection;
+  // 表头只建一次，排序按钮与筛选格都走事件委托，不给每个控件单独挂监听。
+  elements.gridHead.addEventListener("click", (event) => {
+    const button = event.target.closest?.(".th-sort");
+    if (!button) return;
+    const key = button.dataset.sort;
+    if (state.sortKey === key) {
+      state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+    } else {
+      state.sortKey = key;
+      state.sortDirection = TEXT_SORT_KEYS.has(key) ? "asc" : "desc";
+    }
+    syncSortIndicators();
     scheduleRender();
   });
+
+  const onFilter = (event) => {
+    const control = event.target.closest?.(".th-filter");
+    if (!control) return;
+    state.filters = { ...state.filters, [control.dataset.filter]: control.value };
+    scheduleRender();
+  };
+  elements.gridHead.addEventListener("input", onFilter);
+  elements.gridHead.addEventListener("change", onFilter);
 
   // 导出按钮是可选的（见 elements 的注释）：它们没解析到就不接线，页面照旧显示。
   if (elements.exportMhtml) {
@@ -1106,6 +1231,7 @@ function boot() {
   // 表头不重建，避免每次输入都重排整张表。
   elements.gridColumns.replaceChildren(createColGroup(document));
   elements.gridHead.replaceChildren(createHeadRow(document));
+  syncSortIndicators();
 
   const target = resolveTarget({
     search: globalThis.location?.search || "",

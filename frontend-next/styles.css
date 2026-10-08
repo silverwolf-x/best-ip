@@ -554,7 +554,8 @@ code { font-family: var(--font-mono); }
 }
 
 /* ------------------------------------------------------------------ 表格 --- */
-/* 十列宽表保持紧凑的双行节奏。表头只放列名，筛选与排序集中在顶部。 */
+/* 十列宽表保持紧凑的双行节奏。表头的列名可点击排序，列名下方是该列的筛选格；
+   全局搜索与状态筛选仍在顶部。 */
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -596,6 +597,56 @@ code { font-family: var(--font-mono); }
   white-space: nowrap;
 }
 .grid thead th + th { border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent); }
+.grid thead th { vertical-align: top; padding: 7px 6px 6px; }
+
+/* 列名即排序按钮：外观和静态列名一样，只多一个箭头。箭头只在当前排序列出现，
+   方向读 th 的 aria-sort（main.js 的 syncSortIndicators 维护），不另设 class。 */
+.th-sort, .th-label {
+  display: inline-flex; align-items: center; gap: 3px;
+  max-width: 100%;
+  padding: 2px 4px; margin: 0 0 5px;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  white-space: nowrap;
+}
+.th-sort {
+  border: 0; background: none; border-radius: 4px;
+  cursor: pointer;
+}
+.th-sort:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.th-sort::after { content: "↕"; font-size: 10px; opacity: 0.35; letter-spacing: 0; }
+th[aria-sort] > .th-sort { color: var(--ink); }
+th[aria-sort="ascending"] > .th-sort::after { content: "↑"; opacity: 1; }
+th[aria-sort="descending"] > .th-sort::after { content: "↓"; opacity: 1; }
+th[data-align="center"] > .th-sort, th[data-align="center"] > .th-label { justify-content: center; }
+
+/* 列筛选格：小号、等高，宽度跟着列走（列宽是 COLUMNS 的唯一真值，筛选格不许撑宽列）。 */
+.th-filter {
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
+  width: 100%; min-width: 0; height: 24px;
+  padding: 0 6px;
+  font: inherit; font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0; text-transform: none;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.th-filter::placeholder { color: var(--ink-3); }
+.th-filter:hover { border-color: var(--line-2); }
+.th-filter:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 18%, transparent); }
+.th-filter[type="number"] { text-align: center; padding: 0 2px; -moz-appearance: textfield; }
+.th-filter[type="number"]::-webkit-inner-spin-button,
+.th-filter[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+select.th-filter {
+  padding: 0 12px 0 4px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: right 6px center, right 2px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
 .grid thead th[data-align="center"],
 .grid tbody td[data-align="center"] { text-align: center; }
 
@@ -897,7 +948,24 @@ code { font-family: var(--font-mono); }
      这里复用本文件 `.sr-only` 的 clip-rect 手法：绝对定位后脱离文档流、不占卡片高度；
      thead/tr/th 显式 block 化，然后被祖先的 clip 整个裁掉——连第一个 th 的底色都不落像素。
      它仍是 DOM 里的一段文本，但一个像素都不画，也不参与重叠判定。 */
-  .grid thead {
+  /* 卡片态的表头变成卡片上方的一条「排序 + 筛选」工具条：每个能排序/筛选的列一格，
+     排不下就换行。没有控件的两列（# 与场景评分）只在无障碍树里保留列名，不占版面。 */
+  .grid thead { display: block; margin-bottom: 10px; }
+  .grid thead tr {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .grid thead th {
+    display: flex; align-items: center; gap: 4px;
+    flex: 1 1 150px; min-width: 0;
+    padding: 3px 6px 3px 2px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+  .grid thead th + th { border-left: 1px solid var(--line); }
+  .grid thead th.col-scn { min-width: 0; }
+  /* 离线快照里表头只剩列名（按钮与筛选格在导出时摘掉），那时整条工具条都没有用处。 */
+  .grid thead th.col-rank, .grid thead th.col-scn,
+  .grid thead th:not(:has(.th-sort)) {
     position: absolute;
     width: 1px; height: 1px;
     margin: -1px;
@@ -905,9 +973,9 @@ code { font-family: var(--font-mono); }
     border: 0;
     overflow: hidden;
     clip: rect(0 0 0 0);
-    white-space: nowrap;
   }
-  .grid thead tr, .grid thead th { display: block; }
+  .grid thead th > .th-sort { flex: none; margin: 0; }
+  .grid thead .th-filter { flex: 1 1 0; height: 28px; font-size: 13px; }
   .grid tbody { display: block; }
 
   .grid .row {
