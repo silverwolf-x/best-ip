@@ -17,7 +17,7 @@ Cloudflare Worker 托管前端与同源 API，通过 GitHub App 调度固定的 
 
 ## 本地调试
 
-结果默认采用 Coffee 风格的双列节点卡片，小屏幕自动切换为单列；可切换到表格进行逐列筛选和排序。两种视图使用相同结果，点击节点名称查看完整详情，导入、导出与完整性校验保持不变。
+线上页面（`frontend-next/`）是一张像电子表格一样用的宽表：点列名排序（再点反向、第三下取消，Shift+点击叠加次级排序），表头下一行逐列筛选（文本列「包含即命中」，支持空格多词、`a|b`、`!排除`；分数列支持 `80`（≥80）、`>80`、`<=60`、`60-90`、`=-1`），点单元格里的国家 / 服务商 / AS 号 / 接入 / 原生性 / 协议即可一键筛这个值；IPure 六项场景评分各占一列，可单独排序筛选。筛选与排序写进地址栏 hash，刷新与分享都能还原；窄屏变成卡片，表头变成排序胶囊条与可收起的筛选格。导出的离线快照去掉筛选控件，摘要写明当时的筛选与排序。
 
 本地调试模式复用同一套 Mihomo、扫描器、结果存储和前端，只替换任务传输层；启动器分别运行前端静态服务与 FastAPI API。生产环境仍使用 Cloudflare Worker → GitHub Actions，保留密码登录、密文订阅与 artifact 校验。
 
@@ -49,6 +49,7 @@ npm run dev:no-reload
 - 浏览器使用 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key；明文 URL 不进入 Worker API、GitHub workflow input 或 artifact。
 - Worker 固定调度 `silverwolfxai/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
 - 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 `min(16, max(8, CPU 核数))` 个节点并发（上限为订阅节点数），每节点最多 3 次尝试：首次失败后余下的尝试**并行**跑，第一份非失败记录胜出、其余立即取消并确认清理（永久连不上的节点从约 18 秒降到约 11 秒）。
+- 出口 IP、国家和地区、服务商 / ISP、ASN、接入（住宅 / 移动 / 商业 / 机房 / 教育 / 政府）与原生性以 IPure `/api/lookup` 报告为准（`geo.countryName/country/region/city`、`asn.asn/org/name`、`usageType`、`nativeType`）：报告里说了的那一组就用它，没说的那一组才回落到 Coffee 的归属查询；每组来源记在节点记录的 `network_source`，页面在对应单元格的 title 里标出「来源：IPure / Coffee」。出口 IP 仍由 trace 发现（IPure 查询必须带上一个 IP），IPure 回显一致时记为由 IPure 确认。
 - Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 没有返回纯净度总分时，节点会如实标记为“部分”。
 - IPure 接入完全按官方 `/docs/api` 契约：`GET /api/lookup?ip={ip}` 无需 API key 或 Cookie。响应解析出 `risk.purity` 纯净度总分、`risk.level` / `risk.label` / `risk.verdict` 档位，以及 `scenarios[]` 的六项场景（`ai`、`social`、`streaming`、`gaming`、`ecommerce`、`email`）评分与档位，另附 `reportUrl`、`source`（fresh / cache / store）与 `stale`。上游档位只用于判断是否写哨兵，**不进入记录**（`ipure_level` / `ipure_verdict` / `ipure_scenario_levels` 已从落盘契约删除，读取时容忍旧 artifact）；前端不为 IPure 分数渲染任何档位或状态文案：六项评分一律显示成带颜色的数字，档位为 `restricted`（地区受限）的项按后端写入的 `-1` 哨兵显示为中性灰的 `-1`，既不参与数值排序也不被分数筛选命中。表格与详情卡里剩下的「受限 / 不可用」文字属于 GPT · Codex 可达性探针（chatgpt.com / api.openai.com 的连通状态），与 IPure 分数无关。
 - IPure 每次实际 HTTP 请求都会重新读取 `config/ipure.yml` 的 `headers`，修改后无需重启；该文件只用于覆盖请求头（如 User-Agent），已排除出 Git，示例见 `config/ipure.example.yml`。未配置时使用 JSON / `MyIPChecker/1.0` 默认值。`429`（含 `code=open_rate_limited`）最多尝试 3 次，按 1、2 秒退避（上限 2 秒）并遵守秒数形式的 `Retry-After`，等待不会超出查询时间预算，也不切换出口重试；`403`（`code=verification_required`）不盲目重试，而是把官方给出的 `reportUrl` 一并记录。响应头 `x-open-budget-remaining` 会写入 `proxy_evidence.ipure_budget_remaining`。

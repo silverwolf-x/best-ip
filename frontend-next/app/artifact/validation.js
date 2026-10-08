@@ -1,5 +1,5 @@
 const required = 'schema_version job_id node_index node type selected_proxy status error transport_error started_at finished_at exit_ip elapsed_ms proxy_evidence completeness requests coffee'.split(' ');
-const optional = 'requested_proxy coffee_page_url phase attempt_count retry_count attempt_errors cidr rdns ai_verdict location isp score coffee_score ipure_scores ipure_report_url is_residential is_datacenter is_native native_status native_detail is_bogon bogon_status bogon_reason rpki_status asn_kind asn_kind_display abuse_level honeypot_status traffic_profile company_type is_vpn is_proxy is_tor is_crawler is_abuser security_status threat_tags asn as_org global_ping port_scan ping_check gpt_check related_domains pages'.split(' ');
+const optional = 'requested_proxy coffee_page_url phase attempt_count retry_count attempt_errors cidr rdns ai_verdict location country country_code region city usage_type network_source isp score coffee_score ipure_scores ipure_report_url is_residential is_datacenter is_native native_status native_detail is_bogon bogon_status bogon_reason rpki_status asn_kind asn_kind_display abuse_level honeypot_status traffic_profile company_type is_vpn is_proxy is_tor is_crawler is_abuser security_status threat_tags asn as_org global_ping port_scan ping_check gpt_check related_domains pages'.split(' ');
 const allowed = new Set([...required, ...optional]);
 // 旧版本写过的三个档位字段：落盘契约已收窄，读取时忽略，历史结果仍要能打开。
 const retired = new Set(['ipure_level', 'ipure_verdict', 'ipure_scenario_levels']);
@@ -35,10 +35,24 @@ function validIp(value) {
   if (!value.includes(':')) return /^(0|[1-9]\d{0,2})(\.(0|[1-9]\d{0,2})){3}$/u.test(value) && value.split('.').every(part => Number(part) <= 255);
   try { return new URL('http://[' + value + ']/').hostname.startsWith('['); } catch { return false; }
 }
+// IPure 优先的归属字段：旧产物没有它们（可缺），有就必须是字符串；network_source 记每组取值的来源。
+const networkSourceKeys = ['exit_ip', 'geo', 'isp', 'kind', 'native'];
+// IPure /docs/api 的 usageType 枚举（unknown 不落盘）。
+const usageTypes = ['residential', 'mobile', 'business', 'hosting', 'education', 'government'];
+function validateNetworkIdentity(record) {
+  for (const key of ['country', 'country_code', 'region', 'city']) {
+    if (record[key] != null && typeof record[key] !== 'string') throw new Error(`节点记录的 ${key} 无效`);
+  }
+  if (record.usage_type != null && !usageTypes.includes(record.usage_type)) throw new Error('节点记录的 usage_type 无效');
+  const source = record.network_source;
+  if (source == null) return;
+  if (!hasExactKeys(source, networkSourceKeys) || networkSourceKeys.some(key => ![null, 'ipure', 'coffee'].includes(source[key]))) throw new Error('节点记录的 network_source 无效');
+}
 export function validateRecord(record, jobId, index) {
   if (!isObject(record) || required.some(key => !Object.hasOwn(record, key)) || Object.keys(record).some(key => !allowed.has(key) && !retired.has(key))) throw new Error('节点记录字段集合无效');
   if (record.schema_version !== 1 || record.job_id !== jobId || record.node_index !== index || typeof record.node !== 'string' || !record.node || typeof record.type !== 'string' || !record.type || !Number.isInteger(record.elapsed_ms) || record.elapsed_ms < 0) throw new Error('节点记录结构或身份无效');
   for (const key of ['proxy_evidence', 'completeness', 'requests', 'coffee']) if (!isObject(record[key])) throw new Error('节点记录结构无效');
+  validateNetworkIdentity(record);
   const evidence = record.proxy_evidence;
   if ([record.attempt_count, record.retry_count, record.attempt_errors].some(value => value != null)) {
     const expected = record.status === 'failed' ? record.attempt_count : record.retry_count;

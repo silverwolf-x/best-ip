@@ -112,6 +112,10 @@ function pairFromLocation(value) {
  * 前两个是结构化字段，直接可用；location 是拼给眼睛看的串，只能当最后的兜底。
  */
 function countryCityOf(record) {
+  // 新产物：collector 已按「IPure 优先、缺项回落 Coffee」写好顶层 country / city。
+  const top = { country: text(record?.country), city: text(record?.city) };
+  if (top.country || top.city) return top;
+
   const fromLookup = pairOf(record?.requests?.lookup?.data);
   if (fromLookup.country || fromLookup.city) return fromLookup;
 
@@ -123,6 +127,27 @@ function countryCityOf(record) {
   if (fromCoffee.country || fromCoffee.city) return fromCoffee;
 
   return pairFromLocation(record?.location);
+}
+
+const SOURCES = new Set(["ipure", "coffee"]);
+const USAGE_TYPES = new Set(["residential", "mobile", "business", "hosting", "education", "government"]);
+
+/** 每组取值是谁说的：network_source 只在新产物里有；旧产物一律记为 Coffee（那时只有它）。 */
+function sourcesOf(record) {
+  const source = record?.network_source;
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    const pick = (key) => (SOURCES.has(source[key]) ? source[key] : null);
+    return { ip: pick("exit_ip"), geo: pick("geo"), isp: pick("isp"), kind: pick("kind"), native: pick("native") };
+  }
+  return { ip: null, geo: null, isp: null, kind: null, native: null };
+}
+
+/** 国家代码：两到三位字母才算，统一大写；其余一律 null。 */
+function countryCodeOf(record) {
+  const raw = text(record?.country_code)
+    || text(record?.requests?.lookup?.data?.countryCode)
+    || text(record?.requests?.lookup?.data?.country_code);
+  return raw && /^[A-Za-z]{2,3}$/u.test(raw) ? raw.toUpperCase() : null;
 }
 
 /** 失败卡在哪一步：四步流水线里第一个 ok !== true 的请求。全都没失败或结构缺失 → null。 */
@@ -168,13 +193,20 @@ function toRow(record) {
     // 失败行没有出口 IP：即便记录里残留一个值也不显示，否则「没连上」的行会被伪装成可用节点。
     exit_ip: failed ? null : text(record?.exit_ip),
     country: geo.country,
+    country_code: failed ? null : countryCodeOf(record),
+    region: text(record?.region),
     city: geo.city,
     isp: text(record?.isp),
+    as_org: text(record?.as_org),
+    // 页面在 title 里写明「这一格来自 IPure / Coffee」，排查数据时不必去翻产物。
+    sources: sourcesOf(record),
     asn: asn !== null && asn > 0 ? asn : null,
     company_type: text(record?.company_type),
     // is_datacenter 与 is_residential 是后端各自独立取到的两个键：只回了「是机房」而没回
     // 「不是住宅」时，三态会停在 null，页面就画成「未知」——把上游已经写明的事实丢掉。
     is_residential: residentialOf(record),
+    // IPure 的使用类型（住宅 / 移动 / 商业 / 机房 / 教育 / 政府）；旧产物与 unknown 为 null。
+    usage_type: failed ? null : (USAGE_TYPES.has(record?.usage_type) ? record.usage_type : null),
     native_status: text(record?.native_status),
     is_native: triState(record?.is_native),
     coffee_score: failed ? null : integer(record?.coffee_score),

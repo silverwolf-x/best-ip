@@ -199,6 +199,26 @@ come from the workspace proxy or, when the node egress cannot connect, from a re
 host-side query: such a record sets `requests.ipure.direct_fallback:true`,
 `via_mihomo:false`, and `proxy_evidence.ipure_via_direct_fallback:true`. Both validators
 cross-check that trio, so a direct score can never be presented as proxy evidence.
+Network identity is IPure-first. `requests.ipure.data.network` keeps what the
+`/api/lookup` report itself stated, mapped from its documented shape: `ip`;
+`geo.countryName` → `country`, `geo.country` → `country_code`, `geo.region` / `geo.city`;
+`asn.asn` → `asn`, `asn.name` ("GOOGLE - Google LLC, US") → `as_name` ("Google LLC"),
+`asn.org` → `org`; `registry.org` / `registry.country` → `registry_org` /
+`registered_country`; `usageType` (documented enum residential · mobile · business ·
+hosting · education · government · unknown) → `usage_type` (unknown and off-enum values
+become null) + `is_residential` (true only for residential); `nativeType` (native ·
+broadcast · unknown) → `native_type` + `is_native` (true / false / null).
+Anything missing or mistyped is null. The record then fills five groups IPure-first and
+falls back to the Coffee lookup only for a group IPure left empty: geo (`country`,
+`country_code`, `region`, `city`, `location`), ISP (`isp` = `asn.org`, `as_org` = cleaned
+AS name, `asn`), kind (`usage_type`, `is_residential`, `is_datacenter` = hosting), native (`is_native`,
+`native_status`, `native_detail`). `network_source = {exit_ip, geo, isp, kind, native}`
+(each `"ipure"`, `"coffee"` or null) says who supplied each group. `exit_ip` is still
+discovered by the Coffee trace (an IPure query needs an address) and is marked `"ipure"`
+when IPure's echoed `ip` equals it. The six new top-level fields are optional — artifacts
+written before them still validate — and both validators reject a non-string geo field, a
+`usage_type` outside the six documented values, or a `network_source` with other keys or
+values.
 Retry metadata, when present, must be internally consistent.
 Required and optional record fields are enforced by Python's ResultStore validator;
 fixtures carry the minimal valid set, not a real enrichment response.

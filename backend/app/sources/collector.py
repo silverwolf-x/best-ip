@@ -32,6 +32,7 @@ from .http import (
     ProxyTransport,
 )
 from .ipure import _ipure_field, _ipure_scores, _ipure_url
+from .values import _clean_text
 
 
 class CoffeeCollector:
@@ -195,8 +196,15 @@ class CoffeeCollector:
         gpt_check = _gpt_check_summary(gpt_requests, lookup_data)
         coffee_summary = _profile_summary(lookup_data)
         ipure_scores = _ipure_scores(ipure)
+        identity = _network_identity(
+            exit_ip if status != "failed" else "",
+            _ipure_field(ipure, "network"),
+            lookup_data,
+            coffee_summary,
+        )
         summary = {
             **coffee_summary,
+            **identity,
             "coffee_score": coffee_summary["score"],
             "score": ipure_scores["total"],
             "ipure_scores": ipure_scores,
@@ -268,6 +276,98 @@ class CoffeeCollector:
                 },
             },
         }
+
+
+def _network_identity(
+    exit_ip: str,
+    ipure_network: Any,
+    lookup_data: dict[str, Any],
+    coffee_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """出口 IP / 国家和地区 / 服务商 / 接入 / 原生性：IPure 报告优先，它没说的那一组才回落 Coffee。
+
+    出口 IP 仍由 trace 发现（IPure 的查询必须带上一个 IP），IPure 回显的 ip 与之一致时记为
+    「由 IPure 确认」。每一组各自记来源（network_source），页面与审计都能看出这一格是谁说的。
+    """
+
+    network = ipure_network if isinstance(ipure_network, dict) else {}
+    identity: dict[str, Any] = {}
+    source: dict[str, str | None] = {}
+
+    ipure_ip = network.get("ip")
+    source["exit_ip"] = (
+        ("ipure" if ipure_ip and _is_same_ip(ipure_ip, exit_ip) else "coffee") if exit_ip else None
+    )
+
+    # 地区组：国名或国家代码任一在，就整组用 IPure。
+    coffee_code = _clean_text(lookup_data.get("countryCode") or lookup_data.get("country_code"))
+    if network.get("country") or network.get("country_code"):
+        source["geo"] = "ipure"
+        geo = {
+            "country": network.get("country") or _clean_text(lookup_data.get("country")) or None,
+            "country_code": network.get("country_code") or coffee_code.upper() or None,
+            "region": network.get("region"),
+            "city": network.get("city"),
+        }
+    else:
+        geo = {
+            "country": _clean_text(lookup_data.get("country")) or None,
+            "country_code": coffee_code.upper() or None,
+            "region": _clean_text(lookup_data.get("region")) or None,
+            "city": _clean_text(lookup_data.get("city")) or None,
+        }
+        source["geo"] = "coffee" if geo["country"] or geo["country_code"] else None
+    identity.update(geo)
+    identity["location"] = (
+        " ".join(part for part in (geo["country"], geo["region"], geo["city"]) if part)
+        if source["geo"] == "ipure"
+        else coffee_summary.get("location", "")
+    )
+
+    # 服务商组：ISP 显示 asn.org（最贴近「谁在运营这段地址」），AS 组织显示清洗过的 AS 名。
+    ipure_isp = network.get("org") or network.get("as_name") or network.get("registry_org")
+    if ipure_isp or network.get("asn"):
+        source["isp"] = "ipure"
+        identity["isp"] = ipure_isp or coffee_summary.get("isp") or ""
+        identity["as_org"] = (
+            network.get("as_name") or network.get("registry_org") or ipure_isp or ""
+        )
+        identity["asn"] = network.get("asn") or coffee_summary.get("asn")
+    else:
+        source["isp"] = "coffee" if coffee_summary.get("isp") or coffee_summary.get("asn") else None
+
+    # 接入：IPure 的 usageType 六档（住宅 / 移动 / 商业 / 机房 / 教育 / 政府）；
+    # unknown 才回落 Coffee。
+    if network.get("usage_type"):
+        source["kind"] = "ipure"
+        identity["usage_type"] = network["usage_type"]
+        identity["is_residential"] = network["is_residential"]
+        identity["is_datacenter"] = network["usage_type"] == "hosting"
+    else:
+        source["kind"] = (
+            "coffee" if isinstance(coffee_summary.get("is_residential"), bool) else None
+        )
+
+    # 原生性：nativeType 同理；广播时用 IPure 的登记国补出「广播 IP (XX)」。
+    if isinstance(network.get("is_native"), bool):
+        source["native"] = "ipure"
+        identity["is_native"] = network["is_native"]
+        registered = network.get("registered_country")
+        if network["is_native"]:
+            identity["native_status"] = "原生 IP"
+            identity["native_detail"] = ""
+        else:
+            identity["native_status"] = f"广播 IP ({registered})" if registered else "广播 IP"
+            identity["native_detail"] = (
+                f"IP注册在 {registered} 和IP归属地 {geo['country_code'] or ''} 不一致".strip()
+                if registered
+                else ""
+            )
+    else:
+        source["native"] = "coffee" if isinstance(coffee_summary.get("is_native"), bool) else None
+
+    identity["network_source"] = source
+    return identity
 
 
 def _node_status(
