@@ -295,13 +295,140 @@ code { font-family: var(--font-mono); }
 .scanbar { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
 .scan-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .scan-row .field { flex: 1 1 380px; }
+/* 进度面板：步骤条在上、节点进度条居中、说明在下。整块只在扫描/跟进时出现。
+   状态全靠 data-state 与 <progress> 自己的属性，不写 style（CSP 是 style-src 'self'）。 */
+.scan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 2px rgba(16, 21, 27, 0.03);
+}
+.scan-panel[data-state="error"] { border-color: var(--danger-line); }
+.scan-panel[data-state="done"] { border-color: var(--good-line); }
+
+.scan-steps {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.scan-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  counter-increment: step;
+}
+.scan-steps li:last-child { flex: 0 0 auto; }
+/* 步与步之间的连线：画在每一步（除最后一步）标签的右侧、吃掉这一步剩下的宽度；
+   这一步做完了，通往下一步的那段就染成绿色。 */
+.scan-steps li:not(:last-child)::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 8px;
+  height: 2px;
+  margin: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+}
+.scan-steps li[data-state="done"]:not(:last-child)::after { background: var(--good); }
+
+.step-dot {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--line-2);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.step-dot::after { content: counter(step); }
+.step-label { overflow: hidden; text-overflow: ellipsis; }
+
+.scan-steps li[data-state="done"] { color: var(--ink-2); }
+.scan-steps li[data-state="done"] .step-dot {
+  border-color: var(--good); background: var(--good); color: var(--surface);
+}
+.scan-steps li[data-state="done"] .step-dot::after { content: "✓"; }
+.scan-steps li[data-state="active"] { color: var(--ink); }
+.scan-steps li[data-state="active"] .step-dot {
+  border-color: var(--info); color: var(--info); background: var(--info-soft);
+  animation: step-pulse 1.4s ease-in-out infinite;
+}
+.scan-steps li[data-state="error"] { color: var(--danger); }
+.scan-steps li[data-state="error"] .step-dot {
+  border-color: var(--danger); background: var(--danger-soft); color: var(--danger);
+}
+.scan-steps li[data-state="error"] .step-dot::after { content: "!"; }
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 35%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 0%, transparent); }
+}
+
+.scan-meter { display: flex; align-items: center; gap: 10px; }
+.scan-meter progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--good);
+  overflow: hidden;
+}
+.scan-meter progress::-webkit-progress-bar { background: var(--surface-3); border-radius: var(--radius-pill); }
+.scan-meter progress::-webkit-progress-value { background: var(--good); border-radius: var(--radius-pill); transition: width 400ms ease; }
+.scan-meter progress::-moz-progress-bar { background: var(--good); border-radius: var(--radius-pill); }
+/* 不定进度（还不知道有几个节点）：一段来回走的条纹，不冒充任何比例。 */
+.scan-meter progress:indeterminate {
+  background: linear-gradient(90deg, var(--surface-3) 0%, color-mix(in srgb, var(--info) 45%, var(--surface-3)) 50%, var(--surface-3) 100%);
+  background-size: 200% 100%;
+  animation: meter-sweep 1.3s linear infinite;
+}
+.scan-meter progress:indeterminate::-webkit-progress-bar { background: transparent; }
+.scan-meter progress:indeterminate::-moz-progress-bar { background: transparent; }
+@keyframes meter-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.scan-panel[data-state="error"] .scan-meter progress::-webkit-progress-value { background: var(--danger); }
+.scan-panel[data-state="error"] .scan-meter progress::-moz-progress-bar { background: var(--danger); }
+
+.scan-elapsed {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .scan-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
   margin: 0;
   color: var(--ink-2);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+.scan-panel[data-state="error"] .scan-progress { color: var(--danger); }
+.scan-counts { color: var(--ink); font-weight: 700; }
 
 /* ------------------------------------------------------------ 结果计数行 --- */
 .result-count {
@@ -631,6 +758,12 @@ code { font-family: var(--font-mono); }
    间距和留白用 clamp() 连续缩放，所以 620px 那种「再补一刀」的断点整条删掉了。 */
 
 @media (max-width: 900px) {
+  /* 窄屏的步骤条：只给当前这一步写字，其余只留圆点与连线，五段照样一眼看得出走到哪。 */
+  .scan-steps li[data-state="active"],
+  .scan-steps li[data-state="error"] { flex: 1 1 auto; }
+  .scan-steps li:not([data-state="active"]):not([data-state="error"]) .step-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+  }
   .topbar-controls { gap: 6px; }
   .topbar-controls > .field:not(.field-compact) { flex: 1 1 100%; min-width: 0; }
   .topbar-controls > .field-compact { flex: 1 1 140px; min-width: 0; }

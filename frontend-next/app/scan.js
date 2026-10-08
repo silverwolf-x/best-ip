@@ -27,6 +27,7 @@ import { encryptSubscriptionUrl, requestId } from "./scan-crypto.js";
 import { readArtifactFrom, artifactUrlOf } from "./gateway.js";
 import { failure, gatewayStatusText } from "./failure.js";
 import { fetchWithTimeout, isTimeoutError, timeoutPair } from "./net.js";
+import { normalizeProgress, stageOf, STAGE_TEXT } from "./progress.js";
 
 const SCANS_PATH = "/api/scans";
 const TOKEN_HEADER = "X-Best-IP-Scan-Token";
@@ -39,19 +40,11 @@ const QUEUE_DEADLINE_MS = 13 * 60_000;
 const RUN_DEADLINE_MS = 31 * 60_000;
 const CANCEL_DEADLINE_MS = 2 * 60_000;
 
-// 轮询节奏与旧前端 scan-controller 一致：第一次 2 秒，之后每次 ×1.5，上限 10 秒。
-// 一次扫描要跑几十秒到几分钟，固定 2 秒轮询只会白刷几十次请求。
-export const SCAN_POLL_FIRST_MS = 2_000;
-export const SCAN_POLL_MAX_MS = 10_000;
-
-// worker/scans.js 的 runStatus() 取值 → 页面上的一句话。说「正在做什么」，不说「加载中」。
-const RUN_LABEL = {
-  queued: "已排队，等待执行",
-  running: "扫描执行中",
-  completed: "扫描执行已完成",
-  cancelled: "扫描已取消",
-  failed: "扫描执行失败",
-};
+// 轮询节奏：第一次 1.5 秒，之后每次 ×1.5，上限 4 秒。原先上限是 10 秒：一次实测约 60 秒的扫描，
+// 跑完之后页面最多还要干等 10 秒才发现；进度条也会一跳十几个节点。每轮在 Worker 侧是两三次
+// GitHub API 读（GitHub App 每小时 5000 次额度），4 秒一轮跑满 30 分钟上限也只用掉一成出头。
+export const SCAN_POLL_FIRST_MS = 1_500;
+export const SCAN_POLL_MAX_MS = 4_000;
 
 // 失败对象与状态码文案来自 app/failure.js：原先本文件的 failure() 与 gateway.js 的 error()
 // 同形（都挂 code、可选 title），401/403/503 三句也各写一份。见该文件头部。
@@ -214,43 +207,14 @@ function runStatusOf(run) {
   return status;
 }
 
-// 时长写法照抄旧前端 scan-view.js 的 formatDuration：一小时以内给「分秒」，超过给「小时分」。
-function formatDuration(milliseconds) {
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "";
-  const totalSeconds = Math.floor(milliseconds / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours) return `${hours}小时${minutes}分`;
-  if (minutes) return `${minutes}分${seconds}秒`;
-  return `${seconds}秒`;
-}
-
-function elapsedOf(run, session, now) {
-  const started = Date.parse(String(run?.started_at || run?.created_at || ""));
-  const from = Number.isFinite(started) ? started : session.dispatchedAt;
-  return now() - from;
-}
-
-/** 进度正文：能从 Actions 的 jobs/steps 里读出「当前在哪一步」就说出来，读不到就说读不到。 */
-function progressDetail(run, remote, session, now) {
-  const parts = [];
-  const elapsed = elapsedOf(run, session, now);
-  // 0–999 毫秒时 formatDuration 给的是「0秒」，读起来像卡住了；这一档直接说「不到 1 秒」。
-  parts.push(`已用时 ${elapsed < 1000 ? "不到 1 秒" : formatDuration(elapsed)}`);
-  if (remote.jobs_available === false) {
-    parts.push("这一步的明细暂时读不到");
-    return parts.join(" · ");
-  }
-  const jobs = Array.isArray(remote.jobs) ? remote.jobs : [];
-  const total = Number.isInteger(remote.jobs_total_count) ? remote.jobs_total_count : jobs.length;
-  if (total > 1) parts.push(`任务 ${jobs.filter((job) => job?.status === "completed").length}/${total}`);
-  const running = jobs.find((job) => job?.status === "in_progress") || null;
-  const steps = Array.isArray(running?.steps) ? running.steps : [];
-  const current = steps.find((step) => step?.status === "in_progress") || null;
-  if (current && current.name) parts.push(`当前步骤：${current.name}`);
-  else if (steps.length) parts.push(`步骤 ${steps.filter((step) => step?.status === "completed").length}/${steps.length}`);
-  return parts.join(" · ");
+/**
+ * 这一轮的说明文字。读不到 job 明细时如实说一句，不让「准备环境」这段看起来像卡住了。
+ */
+function stageMessage(stage, remote, progress) {
+  if (stage === "prepare" && progress?.phase === "subscription") return "正在拉取并解析订阅";
+  if (stage === "scan" && !progress) return `${STAGE_TEXT.scan}（这次读不到实时计数）`;
+  const base = STAGE_TEXT[stage] || STAGE_TEXT.prepare;
+  return remote?.jobs_available === false ? `${base} · 这一步的明细暂时读不到` : base;
 }
 
 /**
@@ -320,7 +284,8 @@ export async function startScan(subscriptionUrl, config, { fetchImpl = globalThi
 
 /**
  * 问一次进度。
- * @returns {Promise<{status:string,label:string,detail:string,done:boolean,payload?:object,failure?:string}>}
+ * @returns {Promise<{status:string,stage:string,progress:object|null,message:string,done:boolean,payload?:object,failure?:string}>}
+ *   stage 是步骤条上的一段（见 app/progress.js），progress 是 runner 回报的计数读数（可能为 null）。
  *   done 为 true 时：有 payload 就是这一轮的扫描结果（与 ?job= 导出同形），有 failure 就是这次扫描没成。
  *   传输/形状类错误直接抛（带 retryable），由调用方决定重试还是收口。
  */
@@ -331,8 +296,9 @@ export async function pollScan(session, { fetchImpl = globalThis.fetch, now = Da
     assertWithinDeadline(session, now);
     return {
       status: "queued",
-      label: "等待创建扫描任务",
-      detail: "扫描请求已经交给 GitHub Actions，等待它创建这次运行。",
+      stage: "queue",
+      progress: null,
+      message: "已交给 GitHub Actions，等待它创建这次运行",
       done: false,
     };
   }
@@ -341,26 +307,22 @@ export async function pollScan(session, { fetchImpl = globalThis.fetch, now = Da
   if (session.status === "running") session.hasRun = true;
   assertWithinDeadline(session, now);
 
-  const detail = progressDetail(run, remote, session, now);
+  const progress = normalizeProgress(remote.progress);
+  const stage = stageOf({ runStatus: session.status, jobs: remote.jobs, progress });
+  const base = { status: session.status, stage, progress };
   if (run.status !== "completed") {
-    return { status: session.status, label: RUN_LABEL[session.status] || "扫描执行中", detail, done: false };
+    return { ...base, message: stageMessage(stage, remote, progress), done: false };
   }
   if (run.conclusion !== "success") {
     return {
-      status: session.status,
-      label: RUN_LABEL[session.status] || "扫描执行失败",
-      detail,
+      ...base,
+      message: `扫描执行结束：${run.conclusion || "unknown"}`,
       done: true,
       failure: `扫描执行结束：${run.conclusion || "unknown"}`,
     };
   }
   if (remote.artifact_ready !== true) {
-    return {
-      status: "completed",
-      label: "执行已完成，等待终态结果",
-      detail: `${detail} · GitHub 还在发布这次运行的产物`,
-      done: false,
-    };
+    return { ...base, message: "执行已完成：GitHub 还在发布这次运行的产物", done: false };
   }
 
   // 每一轮都重新问一次签名地址：地址有有效期，重试必须用新的一张（readArtifactFrom 负责重试
@@ -374,7 +336,7 @@ export async function pollScan(session, { fetchImpl = globalThis.fetch, now = Da
       runAttempt: session.runAttempt,
     };
   }, { fetchImpl });
-  return { status: "completed", label: "扫描已完成", detail, done: true, payload };
+  return { ...base, message: "扫描完成", done: true, payload };
 }
 
 /**

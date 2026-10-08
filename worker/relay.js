@@ -94,7 +94,7 @@ export function constantTimeEqual(left, right) {
   return difference === 0;
 }
 
-function assertRelayConfigured(env) {
+export function assertRelayConfigured(env) {
   const configured = typeof env?.SUBSCRIPTION_RELAY_TOKEN === "string" ? env.SUBSCRIPTION_RELAY_TOKEN : "";
   if (configured.length < MINIMUM_TOKEN_CHARS) {
     throw new HttpError(503, "订阅中继 token 尚未配置", "worker_not_configured");
@@ -102,7 +102,7 @@ function assertRelayConfigured(env) {
   return configured;
 }
 
-function assertRelayToken(request, configured) {
+export function assertRelayToken(request, configured) {
   const provided = request.headers.get("X-Best-IP-Relay-Token");
   if (typeof provided !== "string" || !provided || !constantTimeEqual(provided, configured)) {
     throw new HttpError(401, "订阅中继 token 无效", "unauthorized");

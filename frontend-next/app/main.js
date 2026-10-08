@@ -17,12 +17,13 @@
 
 import { NODES, SNAPSHOT_META } from "./data.js";
 import { resolveTarget, fetchExport } from "./api.js";
-import { fetchLatestScan } from "./gateway.js";
+import { fetchLatestScan, pollLatestActive } from "./gateway.js";
 import { startScan, pollScan, cancelScan, validateSubscriptionUrl, SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS } from "./scan.js";
 import { toRows, toSnapshotMeta } from "./records.js";
 import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
 import { comparableScore } from "./score-color.js";
 import { exportSnapshot } from "./snapshot.js";
+import { createScanPanel, stageOf, STAGE_TEXT } from "./progress.js";
 
 /* ------------------------------------------------------------- 元素解析 --- */
 // 页面是静态源码直上线的，没有构建期检查：id 被改名或删掉只会在运行时报错，而模块顶层拿一个
@@ -380,6 +381,9 @@ globalThis.addEventListener("pagehide", () => {
     clearTimeout(toastTimer);
     toastTimer = null;
   }
+  // 面板的每秒计时与跟进轮询同理：离开的页面不该再画、再问。
+  stopTicker();
+  stopFollow();
 });
 
 /* ----------------------------------------------------------- 空状态文案 --- */
@@ -485,14 +489,17 @@ async function loadRealData(target) {
 // 页面这一侧只负责把「最近一次」这件事说清楚，不提供任何选择入口（没有新增控件）。
 async function loadGatewayData() {
   beginRealSource("gateway", "正在读取最近一次真实扫描…",
-    "结果来自本站 Worker 上的扫描网关；页面只读已经发布的结果，不发起扫描。");
+    "结果来自本站 Worker 上的扫描网关：读的是最近一次已经发布的扫描结果。");
   try {
-    const payload = await fetchLatestScan();
+    const { payload, active } = await fetchLatestScan();
     applyRealPayload(payload, "gateway",
       "最近一次扫描没有任何节点记录", "那次运行是完成的，但产物里的 results 是空的。");
+    // 旧结果照常显示；如果更新的一次还在跑，顶部跟着它走进度，跑完自动换表。
+    if (active) startFollow(active);
   } catch (error) {
     // 整条错误对象交下去：标题要用它带的成因（见 failGateway），只传 message 就只剩正文。
     failGateway(error);
+    if (error?.active) startFollow(error.active);
   }
 }
 
@@ -546,15 +553,52 @@ async function runExport(format, button) {
 }
 
 /* ------------------------------------------------------------ 扫描入口 --- */
-// 页面上的扫描只有三样东西：一个订阅地址输入、一个开始按钮、一行进度。整条链路的实现都在
+// 页面上的扫描只有三样东西：一个订阅地址输入、一个开始按钮、一块进度面板。整条链路的实现都在
 // app/scan.js（加密、派发、轮询、取产物），这里只管「什么时候调它」和「把话说给谁看」。
 const scanElements = {
   form: document.getElementById("scanForm"),
   url: document.getElementById("subscriptionUrl"),
   start: document.getElementById("startScan"),
   stop: document.getElementById("stopScan"),
-  progress: document.getElementById("scanProgress"),
 };
+
+// 进度面板（app/progress.js）：步骤条 + 节点进度条 + 一行说明 + 每秒走的用时。
+// panelView 是面板上一次画的完整视图：重试、停止这类只换一句话的更新与它合并，
+// 不会把步骤条拨回「提交」，也不会丢掉进度条上的计数。
+const panel = createScanPanel(document);
+let panelView = null;
+let panelTicker = null;
+
+function stopTicker() {
+  if (panelTicker !== null) clearInterval(panelTicker);
+  panelTicker = null;
+}
+
+function showPanel(view) {
+  panelView = { stage: "submit", state: "active", progress: null, message: "", startedAt: 0, ...(panelView || {}), ...view };
+  panel.show(panelView);
+  if (panelView.state === "active" && panelView.startedAt > 0) {
+    if (panelTicker === null) panelTicker = setInterval(() => panel.tick(), 1000);
+  } else {
+    stopTicker();
+  }
+}
+
+/**
+ * 收尾时面板上的计数改用终态产物算：过程中的读数来自 runner 的回报，而表格只认校验过的产物，
+ * 两边的数字在完成那一刻必须是同一份。
+ */
+function finalProgress() {
+  const counts = statusCounts();
+  const total = dataset.nodes.length;
+  return { phase: "done", total, completed: total, ...counts };
+}
+
+/** 开始一段新的进度（一次新扫描、跟进另一次扫描）：先清掉上一段的视图，再画第一帧。 */
+function restartPanel(view) {
+  panelView = null;
+  showPanel(view);
+}
 
 // 同一时刻只允许一次扫描：generation 用来作废上一轮还在路上的轮询与重试（旧前端
 // scan-controller 的做法）。刷新页面就丢掉一切——扫描凭证只存在内存，见 app/scan.js 的文件头。
@@ -570,11 +614,9 @@ const scan = {
   pendingCancel: false,
 };
 
-/** 进度那一行：空字符串就藏掉，别留一条空白的行高顶着顶部条。 */
+/** 只换面板上那一句话，步骤条与计数保持原样。 */
 function setScanProgress(text) {
-  if (!scanElements.progress) return;
-  scanElements.progress.textContent = text;
-  scanElements.progress.hidden = !text;
+  showPanel({ message: text });
 }
 
 function setScanBusy(busy) {
@@ -616,12 +658,12 @@ function failScan(message, { keepSession = false, keepTable = false } = {}) {
     scan.cancelling = false;
     scan.pendingCancel = false;
     setScanBusy(true);
-    setScanProgress(message);
+    showPanel({ state: "error", message });
     toast(`扫描失败：${message}`);
     return;
   }
   finishScan();
-  setScanProgress(message);
+  showPanel({ state: "error", message });
   if (!keepTable) beginRealSource("gateway", "扫描没有成功", `${message}。稍后可以再点一次「开始扫描」。`);
   toast(`扫描失败：${message}`);
 }
@@ -637,7 +679,7 @@ function revealScanBar() {
   const keyId = String(globalThis.BEST_IP_CONFIG?.keyId || "");
   if (/^[a-f0-9]{64}$/u.test(keyId)) return;
   if (scanElements.start) scanElements.start.disabled = true;
-  setScanProgress("本站没有配置扫描公钥（SCAN_KEY_ID），这个页面暂时发不了扫描。");
+  restartPanel({ stage: "submit", state: "error", message: "本站没有配置扫描公钥（SCAN_KEY_ID），这个页面暂时发不了扫描。" });
 }
 
 async function beginScan() {
@@ -649,10 +691,12 @@ async function beginScan() {
     // 非 Error 的抛出（自定义抛字符串）也要有可读文案，不能显示 "undefined"。
     const message = error?.message || String(error);
     toast(message);
-    setScanProgress(message);
+    restartPanel({ stage: "submit", state: "error", message });
     scanElements.url?.focus();
     return;
   }
+  // 自己发起的扫描接管面板：之前若在跟进另一次扫描，就此停下。
+  stopFollow();
   scan.generation += 1;
   const generation = scan.generation;
   stopPolling();
@@ -662,7 +706,8 @@ async function beginScan() {
   scan.pendingCancel = false;
   scan.session = null;
   setScanBusy(true);
-  setScanProgress("正在加密订阅地址并交给扫描网关…");
+  // 用时从点下按钮那一刻算（本机时钟），不拿 Worker 回的 dispatched_at：两边时钟可能差几秒。
+  restartPanel({ stage: "submit", state: "active", message: `${STAGE_TEXT.submit}…`, startedAt: Date.now() });
   let session;
   try {
     session = await startScan(url, globalThis.BEST_IP_CONFIG, {});
@@ -679,6 +724,7 @@ async function beginScan() {
   // 用户连带丢掉上一屏还能看的结果。清表与填表之间也没有「同框」窗口——一次扫描要么还没清，
   // 要么整屏换成这一轮的结果。
   beginRealSource("gateway", "正在扫描…", "扫描完成后这张表会自动填上刚扫出来的节点。");
+  showPanel({ stage: "queue", message: "已交给 GitHub Actions，等待它创建这次运行" });
   // 提交期间点过「停止」（onStopClick 的 starting 分支）：会话一到手就立刻发出去，
   // 不等首轮轮询回来——pollOnce 里那条 pendingCancel 分支要等一轮状态请求才有机会跑。
   // 没点过停止则照旧排首轮轮询：刚拿到 202 时运行往往还没建立，立刻问只是白问一次。
@@ -725,7 +771,10 @@ async function pollOnce(generation) {
     return;
   }
   if (generation !== scan.generation) return;
-  setScanProgress(state.detail ? `${state.label} · ${state.detail}` : state.label);
+  // 停止请求在路上时，说明文字留给停止流程（「已请求停止…」），这里只推进步骤条与计数。
+  const view = { stage: state.stage, progress: state.progress };
+  if (!scan.cancelling && !scan.session?.cancelRequestedAt) view.message = state.message;
+  showPanel(view);
   if (state.done) {
     if (state.failure) {
       // 用户自己点的停止：说「已按你的请求停止」比转述上游的 conclusion 值更像人话。
@@ -736,6 +785,7 @@ async function pollOnce(generation) {
     finishScan();
     applyRealPayload(state.payload, "gateway",
       "这次扫描没有任何节点记录", "那次运行是完成的，但产物里的 results 是空的。");
+    showPanel({ state: "done", progress: finalProgress(), message: `${state.message} · 结果已逐字节校验并填入下表` });
     toast(`扫描完成：已显示刚扫出来的 ${dataset.nodes.length} 个节点。`);
     return;
   }
@@ -803,8 +853,107 @@ function onStopClick() {
   stopPolling();
   scan.cancelling = true;
   scan.pendingCancel = true;
-  setScanProgress("正在请求停止…");
+  showPanel({ state: "active", message: "正在请求停止…" });
   sendStopRequest(scan.generation);
+}
+
+/* ------------------------------------------------------- 跟进进行中的扫描 --- */
+// 刷新页面、换一个标签页、或者扫描是在别处发起的：手里没有那次扫描的 scan_token，但
+// /api/scans/latest 会把「最新一次还在排队/执行」的那次交出来（worker/latest.js 的 active）。
+// 页面就跟着它走进度，跑完自动换上新结果——不用反复刷新，也不会在旧表上干等。
+// 跟进只读不写：没有停止按钮（停止要 scan_token），自己一发起扫描就让位。
+const FOLLOW_POLL_MS = 3_000;
+// 运行刚结束的那一两轮，产物列表可能还没跟上：多问几轮再下「没有产出」的结论。
+const FOLLOW_SETTLE_POLLS = 4;
+const follow = { timer: null, requestId: null, startedAt: 0, misses: 0 };
+
+function stopFollow() {
+  if (follow.timer !== null) clearTimeout(follow.timer);
+  follow.timer = null;
+  follow.requestId = null;
+}
+
+function followView(active) {
+  const stage = stageOf({ runStatus: active.status === "queued" ? "queued" : "running", progress: active.progress });
+  return {
+    stage,
+    state: "active",
+    progress: active.progress,
+    message: `正在跟进最近一次扫描 · ${STAGE_TEXT[stage]}`,
+  };
+}
+
+function startFollow(active) {
+  if (!active || !scanElements.form || scan.session || scan.starting) return;
+  if (follow.requestId !== active.requestId) {
+    follow.requestId = active.requestId;
+    follow.startedAt = active.startedAt || Date.now();
+    restartPanel({ startedAt: follow.startedAt });
+  }
+  follow.misses = 0;
+  showPanel(followView(active));
+  scheduleFollow();
+}
+
+function scheduleFollow() {
+  if (follow.timer !== null) clearTimeout(follow.timer);
+  follow.timer = setTimeout(() => {
+    follow.timer = null;
+    followOnce().catch((error) => {
+      if (!follow.requestId) return;
+      showPanel({ message: `跟进进度失败，正在重试：${error?.message || String(error)}` });
+      scheduleFollow();
+    });
+  }, FOLLOW_POLL_MS);
+}
+
+/** 自己发起了扫描、或跟进已经换人：这一轮的结果作废。 */
+function followAbandoned(requestId) {
+  return follow.requestId !== requestId || Boolean(scan.session) || scan.starting;
+}
+
+async function followOnce() {
+  const followed = follow.requestId;
+  if (!followed || followAbandoned(followed)) return;
+  const { active, readyRequestId } = await pollLatestActive();
+  if (followAbandoned(followed)) return;
+  if (active) {
+    // 期间又有一次更新的扫描开始了：改跟那一次。
+    if (active.requestId !== followed) {
+      startFollow(active);
+      return;
+    }
+    showPanel(followView(active));
+    scheduleFollow();
+    return;
+  }
+  if (readyRequestId !== followed) {
+    follow.misses += 1;
+    if (follow.misses < FOLLOW_SETTLE_POLLS) {
+      showPanel({ stage: "verify", message: "那次扫描已经结束，正在等它的产物出现" });
+      scheduleFollow();
+      return;
+    }
+    stopFollow();
+    showPanel({ state: "error", message: "跟进的那次扫描已经结束，但没有产出可读的结果（失败、被取消或产物未发布）" });
+    return;
+  }
+  stopFollow();
+  showPanel({ stage: "verify", message: "那次扫描已经完成，正在取回并校验结果" });
+  try {
+    const { payload } = await fetchLatestScan();
+    // 取字节期间用户自己发起了扫描：表格已经交给那一次，别拿旧结果覆盖它。
+    if (scan.session || scan.starting) return;
+    applyRealPayload(payload, "gateway",
+      "最近一次扫描没有任何节点记录", "那次运行是完成的，但产物里的 results 是空的。");
+    showPanel({ state: "done", progress: finalProgress(), message: "扫描完成 · 结果已逐字节校验并填入下表" });
+    toast(`扫描完成：已显示最新扫出来的 ${dataset.nodes.length} 个节点。`);
+  } catch (error) {
+    if (scan.session || scan.starting) return;
+    const message = error?.message || String(error);
+    showPanel({ state: "error", message: `扫描已完成，但结果没有加载成功：${message}` });
+    toast(`结果没有加载成功：${message}`);
+  }
 }
 
 /* ------------------------------------------------------------------ 接线 --- */
