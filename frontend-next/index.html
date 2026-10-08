@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="节点质量榜：一屏看完每个节点的 Coffee 评分、IPure 评分、归属与原生性">
+  <meta name="description" content="节点质量榜：一屏看完每个节点的 IPure 评分、出口 IP、国家和地区、服务商与原生性；点列名排序、逐列筛选">
   <title>节点质量榜 · Best IP</title>
   <link rel="stylesheet" href="./styles.css">
   <!-- 空的 data: 图标：只为消掉浏览器自发请求 /favicon.ico 产生的 404 噪音，
@@ -81,30 +81,23 @@
           <svg class="field-icon" aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
             <circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 4 4"></path>
           </svg>
-          <input id="query" type="search" placeholder="搜索节点、IP、国家和地区、服务商…" autocomplete="off" spellcheck="false">
+          <input id="query" type="search" placeholder="全局搜索：节点、IP、国家和地区、服务商…（按 / 聚焦）" autocomplete="off" spellcheck="false">
         </div>
 
-        <div class="field field-compact">
-          <label class="sr-only" for="statusFilter">状态</label>
-          <select id="statusFilter">
-            <option value="all">全部状态</option>
-            <option value="success">完整</option>
-            <option value="partial">部分</option>
-            <option value="failed">失败</option>
-          </select>
+        <!-- 状态是一组分段按钮而不是下拉：四个选项连同各自的个数一眼看全，点一下即筛。
+             排序不再有下拉——点表头的列名就排（Shift 叠加），见 app/table.js。 -->
+        <div class="seg" id="statusFilter" role="group" aria-label="按状态筛选">
+          <button type="button" data-status="all" aria-pressed="true">全部<span class="seg-n" data-count="all"></span></button>
+          <button type="button" data-status="success" aria-pressed="false">完整<span class="seg-n" data-count="success"></span></button>
+          <button type="button" data-status="partial" aria-pressed="false">部分<span class="seg-n" data-count="partial"></span></button>
+          <button type="button" data-status="failed" aria-pressed="false">失败<span class="seg-n" data-count="failed"></span></button>
         </div>
 
-        <div class="field field-compact">
-          <label class="sr-only" for="sortSelect">排序</label>
-          <select id="sortSelect">
-            <option value="coffee:desc">Coffee 评分 ↓</option>
-            <option value="coffee:asc">Coffee 评分 ↑</option>
-            <option value="ipure:desc">IPure 总分 ↓</option>
-            <option value="ipure:asc">IPure 总分 ↑</option>
-            <option value="node:asc">节点名称 A→Z</option>
-            <option value="node:desc">节点名称 Z→A</option>
-          </select>
-        </div>
+        <button id="filterToggle" type="button" class="btn btn-ghost btn-filter" aria-controls="grid" aria-expanded="false" title="显示或收起逐列筛选">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"></path></svg>
+          列筛选<span class="filter-count" id="filterCount" hidden></span>
+        </button>
+        <button id="clearFilters" type="button" class="btn btn-ghost" hidden title="清空搜索、状态与全部列筛选，排序恢复默认">清除筛选</button>
 
         <div class="export-group" role="group" aria-label="导出离线快照">
           <button id="exportMhtml" type="button" class="btn btn-primary" title="把当前视图导出为单个 .mhtml 离线快照，双击即可打开">
@@ -120,9 +113,9 @@
 
     <p class="result-count" id="resultCount" aria-live="polite"></p>
 
-    <!-- 列表就是表格本身：信息密度靠列宽和行高，不靠弹窗。表头文案、colgroup 宽度
-         与窄屏折叠时每个单元格的 data-label 都由 app/render.js 的 COLUMNS 生成，
-         这里不放第二份列定义，免得三处漂移。 -->
+    <!-- 列表就是表格本身：信息密度靠列宽和行高，不靠弹窗。表头（可点击排序的列名 + 逐列筛选行）、
+         colgroup 宽度与窄屏折叠时每个单元格的 data-label 都由 app/render.js 的 COLUMNS 生成，
+         这里不放第二份列定义，免得几处漂移。 -->
     <main class="table-wrap">
       <table class="grid" id="grid">
         <caption class="sr-only">节点质量榜：每行一个节点，含评分、出口 IP、归属与原生性</caption>
@@ -134,9 +127,12 @@
 
     <div class="empty" id="emptyState" hidden>
       <p class="empty-title">没有匹配的节点</p>
-      <p class="empty-desc">试试清空搜索框，或把状态切回「全部状态」。</p>
+      <p class="empty-desc">试试清空搜索框与列筛选，或把状态切回「全部」。</p>
     </div>
   </div>
+
+  <!-- 文本列筛选框的候选值（国家、服务商），随数据换而重建；datalist 本身不渲染。 -->
+  <div id="filterSuggest" hidden></div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

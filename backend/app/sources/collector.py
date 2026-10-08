@@ -32,6 +32,7 @@ from .http import (
     ProxyTransport,
 )
 from .ipure import _ipure_field, _ipure_scores, _ipure_url
+from .values import _clean_text
 
 
 class CoffeeCollector:
@@ -195,8 +196,15 @@ class CoffeeCollector:
         gpt_check = _gpt_check_summary(gpt_requests, lookup_data)
         coffee_summary = _profile_summary(lookup_data)
         ipure_scores = _ipure_scores(ipure)
+        identity = _network_identity(
+            exit_ip if status != "failed" else "",
+            _ipure_field(ipure, "network"),
+            lookup_data,
+            coffee_summary,
+        )
         summary = {
             **coffee_summary,
+            **identity,
             "coffee_score": coffee_summary["score"],
             "score": ipure_scores["total"],
             "ipure_scores": ipure_scores,
@@ -268,6 +276,75 @@ class CoffeeCollector:
                 },
             },
         }
+
+
+def _network_identity(
+    exit_ip: str,
+    ipure_network: Any,
+    lookup_data: dict[str, Any],
+    coffee_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """出口 IP / 国家和地区 / 服务商 / ASN：IPure 报告优先，它没说的那一项才回落到 Coffee。
+
+    出口 IP 仍由 trace 发现（IPure 的查询必须带上一个 IP），IPure 回显的 ip 与之一致时记为
+    「由 IPure 确认」。每一组取值各自记来源（network_source），页面与审计都能看出这一格是谁说的。
+    """
+
+    network = ipure_network if isinstance(ipure_network, dict) else {}
+    ipure_ip = network.get("ip")
+    ip_source = None
+    if exit_ip:
+        ip_source = "ipure" if ipure_ip and _is_same_ip(ipure_ip, exit_ip) else "coffee"
+
+    coffee_country = _clean_text(lookup_data.get("country")) or None
+    coffee_code = _clean_text(
+        lookup_data.get("countryCode") or lookup_data.get("country_code")
+    ) or None
+    coffee_region = _clean_text(lookup_data.get("region")) or None
+    coffee_city = _clean_text(lookup_data.get("city")) or None
+    if network.get("country") or network.get("country_code"):
+        geo_source = "ipure"
+        country = network.get("country") or coffee_country
+        country_code = network.get("country_code") or (coffee_code.upper() if coffee_code else None)
+        region = network.get("region")
+        city = network.get("city")
+    elif coffee_country or coffee_code:
+        geo_source = "coffee"
+        country = coffee_country
+        country_code = coffee_code.upper() if coffee_code else None
+        region = coffee_region
+        city = coffee_city
+    else:
+        geo_source = None
+        country = country_code = region = city = None
+
+    ipure_isp = network.get("isp") or network.get("org")
+    if ipure_isp:
+        isp_source = "ipure"
+        isp = ipure_isp
+        as_org = network.get("org") or coffee_summary.get("as_org") or ipure_isp
+    elif coffee_summary.get("isp"):
+        isp_source = "coffee"
+        isp = coffee_summary.get("isp")
+        as_org = coffee_summary.get("as_org")
+    else:
+        isp_source = None
+        isp = coffee_summary.get("isp") or ""
+        as_org = coffee_summary.get("as_org") or ""
+    asn = network.get("asn") if isinstance(network.get("asn"), int) else coffee_summary.get("asn")
+
+    location = " ".join(part for part in (country, region, city) if part)
+    return {
+        "country": country,
+        "country_code": country_code,
+        "region": region,
+        "city": city,
+        "location": location if geo_source == "ipure" else coffee_summary.get("location", ""),
+        "isp": isp,
+        "as_org": as_org,
+        "asn": asn,
+        "network_source": {"exit_ip": ip_source, "geo": geo_source, "isp": isp_source},
+    }
 
 
 def _node_status(

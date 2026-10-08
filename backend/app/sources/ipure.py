@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlencode
@@ -346,6 +347,163 @@ def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
         ),
         "scenario_note": _clean_text(payload.get("scenarioNote")) or None,
         "report_url": _clean_text(payload.get("reportUrl")) or None,
+        "network": _parse_ipure_network(payload),
+    }
+
+
+# 出口 IP / 国家和地区 / 服务商 / ASN 的取值键。IPure 把这几项放在报告顶层还是放进某个子对象
+# （geo / network / asn …），官方文档没有承诺稳定的嵌套层级，所以按「先顶层、再已知容器」的
+# 顺序逐个找第一处非空值；找不到就是 None，由 collector 回落到 Coffee 的归属查询。
+_NETWORK_CONTAINERS = (
+    "geo",
+    "geoip",
+    "location",
+    "network",
+    "connection",
+    "asn",
+    "as",
+    "isp",
+    "ipInfo",
+    "ip_info",
+    "info",
+    "basic",
+    "summary",
+    "data",
+)
+_IP_KEYS = ("ip", "query", "address")
+_COUNTRY_KEYS = ("country", "countryName", "country_name")
+_COUNTRY_CODE_KEYS = ("countryCode", "country_code", "countryIso", "country_iso", "iso_code", "cc")
+_REGION_KEYS = ("region", "regionName", "region_name", "province", "subdivision")
+_CITY_KEYS = ("city", "cityName", "city_name")
+_ISP_KEYS = ("isp", "ispName", "isp_name", "carrier")
+_ORG_KEYS = (
+    "org",
+    "organization",
+    "organisation",
+    "asOrganization",
+    "as_org",
+    "asName",
+    "as_name",
+    "asnName",
+    "asn_name",
+    "company",
+)
+_ASN_KEYS = ("asn", "asNumber", "as_number", "as")
+_ASN_PATTERN = re.compile(r"^\s*(?:AS)?\s*(\d{1,10})\b", re.IGNORECASE)
+
+
+def _network_sources(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    sources = [payload]
+    for container in (payload, payload.get("data")):
+        if not isinstance(container, dict):
+            continue
+        for key in _NETWORK_CONTAINERS:
+            value = container.get(key)
+            if isinstance(value, dict) and value not in sources:
+                sources.append(value)
+    return sources
+
+
+def _first_text(sources: list[dict[str, Any]], keys: tuple[str, ...]) -> str | None:
+    for source in sources:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, dict):
+                value = value.get("name")
+            text = _clean_text(value) if isinstance(value, str) else ""
+            if text:
+                return text
+    return None
+
+
+def _asn_number(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("asn", "number", "id", "as"):
+            number = _asn_number(value.get(key))
+            if number is not None:
+                return number
+        return None
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str):
+        match = _ASN_PATTERN.match(value)
+        if not match:
+            return None
+        number = int(match.group(1))
+    else:
+        return None
+    return number if 0 < number <= 4_294_967_295 else None
+
+
+def _parse_ipure_network(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull exit IP, country/region, ISP and ASN out of one /api/lookup report.
+
+    Every value is optional and stays None when IPure does not state it; nothing is guessed.
+    `asn` accepts 4713, "AS4713", "AS4713 NTT" and {"asn": 4713, "name": "NTT"}; the name
+    carried next to an ASN counts as the AS organization.
+    """
+
+    sources = _network_sources(payload)
+    data = payload.get("data")
+    ip_text = _first_text([payload, *([data] if isinstance(data, dict) else [])], _IP_KEYS)
+    try:
+        ip = str(ipaddress.ip_address(ip_text)) if ip_text else None
+    except ValueError:
+        ip = None
+
+    country_code = _first_text(sources, _COUNTRY_CODE_KEYS)
+    if country_code is None:
+        for source in sources:
+            country = source.get("country")
+            if isinstance(country, dict):
+                country_code = _clean_text(country.get("code") or country.get("iso_code")) or None
+                if country_code:
+                    break
+
+    asn: int | None = None
+    asn_org: str | None = None
+    for source in sources:
+        for key in _ASN_KEYS:
+            value = source.get(key)
+            number = _asn_number(value)
+            if number is None:
+                continue
+            asn = number
+            if isinstance(value, dict):
+                asn_org = _first_text([value], ("name", *_ORG_KEYS))
+            elif isinstance(value, str):
+                rest = _ASN_PATTERN.sub("", value, count=1).strip(" -·,")
+                asn_org = rest or None
+            break
+        if asn is not None:
+            break
+
+    org = _first_text(sources, _ORG_KEYS)
+    # ipinfo 风格的 org 是 "AS15169 Google LLC"：AS 号与名字拆开，名字才是组织。
+    if org and _ASN_PATTERN.match(org) and org.upper().startswith("AS"):
+        if asn is None:
+            asn = _asn_number(org)
+        org = _ASN_PATTERN.sub("", org, count=1).strip(" -·,") or None
+
+    country = _first_text(sources, _COUNTRY_KEYS)
+    # 只给了两位字母的 country（"JP"）是国家代码，不是国名：挪到 country_code，国名留给 Coffee 补。
+    if country and len(country) == 2 and country.isascii() and country.isalpha():
+        country_code = country_code or country
+        country = None
+
+    return {
+        "ip": ip,
+        "country": country,
+        "country_code": country_code.upper() if country_code and len(country_code) <= 3 else None,
+        "region": _first_text(sources, _REGION_KEYS),
+        "city": _first_text(sources, _CITY_KEYS),
+        "isp": _first_text(sources, _ISP_KEYS),
+        "org": org or asn_org,
+        "asn": asn,
     }
 
 

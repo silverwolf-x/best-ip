@@ -1,9 +1,9 @@
 /* ============================================================================
    节点质量榜 · 新前端设计示例样式
    ----------------------------------------------------------------------------
-   设计取向：单视图、无弹窗、无展开、无二级页，**信息密度靠一张十列宽表**——一行
-   就是一个节点的全部结论（9 项有用信息 + 排名），没有折叠、没有表头逐列筛选行。
-   桌面以十列宽表保留密度，窄屏以流式卡片完整显示字段，行高由内容决定。
+   设计取向：单视图、无弹窗、无展开、无二级页，**信息密度靠一张宽表**——一行就是一个
+   节点的全部结论。表格像电子表格一样用：点列名排序（Shift 叠加），表头下一行逐列筛选。
+   桌面以宽表保留密度，窄屏以流式卡片完整显示字段，表头变成一条排序胶囊 + 可收起的筛选格。
 
    色彩契约（有意继承 frontend/styles.css 里已验证的那一套语义色）：
    - good / warn / danger / info 两组主题的取值逐字照搬旧版，避免重算对比度时
@@ -284,6 +284,42 @@ code { font-family: var(--font-mono); }
   border-color: var(--accent-hover);
 }
 .btn-ghost { color: var(--ink-2); }
+
+/* 状态分段按钮：四个选项连同个数一眼看全，按下即筛。 */
+.seg {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 34px; padding: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.seg button {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: 6px;
+  background: none; color: var(--ink-2);
+  font: inherit; font-size: 12.5px; font-weight: 650;
+  cursor: pointer; white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(16, 21, 27, 0.1);
+}
+.seg-n { color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; }
+.seg button[data-status="success"] .seg-n { color: var(--good); }
+.seg button[data-status="partial"] .seg-n { color: var(--warn); }
+.seg button[data-status="failed"] .seg-n { color: var(--danger); }
+
+.filter-count {
+  display: inline-grid; place-items: center;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--info); color: var(--surface);
+  font-size: 10.5px; font-weight: 800;
+}
+.btn-filter[aria-expanded="true"] { color: var(--ink); border-color: var(--line-2); background: var(--surface-3); }
 .export-group { display: flex; align-items: center; gap: 0; }
 .export-group .btn-primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .export-group .btn-ghost { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
@@ -554,7 +590,7 @@ code { font-family: var(--font-mono); }
 }
 
 /* ------------------------------------------------------------------ 表格 --- */
-/* 十列宽表保持紧凑的双行节奏。表头只放列名，筛选与排序集中在顶部。 */
+/* 宽表保持紧凑的双行节奏。表头两行：可点击排序的列名 + 逐列筛选；顶部只留全局搜索与状态。 */
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -565,23 +601,14 @@ code { font-family: var(--font-mono); }
 
 .grid {
   width: 100%;
-  /* 1322px 是列宽**实测和**的硬下限（每列都按内容的自然宽度给，省下来的地方
-     全给了「节点」列）。低于这个数，浏览器就从「IPure 场景评分」那列挖宽度，
-     6 个 chip 一折行，行高从 50.5px 膨胀到 57/80/149px，密度当场归零。
-     所以窄屏宁可横向滚动，也不压缩列宽。1440 视口可用 1358px，留 36px 余量。
-     原为 1354px：国家列只写国家后从 116 收到 96（-20），场景列下限从 358 收到 346（-12）。 */
-  min-width: 1322px;
+  /* 1334px = colgroup 各列宽之和（render.js 的 COLUMNS）。低于这个数浏览器就开始挖列宽，
+     表头的列名 + 排序箭头会被挤到折行。所以窄屏宁可横向滚动，也不压缩列宽；
+     1440 视口可用 1392px。场景评分拆成六个 54px 的真列（原先是一列六个 chip，346px）。 */
+  min-width: 1334px;
   border-collapse: separate;
   border-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
-
-/* 唯一一条写在 CSS 里的列宽：col 元素不支持 min-width，而「这一列绝不许折行」本身
-   是密度契约的一部分——实测最宽的一行（真实数据里三项 3 位数的那行）六个 chip 合计
-   326px，加左右内边距 18px 与 2px 余量，取 346px。原为 358px，那是按带「另有 N 项
-   无数据」注记的行量的；注记删掉、缺项统一显示 -1 之后，这一列恒定就是六个 chip。 */
-.grid .cell-scn,
-.grid thead th.col-scn { min-width: 346px; }
 
 .grid thead th {
   padding: 9px 10px;
@@ -598,6 +625,83 @@ code { font-family: var(--font-mono); }
 .grid thead th + th { border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent); }
 .grid thead th[data-align="center"],
 .grid tbody td[data-align="center"] { text-align: center; }
+
+/* --- 可排序的列名：整格是一个按钮，点一下排序，Shift+点击叠加 --- */
+.grid thead .head-row th:has(.th-sort) { padding: 0; }
+.th-sort {
+  display: flex; align-items: center; gap: 3px;
+  width: 100%; padding: 9px 10px;
+  border: 0; background: none; color: inherit;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  text-align: inherit; white-space: nowrap;
+  cursor: pointer; user-select: none;
+}
+th[data-align="center"] .th-sort { justify-content: center; }
+.th-sort:hover { color: var(--ink); background: color-mix(in srgb, var(--surface-3) 70%, transparent); }
+.th-sort:focus-visible { outline-offset: -2px; }
+.th-label { overflow: hidden; text-overflow: ellipsis; }
+/* 未排序的列 hover 时给一个淡箭头，暗示「点我能排」；已排序的列箭头常亮、着信息色。 */
+.sort-ind { flex: none; min-width: 0.7em; color: var(--info); font-size: 11px; letter-spacing: 0; }
+.th-sort:hover .sort-ind:empty::before { content: "↕"; color: var(--ink-faint); }
+.sort-ord {
+  flex: none; color: var(--info); font-size: 9px; font-weight: 800; letter-spacing: 0;
+  transform: translateY(-3px);
+}
+.grid thead .head-row th[data-sorted="asc"],
+.grid thead .head-row th[data-sorted="desc"] { color: var(--ink); background: color-mix(in srgb, var(--info-soft) 70%, var(--surface-2)); }
+
+/* --- 逐列筛选行 --- */
+.grid[data-filters="closed"] .filter-row { display: none; }
+.grid thead .filter-row th {
+  padding: 5px 5px 6px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-2);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+/* 列名已经在上面一行；筛选框的 label 只给读屏器（窄屏卡片态再显出来）。 */
+.filter-lbl {
+  position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.filter-input {
+  appearance: none;
+  display: block;
+  width: 100%; min-width: 0; height: 26px; padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit; font-size: 12px; font-weight: 500;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.filter-input::placeholder { color: var(--ink-3); opacity: 0.8; }
+.filter-input:hover { border-color: var(--line-2); }
+.filter-input:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 16%, transparent); }
+th[data-align="center"] .filter-input,
+.filter-row th[data-group] .filter-input,
+.filter-row th.col-coffee .filter-input,
+.filter-row th.col-ipure .filter-input { padding: 0 4px; text-align: center; }
+select.filter-input {
+  padding-right: 16px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: right 8px center, right 4px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+.filter-input[data-active="true"] {
+  border-color: color-mix(in srgb, var(--info) 60%, var(--line));
+  background-color: var(--info-soft);
+  font-weight: 650;
+}
+.filter-input[aria-invalid] { border-color: var(--danger); background-color: var(--danger-soft); }
+.filter-input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
+
+/* 六个场景列是一组：组的左边缘画一条稍重的分隔线，与总分列分开。 */
+.grid th[data-group="first"],
+.grid td[data-group="first"] { border-left: 1px solid var(--line-2); }
 
 /* --- 行 --- */
 .row {
@@ -749,6 +853,11 @@ code { font-family: var(--font-mono); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 一键筛选：值本身可点（点了就把这一列筛成它，再点取消）。只给提示，不改版面。 */
+.quick { cursor: pointer; border-radius: var(--radius-xs); }
+.quick:hover { text-decoration: underline; text-decoration-color: var(--ink-faint); text-underline-offset: 2px; }
+.chip.quick:hover, .proto.quick:hover { text-decoration: none; filter: brightness(0.96); box-shadow: 0 0 0 1px var(--line-2); }
 .cell-isp .isp {
   display: block; color: var(--ink); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -775,14 +884,11 @@ code { font-family: var(--font-mono); }
   /* 四档配色的规则与 .chip-* 合并到上面的「通用药丸」段：两组的 color / background /
      border-color 逐字相同，改一处等于同时改两处。 */
 
-/* --- IPure 六项场景评分 --- */
-.scenarios {
-  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-  margin: 0; padding: 0; list-style: none;
-}
+/* --- IPure 六项场景评分：每项一列，格子里只有一个带色数字 --- */
+.row > td.cell-scn { padding-left: 4px; padding-right: 4px; }
 .scn {
-  display: inline-flex; align-items: center; gap: 3px;
-  height: 19px; padding: 0 5px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  min-width: 32px; height: 21px; padding: 0 5px;
   border-radius: var(--radius-tag);
   border: 1px solid transparent;
   font-size: 10.5px; font-weight: 700; line-height: 1;
@@ -805,13 +911,13 @@ code { font-family: var(--font-mono); }
   :root .score[data-band="band"], :root .scn { --sc: var(--sc-d, 147 163 179); }
 }
 
-.scn-lbl { font-weight: 600; }
+.scn-lbl { display: none; font-weight: 600; }
 /* 场景分数是多位数（-1 到 100），等宽数字才能让同一列的不同行对齐。父级 .scn 已经设了
    tabular-nums 并会继承下来，这里再显式钉一次：将来若给 .scn 换字体，数字不会跟着变比例字。 */
 .scn-num { font-variant-numeric: tabular-nums; }
 
-/* 「未连接成功」的行不画六个 -1，只写一句话。 */
-.scn-none { display: inline-flex; align-items: center; color: var(--ink-3); font-size: 11px; }
+/* 「未连接成功」的行不画六个 -1，六个场景格合成一格只写一句话。 */
+.row > td.cell-scn-none { color: var(--ink-3); font-size: 11px; text-align: center; }
 
 /* --- 失败行不留白：原因与卡住的步骤占住本该显示网络信息的跨列单元格 --- */
 /* 失败行与数据行同一个行高，靠的是「节点」格里那条固定 19px 的状态行（见 .ident-sub）：
@@ -890,24 +996,61 @@ code { font-family: var(--font-mono); }
   .topbar-controls .export-group .btn { flex: 1 1 0; }
   .topbar-controls .field, .topbar-controls .btn { height: 36px; }
 
+  .topbar-controls > .seg { flex: 1 1 100%; }
+  .topbar-controls > .seg button { flex: 1 1 0; justify-content: center; padding: 0 6px; }
+
   .table-wrap { background: none; border: 0; box-shadow: none; overflow: visible; }
   .grid { display: block; min-width: 0; }
   .grid colgroup { display: none; }
-  /* 卡片态的表头不能 display:none —— 那会把十个列名从可访问性树里一起删掉。
-     这里复用本文件 `.sr-only` 的 clip-rect 手法：绝对定位后脱离文档流、不占卡片高度；
-     thead/tr/th 显式 block 化，然后被祖先的 clip 整个裁掉——连第一个 th 的底色都不落像素。
-     它仍是 DOM 里的一段文本，但一个像素都不画，也不参与重叠判定。 */
-  .grid thead {
-    position: absolute;
-    width: 1px; height: 1px;
-    margin: -1px;
-    padding: 0;
-    border: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
+  /* 卡片态的表头：列名行变成一条可横向滑动的排序胶囊，点哪个就按哪个排；
+     筛选行变成一组带标签的小输入格，由顶部「列筛选」按钮展开 / 收起。 */
+  .grid thead { display: block; }
+  .grid thead tr.head-row {
+    display: flex; gap: 6px;
+    margin: 0 calc(-1 * var(--gutter)) 8px;
+    padding: 0 var(--gutter) 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
-  .grid thead tr, .grid thead th { display: block; }
+  .grid thead tr.head-row::-webkit-scrollbar { display: none; }
+  .grid thead .head-row th {
+    display: block; flex: none;
+    padding: 0; border: 0; border-radius: var(--radius-pill);
+    background: none; letter-spacing: 0.02em;
+  }
+  .grid thead .head-row th.col-rank { display: none; }
+  .grid thead .head-row .th-sort {
+    height: 28px; padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+  }
+  .grid thead .head-row th[data-sorted="asc"] .th-sort,
+  .grid thead .head-row th[data-sorted="desc"] .th-sort { border-color: var(--info); background: var(--info-soft); color: var(--ink); }
+  .grid thead .head-row th[data-sorted] { background: none; }
+  .grid thead tr.filter-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr));
+    gap: 6px 8px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .grid[data-filters="closed"] thead tr.filter-row { display: none; }
+  .grid thead .filter-row th {
+    display: flex; flex-direction: column; gap: 3px;
+    min-width: 0; padding: 0; border: 0; background: none;
+  }
+  .grid thead .filter-row th[aria-hidden="true"] { display: none; }
+  .grid thead .filter-row .filter-lbl {
+    position: static; width: auto; height: auto; margin: 0; clip: auto;
+    overflow: hidden; text-overflow: ellipsis;
+    color: var(--ink-3); font-size: 11px; font-weight: 600;
+  }
+  .grid thead .filter-row .filter-input { height: 32px; font-size: 13px; text-align: left; padding: 0 8px; }
+  .grid th[data-group="first"], .grid td[data-group="first"] { border-left: 0; }
   .grid tbody { display: block; }
 
   .grid .row {
@@ -1038,30 +1181,28 @@ code { font-family: var(--font-mono); }
     white-space: normal;
   }
 
-  /* --- 第四行：六项场景评分，窄了就折行，不挤不留白 --- */
+  /* --- 第四行：六项场景评分，一项一格，窄了就折成两行三格 --- */
   .grid .row > td.cell-scn {
     order: 11;
-    flex: 1 1 100%;
-    margin-top: 2px;
-    padding-top: 7px;
-    border-top: 1px solid var(--line);
-  }
-  .grid .row > td.cell-scn .scenarios {
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    gap: clamp(2px, 1vw, 4px);
+    flex: 1 1 calc((100% - 5 * var(--card-gap)) / 6);
+    min-width: 0;
+    padding: 0;
   }
   .grid .row > td.cell-scn .scn {
-    flex: 1 1 auto;
+    width: 100%;
     min-width: 0;
     height: 22px;
     justify-content: center;
     padding: 0 4px;
     font-size: 11px;
   }
-  .grid .row > td.cell-scn .scn-lbl { font-size: 10.5px; }
+  .grid .row > td.cell-scn .scn-lbl { display: inline; font-size: 10.5px; }
   .grid .row > td.cell-scn .scn-num { font-size: 11px; }
+  .grid .row > td.cell-scn-none { order: 11; flex: 1 1 100%; justify-content: flex-start; }
+  /* 手机宽度放不下一行六格（「流媒体 92」要 60px 上下）：整齐地折成两行各三格，不出现 4+2。 */
+  @media (max-width: 560px) {
+    .grid .row > td.cell-scn { min-width: calc((100% - 2 * var(--card-gap)) / 3); }
+  }
 
   /* --- 失败节点：原因与配置服务商占住接着的整行，不留白也不冒充数据格 --- */
   .grid .row > td.cell-absent {

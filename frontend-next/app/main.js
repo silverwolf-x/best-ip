@@ -1,11 +1,11 @@
 /* ============================================================================
    页面主控 —— 筛选 / 排序 / 渲染 / 导出接线
    ----------------------------------------------------------------------------
-   页面只有三个输入（搜索、状态、排序）和两类按钮（导出、复制）。所有筛选都在内存里
-   对整份数据跑一遍：示例 12 条、真实扫描几十条，都不值得为它上虚拟列表。
-
-   与旧版的差别不只是数量：旧版每次改动都要重算 10 个逐列筛选器 + 全局搜索 + 表格
-   排序 + 进度面板，这里只有一条归一化链路——原始记录 → 过滤 → 排序 → 建行。
+   表格像电子表格一样用：点列名排序（再点反向、第三下取消，Shift+点击叠加次级排序），
+   表头下一行逐列输入即筛，点单元格里的国家 / 服务商 / 接入 / 原生性 / 协议一键筛这个值；
+   顶部只留全局搜索与状态分段按钮。筛选与排序写进地址栏 hash，刷新与分享都能还原。
+   所有筛选都在内存里对整份数据跑一遍：几十条记录不值得上虚拟列表。
+   链路只有一条：原始记录 → 状态 / 全局搜索 / 逐列筛选 → 多列排序 → 建行。
 
    数据有三个来源，行对象只有一个形状：
    - 在线部署（site-config.js 说 mode === "gateway"）：本站 Worker 上「最近一次扫描」的
@@ -23,8 +23,10 @@ import {
   SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS, SCAN_POLL_FINISH_MS, SCAN_PROGRESS_POLL_MS,
 } from "./scan.js";
 import { toRows, toSnapshotMeta } from "./records.js";
-import { createRow, createColGroup, createHeadRow, applyScoreStyles, STATUS_LABELS } from "./render.js";
-import { comparableScore } from "./score-color.js";
+import { createRow, createColGroup, createHead, syncHeadSort, applyScoreStyles, COLUMNS, COLUMN_BY_KEY, STATUS_LABELS } from "./render.js";
+import {
+  DEFAULT_SORTS, compileFilters, comparator, decodeHash, encodeHash, filterIsValid, nextSorts,
+} from "./table.js";
 import { exportSnapshot } from "./snapshot.js";
 import { createScanPanel, laterStage, nodesAllFinal, stageOf, stageOfProgress, STAGE_TEXT } from "./progress.js";
 
@@ -35,7 +37,6 @@ import { createScanPanel, laterStage, nodesAllFinal, stageOf, stageOfProgress, S
 const REQUIRED_ELEMENT_IDS = {
   query: "query",
   status: "statusFilter",
-  sort: "sortSelect",
   grid: "grid",
   gridColumns: "gridColumns",
   gridHead: "gridHead",
@@ -51,6 +52,10 @@ const elements = {
   toast: document.getElementById("toast"),
   exportMhtml: document.getElementById("exportMhtml"),
   exportHtml: document.getElementById("exportHtml"),
+  clearFilters: document.getElementById("clearFilters"),
+  filterToggle: document.getElementById("filterToggle"),
+  filterCount: document.getElementById("filterCount"),
+  filterSuggest: document.getElementById("filterSuggest"),
 };
 
 const missingElementIds = [];
@@ -89,23 +94,25 @@ function reportMissingElements(ids) {
   document.body.textContent = message;
 }
 
-/** 排序下拉的 value 形状是 "key:direction"（见 index.html 的 option），内存态由它派生。 */
-function readSortValue(value) {
-  const [key, direction] = String(value || "").split(":");
-  // 下拉的 value 被改坏时退回默认排序，而不是把 undefined 灌进 state（比较器会静默排错）。
-  return key && direction
-    ? { sortKey: key, sortDirection: direction }
-    : { sortKey: "coffee", sortDirection: "desc" };
+// 初值：地址栏 hash 优先（分享出去的链接要能还原同一个视图），其次是浏览器在刷新/后退时
+// 恢复的搜索框内容——内存里若仍是空搜索，页面会显示一份与输入框对不上的列表。
+const restored = decodeHash(globalThis.location?.hash || "", COLUMN_BY_KEY);
+const state = {
+  query: restored.query ?? elements.query?.value ?? "",
+  status: restored.status ?? "all",
+  sorts: restored.sorts ?? [...DEFAULT_SORTS],
+  filters: restored.filters,
+};
+
+/** 当前生效的列筛选（非空输入）的列。 */
+function activeFilterKeys() {
+  return Object.keys(state.filters).filter((key) => String(state.filters[key] ?? "").trim());
 }
 
-// 初值从 DOM 读，不能假定 index.html 的默认值：刷新/后退时浏览器会恢复表单值（搜索框里还留着
-// 上次的关键字、状态下拉还停在「失败」），内存里若仍是「空搜索 + 全部状态」，页面就会显示一份
-// 与输入框对不上的列表，导出摘要还会把它写成「筛选：无」。
-const state = {
-  query: elements.query?.value ?? "",
-  status: elements.status?.value ?? "all",
-  ...readSortValue(elements.sort?.value),
-};
+function viewIsDefault() {
+  return !state.query.trim() && state.status === "all" && !activeFilterKeys().length
+    && encodeHash({ ...state, query: "", status: "all", filters: {} }) === "";
+}
 
 /* --------------------------------------------------------------- 检索索引 --- */
 // 一次算好可搜索文本，避免每次按键都对整份数据重新拼字段。
@@ -142,6 +149,8 @@ const dataset = {
   nodes: NODES,
   meta: SNAPSHOT_META,
   index: buildSearchIndex(NODES),
+  // 原始位次：所有排序键都相等（或取消了排序）时按订阅顺序排，同一份数据每次排出来一样。
+  order: new Map(NODES.map((result, index) => [result, index])),
   // 数据版本：setNodes 每次 +1。渲染的脏检查与状态计数缓存都用它判断「这份数据换过了没」，
   // 不必逐条比较内容。
   version: 0,
@@ -156,55 +165,62 @@ const dataset = {
 function setNodes(nodes) {
   dataset.nodes = nodes;
   dataset.index = buildSearchIndex(nodes);
+  dataset.order = new Map(nodes.map((result, index) => [result, index]));
   dataset.version += 1;
+  buildSuggestions();
 }
 
-/* ------------------------------------------------------------------ 排序 --- */
-function numericValue(result, key) {
-  if (key === "coffee") return Number.isFinite(result.coffee_score) ? result.coffee_score : null;
-  // IPure 总分的 -1 是「该地区受限」哨兵，不参与数值比较；null 表示上游没给分。
-  return comparableScore(result.score);
-}
-
-function byNodeName(a, b) {
-  return String(a.node).localeCompare(String(b.node), "zh-CN");
-}
-
-function comparator() {
-  const sign = state.sortDirection === "desc" ? -1 : 1;
-  const key = state.sortKey;
-  return (a, b) => {
-    if (key === "node") return sign * byNodeName(a, b);
-    const left = numericValue(a, key);
-    const right = numericValue(b, key);
-    // 没分的节点永远沉底，而不是在升序时冒充「分数最低」。
-    if (left === null && right === null) return byNodeName(a, b);
-    if (left === null) return 1;
-    if (right === null) return -1;
-    if (left === right) return byNodeName(a, b);
-    return sign * (left - right);
-  };
+/** 文本列筛选框的候选值：本份数据里出现过的国家与服务商（按出现次数排），输入时可直接选。 */
+function buildSuggestions() {
+  if (!elements.filterSuggest) return;
+  const lists = COLUMNS.filter((column) => column.suggest).map((column) => {
+    const counts = new Map();
+    dataset.nodes.forEach((result) => {
+      const value = column.suggest(result);
+      if (value) counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    const list = document.createElement("datalist");
+    list.id = `suggest-${column.key}`;
+    [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN")).forEach(([value, count]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.label = `${count} 个节点`;
+      list.append(option);
+    });
+    return list;
+  });
+  elements.filterSuggest.replaceChildren(...lists);
 }
 
 /* ------------------------------------------------------------ 过滤 + 排序 --- */
 function visibleRows() {
   const needle = state.query.trim().toLocaleLowerCase("zh-CN");
+  const columnTest = compileFilters(state.filters, COLUMN_BY_KEY);
   const filtered = dataset.nodes.filter((result) => {
     if (state.status !== "all" && result.status !== state.status) return false;
-    if (!needle) return true;
-    return dataset.index.get(result).includes(needle);
+    if (needle && !dataset.index.get(result).includes(needle)) return false;
+    return columnTest(result);
   });
-  return filtered.sort(comparator());
+  return filtered.sort(comparator(state.sorts, COLUMN_BY_KEY, (result) => dataset.order.get(result) ?? 0));
+}
+
+/** 排序的文字描述（导出摘要用）：「IPure ↓ · Coffee ↓」；没有排序时是「订阅顺序」。 */
+function sortLabel() {
+  if (!state.sorts.length) return "订阅顺序";
+  return state.sorts.map(({ key, dir }) => `${COLUMN_BY_KEY.get(key)?.label ?? key} ${dir === "asc" ? "↑" : "↓"}`).join(" · ");
+}
+
+/** 列筛选的文字描述：「国家和地区：日本；IPure：≥80」。 */
+function filterLabel() {
+  return activeFilterKeys()
+    .map((key) => `${COLUMN_BY_KEY.get(key)?.title ?? COLUMN_BY_KEY.get(key)?.label ?? key}：${String(state.filters[key]).trim()}`)
+    .join("；");
 }
 
 /* -------------------------------------------------------------- 渲染一帧 --- */
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-function labelOf(select) {
-  return select.options[select.selectedIndex]?.textContent?.trim() || "";
 }
 
 // 「数据从哪来」这句话只有一处：示例是设计示例，真实数据是某一次真实扫描的导出。
@@ -237,18 +253,15 @@ function statusCounts() {
 
 function renderStats() {
   const counts = statusCounts();
-  const parts = [
-    statText(String(dataset.nodes.length), " 个节点", true),
-    statSep(),
-    statText(String(counts.success), " 完整", true),
-    statSep(),
-    statText(String(counts.partial), " 部分", true),
-    statSep(),
-    statText(String(counts.failed), " 失败", true),
-  ];
+  // 各状态的个数写在状态分段按钮上（点它就筛），顶部统计只留总数与来源，不再重复一遍。
+  const parts = [statText(String(dataset.nodes.length), " 个节点", true)];
   const meta = metaLabel();
   if (meta) parts.push(statSep(), statText(meta, "", false));
   elements.runStats.replaceChildren(...parts);
+  elements.status.querySelectorAll("[data-count]").forEach((node) => {
+    const key = node.dataset.count;
+    node.textContent = String(key === "all" ? dataset.nodes.length : counts[key] ?? 0);
+  });
 }
 
 function statText(value, suffix, strong) {
@@ -297,7 +310,7 @@ function syncExportAvailability() {
 let lastRenderKey = null;
 
 function renderKey() {
-  return `${dataset.version}|${state.query}|${state.status}|${state.sortKey}:${state.sortDirection}`;
+  return `${dataset.version}|${state.query}|${state.status}|${JSON.stringify(state.sorts)}|${JSON.stringify(state.filters)}`;
 }
 
 // 渲染时算出来的可见行：导出要的「有多少行」就是这一份（见 runExport），不必再跑一次 filter+sort。
@@ -308,13 +321,14 @@ function render() {
   if (key !== lastRenderKey) {
     lastRenderKey = key;
     lastVisibleRows = visibleRows();
-    const ranked = state.sortKey !== "node" && state.sortDirection === "desc";
+    const primary = state.sorts[0] ? COLUMN_BY_KEY.get(state.sorts[0].key) : null;
+    const ranked = primary?.sort === "num" && state.sorts[0].dir === "desc";
     const fragment = document.createDocumentFragment();
 
     lastVisibleRows.forEach((result, index) => {
       const position = index + 1;
       // 只有「按分数降序」时前三名才真的是前三名；按名字排序时给第 1 名戴金牌是撒谎。
-      const tier = ranked && position <= 3 && numericValue(result, state.sortKey) !== null;
+      const tier = ranked && position <= 3 && primary.sortValue(result) !== null;
       fragment.append(createRow(result, { position, tier }, document));
     });
 
@@ -326,12 +340,53 @@ function render() {
 
   const results = lastVisibleRows;
   elements.empty.hidden = results.length > 0;
-  elements.count.textContent = results.length === dataset.nodes.length
+  const filtered = activeFilterKeys().length;
+  elements.count.textContent = (results.length === dataset.nodes.length
     ? `当前视图 ${dataset.nodes.length} 个节点`
-    : `当前视图 ${results.length} 个节点（共 ${dataset.nodes.length} 个）`;
+    : `当前视图 ${results.length} 个节点（共 ${dataset.nodes.length} 个）`)
+    + ` · 排序：${sortLabel()}${filtered ? ` · ${filtered} 列筛选中` : ""}`;
+  syncControls();
   // 没有数据（加载中/加载失败/这个任务真的没记录）时导出按钮不该能点：
   // 导出一份「什么都没有」的快照，在文件列表里和「真的没扫到东西」分不开。
   syncExportAvailability();
+}
+
+/**
+ * 把内存态画回所有控件：状态分段按钮、表头排序箭头、筛选框的值与「无效」标记、
+ * 「清除筛选」与筛选计数，以及地址栏 hash。每帧 render 都会调一次——几十个节点，几十个控件，
+ * 比在每个事件里各自维护一份可靠得多。
+ */
+function syncControls() {
+  elements.status.querySelectorAll("[data-status]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.status === state.status));
+  });
+  syncHeadSort(elements.gridHead, state.sorts);
+  elements.gridHead.querySelectorAll("[data-filter-key]").forEach((control) => {
+    const key = control.dataset.filterKey;
+    const value = state.filters[key] ?? "";
+    if (control.value !== value && document.activeElement !== control) control.value = value;
+    const active = String(value).trim() !== "";
+    const valid = filterIsValid(COLUMN_BY_KEY.get(key), value);
+    control.dataset.active = String(active && valid);
+    control.toggleAttribute("aria-invalid", !valid);
+    control.closest("th")?.toggleAttribute("data-filtered", active && valid);
+  });
+  const active = activeFilterKeys().length;
+  if (elements.filterCount) {
+    elements.filterCount.hidden = active === 0;
+    elements.filterCount.textContent = String(active);
+  }
+  if (elements.clearFilters) elements.clearFilters.hidden = viewIsDefault();
+  const hash = encodeHash(state);
+  if (globalThis.location && hash !== (globalThis.location.hash === "#" ? "" : globalThis.location.hash)) {
+    const url = `${globalThis.location.pathname}${globalThis.location.search}${hash}`;
+    try { globalThis.history?.replaceState(globalThis.history.state, "", url); } catch { /* file:// 等受限环境不写地址栏 */ }
+  }
+}
+
+function setFiltersOpen(open) {
+  elements.grid.dataset.filters = open ? "open" : "closed";
+  elements.filterToggle?.setAttribute("aria-expanded", String(open));
 }
 
 let frame = null;
@@ -509,6 +564,28 @@ async function loadGatewayData() {
 
 /* ------------------------------------------------------------------ 导出 --- */
 /**
+ * 快照里的表格是静态的：筛选行整行去掉（离线文件里摆一排按不动的输入框只会让人以为坏了），
+ * 列名按钮换成纯文字（箭头与序号保留，读者看得出是按哪几列排的），一键筛选的提示样式也摘掉。
+ */
+function exportGridHtml() {
+  const grid = elements.grid.cloneNode(true);
+  grid.querySelector(".filter-row")?.remove();
+  grid.removeAttribute("data-filters");
+  grid.querySelectorAll(".th-sort").forEach((button) => {
+    const span = document.createElement("span");
+    span.className = "th-sort";
+    span.append(...button.childNodes);
+    button.replaceWith(span);
+  });
+  grid.querySelectorAll(".quick").forEach((node) => {
+    node.classList.remove("quick");
+    delete node.dataset.quickKey;
+    delete node.dataset.quickValue;
+  });
+  return grid.outerHTML;
+}
+
+/**
  * 导出摘要里的状态计数与顶部统计行说的是同一件事，两边都用缓存过的 statusCounts()：
  * 原来 countOf 在这里对整份数据各 filter 三遍，而 renderStats 已经算过一次同样的数字。
  */
@@ -525,13 +602,13 @@ async function runExport(format, button) {
   button.disabled = true;
   try {
     const artifact = await exportSnapshot(format, {
-      rowsHtml: elements.grid.outerHTML,
+      rowsHtml: exportGridHtml(),
       total: dataset.nodes.length,
       shown: results.length,
       state: {
-        query: state.query.trim(),
-        statusLabel: labelOf(elements.status),
-        sortLabel: labelOf(elements.sort),
+        query: [state.query.trim(), filterLabel()].filter(Boolean).join("；"),
+        statusLabel: state.status === "all" ? "全部状态" : STATUS_LABELS[state.status],
+        sortLabel: sortLabel(),
         // 快照会被归档、被转发，来源必须跟着页面一起走，否则一份真实结果和一个
         // 设计示例在文件里长得一模一样。
         source: dataset.meta?.source || "",
@@ -1065,18 +1142,86 @@ function wireControls() {
     scheduleRender();
   });
 
-  // change 与 input 走同一条 rAF 调度：change 里直接 render() 是同步重建整表，
-  // 而输入事件正排着一个 rAF，同一帧里就会连着重建两次（第二次的输入完全没变）。
-  elements.status.addEventListener("change", () => {
-    state.status = elements.status.value;
+  elements.status.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-status]");
+    if (!button) return;
+    state.status = button.dataset.status;
     scheduleRender();
   });
 
-  elements.sort.addEventListener("change", () => {
-    const next = readSortValue(elements.sort.value);
-    state.sortKey = next.sortKey;
-    state.sortDirection = next.sortDirection;
+  // 表头：点列名排序，Shift+点击叠加；筛选行的输入即时生效（与全局搜索同一条 rAF 调度）。
+  elements.gridHead.addEventListener("click", (event) => {
+    const button = event.target.closest(".th-sort");
+    if (!button) return;
+    const column = COLUMN_BY_KEY.get(button.dataset.sortKey);
+    if (!column) return;
+    state.sorts = nextSorts(state.sorts, column, event.shiftKey);
     scheduleRender();
+  });
+  const onFilterInput = (event) => {
+    const key = event.target?.dataset?.filterKey;
+    if (!key) return;
+    state.filters = { ...state.filters, [key]: event.target.value };
+    scheduleRender();
+  };
+  elements.gridHead.addEventListener("input", onFilterInput);
+  elements.gridHead.addEventListener("change", onFilterInput);
+  elements.gridHead.addEventListener("keydown", (event) => {
+    // Esc 清掉当前这一格的筛选；再按一次（已经是空的）就把焦点还给表格。
+    if (event.key !== "Escape" || !event.target?.dataset?.filterKey) return;
+    if (event.target.value) {
+      event.target.value = "";
+      onFilterInput(event);
+    } else {
+      event.target.blur();
+    }
+  });
+
+  // 一键筛选：点单元格里的国家 / 服务商 / AS 号 / 接入 / 原生性 / 协议，把那一列的筛选设成它；
+  // 已经是它就取消。复制按钮与 IP 文本不在其中（那是选中复制的路径）。
+  elements.rows.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-quick-key]");
+    if (!target || getSelection()?.toString()) return;
+    const key = target.dataset.quickKey;
+    const value = target.dataset.quickValue;
+    const same = String(state.filters[key] ?? "").trim() === value;
+    state.filters = { ...state.filters, [key]: same ? "" : value };
+    setFiltersOpen(true);
+    scheduleRender();
+  });
+
+  elements.clearFilters?.addEventListener("click", () => {
+    state.query = "";
+    state.status = "all";
+    state.filters = {};
+    state.sorts = [...DEFAULT_SORTS];
+    elements.query.value = "";
+    scheduleRender();
+  });
+
+  elements.filterToggle?.addEventListener("click", () => {
+    setFiltersOpen(elements.grid.dataset.filters !== "open");
+  });
+
+  // 手改地址栏 hash、或前进后退到另一个 hash：按它重新还原视图。
+  globalThis.addEventListener("hashchange", () => {
+    const next = decodeHash(globalThis.location.hash, COLUMN_BY_KEY);
+    state.sorts = next.sorts ?? [...DEFAULT_SORTS];
+    state.status = next.status ?? "all";
+    state.query = next.query ?? "";
+    state.filters = next.filters;
+    elements.query.value = state.query;
+    scheduleRender();
+  });
+
+  // 「/」聚焦全局搜索（正在输入时不抢）。
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+    event.preventDefault();
+    elements.query.focus();
+    elements.query.select();
   });
 
   // 导出按钮是可选的（见 elements 的注释）：它们没解析到就不接线，页面照旧显示。
@@ -1105,7 +1250,11 @@ function boot() {
   // 表头文案与列宽都由 render.js 的 COLUMNS 生成，只在这里建一次；之后每帧只换 tbody，
   // 表头不重建，避免每次输入都重排整张表。
   elements.gridColumns.replaceChildren(createColGroup(document));
-  elements.gridHead.replaceChildren(createHeadRow(document));
+  elements.gridHead.replaceChildren(createHead(document));
+  elements.query.value = state.query;
+  // 宽屏默认展开筛选行；窄屏（卡片态）默认收起，有生效的筛选时也展开，免得筛了却看不见在筛什么。
+  setFiltersOpen(Boolean(globalThis.matchMedia?.("(min-width: 901px)").matches) || activeFilterKeys().length > 0);
+  buildSuggestions();
 
   const target = resolveTarget({
     search: globalThis.location?.search || "",

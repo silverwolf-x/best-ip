@@ -199,6 +199,18 @@ come from the workspace proxy or, when the node egress cannot connect, from a re
 host-side query: such a record sets `requests.ipure.direct_fallback:true`,
 `via_mihomo:false`, and `proxy_evidence.ipure_via_direct_fallback:true`. Both validators
 cross-check that trio, so a direct score can never be presented as proxy evidence.
+Network identity is IPure-first. `requests.ipure.data.network` keeps what the
+`/api/lookup` report itself stated — `{ip, country, country_code, region, city, isp, org, asn}`,
+each null when IPure did not say it (the parser accepts these keys at the top level or
+inside `geo` / `location` / `network` / `asn` / `connection` / `data` …, and `asn` as
+`4713`, `"AS4713 NTT"` or `{"asn":4713,"name":…}`). The record's `country`,
+`country_code`, `region`, `city`, `location`, `isp`, `as_org` and `asn` take IPure's value
+first and fall back to the Coffee lookup only for the group IPure left empty;
+`network_source = {exit_ip, geo, isp}` (each `"ipure"`, `"coffee"` or null) says who
+supplied each group. `exit_ip` is still discovered by the Coffee trace (an IPure query
+needs an address) and is marked `"ipure"` when IPure's echoed `ip` equals it. All five new
+fields are optional — artifacts written before them still validate — and both validators
+reject a non-string geo field or a `network_source` with other keys or values.
 Retry metadata, when present, must be internally consistent.
 Required and optional record fields are enforced by Python's ResultStore validator;
 fixtures carry the minimal valid set, not a real enrichment response.
