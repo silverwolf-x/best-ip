@@ -336,11 +336,13 @@ def _network_identity(
     else:
         source["isp"] = "coffee" if coffee_summary.get("isp") or coffee_summary.get("asn") else None
 
-    # 接入（住宅 / 机房）：usageType 只有能下结论时才覆盖 Coffee。
-    if isinstance(network.get("is_residential"), bool):
+    # 接入：IPure 的 usageType 六档（住宅 / 移动 / 商业 / 机房 / 教育 / 政府）；
+    # unknown 才回落 Coffee。
+    if network.get("usage_type"):
         source["kind"] = "ipure"
+        identity["usage_type"] = network["usage_type"]
         identity["is_residential"] = network["is_residential"]
-        identity["is_datacenter"] = not network["is_residential"]
+        identity["is_datacenter"] = network["usage_type"] == "hosting"
     else:
         source["kind"] = (
             "coffee" if isinstance(coffee_summary.get("is_residential"), bool) else None

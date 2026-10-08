@@ -25,8 +25,15 @@ const STATUS_LABELS = { success: "完整", partial: "部分", failed: "失败" }
 const SOURCE_LABELS = { ipure: "IPure", coffee: "Coffee" };
 
 /* ------------------------------------------------------------- 取值函数 --- */
+// IPure usageType → 接入列的词。住宅、移动是「真人上网」的出口，风控最友好，着绿色。
+const USAGE_LABELS = {
+  residential: "住宅", mobile: "移动", business: "商业", hosting: "机房", education: "教育", government: "政府",
+};
+const KIND_TONES = { 住宅: "good", 移动: "good", 机房: "warn" };
+
 function kindOf(result) {
   if (!result.exit_ip) return null;
+  if (USAGE_LABELS[result.usage_type]) return USAGE_LABELS[result.usage_type];
   if (result.is_residential === true) return "住宅";
   if (result.is_residential === false) return "机房";
   return "未知";
@@ -99,8 +106,8 @@ export const COLUMNS = [
   },
   {
     key: "kind", label: "接入", width: "64px", sort: "enum", filter: "enum",
-    options: ["住宅", "机房", "未知"],
-    sortValue: (r) => ({ 住宅: 0, 机房: 1, 未知: 2 })[kindOf(r)] ?? null,
+    options: ["住宅", "移动", "商业", "机房", "教育", "政府", "未知"],
+    sortValue: (r) => ({ 住宅: 0, 移动: 1, 商业: 2, 教育: 3, 政府: 4, 机房: 5, 未知: 6 })[kindOf(r)] ?? null,
     filterValue: kindOf,
   },
   {
@@ -257,7 +264,8 @@ export function syncHeadSort(thead, sorts) {
 export function verdictOf(result) {
   if (result.status === "failed") return "bad";
   if (result.status === "partial") return "mixed";
-  return result.is_residential === true && result.is_native === true ? "good" : "mixed";
+  const human = result.is_residential === true || result.usage_type === "mobile";
+  return human && result.is_native === true ? "good" : "mixed";
 }
 
 function sourceNote(source) {
@@ -378,8 +386,7 @@ function ispCell(document, result) {
 function kindCell(document, result) {
   const td = cell(document, "kind", "cell-kind");
   const value = kindOf(result);
-  const tone = value === "住宅" ? "good" : value === "机房" ? "warn" : "neutral";
-  const chipEl = quickFilter(chip(document, value, tone), "kind", value);
+  const chipEl = quickFilter(chip(document, value, KIND_TONES[value] || "neutral"), "kind", value);
   chipEl.title = `${value}${sourceNote(result.sources?.kind)}`;
   td.append(chipEl);
   return td;

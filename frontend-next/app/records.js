@@ -130,6 +130,7 @@ function countryCityOf(record) {
 }
 
 const SOURCES = new Set(["ipure", "coffee"]);
+const USAGE_TYPES = new Set(["residential", "mobile", "business", "hosting", "education", "government"]);
 
 /** 每组取值是谁说的：network_source 只在新产物里有；旧产物一律记为 Coffee（那时只有它）。 */
 function sourcesOf(record) {
@@ -204,6 +205,8 @@ function toRow(record) {
     // is_datacenter 与 is_residential 是后端各自独立取到的两个键：只回了「是机房」而没回
     // 「不是住宅」时，三态会停在 null，页面就画成「未知」——把上游已经写明的事实丢掉。
     is_residential: residentialOf(record),
+    // IPure 的使用类型（住宅 / 移动 / 商业 / 机房 / 教育 / 政府）；旧产物与 unknown 为 null。
+    usage_type: failed ? null : (USAGE_TYPES.has(record?.usage_type) ? record.usage_type : null),
     native_status: text(record?.native_status),
     is_native: triState(record?.is_native),
     coffee_score: failed ? null : integer(record?.coffee_score),

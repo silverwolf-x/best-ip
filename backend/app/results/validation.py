@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..sources.ipure import IPURE_RESTRICTED_SCORE, IPURE_SCENARIOS
+from ..sources.ipure import IPURE_RESTRICTED_SCORE, IPURE_SCENARIOS, IPURE_USAGE_TYPES
 
 _SUMMARY_KEYS = (
     "node_index",
@@ -92,6 +92,7 @@ _NODE_FIELDS = {
     "country_code",
     "region",
     "city",
+    "usage_type",
     "network_source",
     "isp",
     "score",
@@ -325,6 +326,8 @@ def validate_network_identity(record: dict[str, Any]) -> None:
         value = record.get(field)
         if value is not None and not isinstance(value, str):
             raise ResultStoreError(f"节点记录的 {field} 无效")
+    if record.get("usage_type") not in (None, *IPURE_USAGE_TYPES):
+        raise ResultStoreError("节点记录的 usage_type 无效")
     source = record.get("network_source")
     if source is None:
         return

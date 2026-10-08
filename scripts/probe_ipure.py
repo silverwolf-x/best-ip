@@ -12,25 +12,18 @@ import time
 import httpx
 
 sys.path.insert(0, ".")
+from backend.app.sources.collector import _network_identity  # noqa: E402
 from backend.app.sources.ipure import _ipure_scores, _parse_ipure_report  # noqa: E402
 
 IPS = [
-    "8.8.8.8",  # Google 机房
-    "1.1.1.1",  # Cloudflare 任播
-    "114.32.10.10",  # 中华电信 HiNet 住宅
-    "49.216.1.1",  # 台湾大哥大 移动
-    "101.12.1.1",  # 远传 移动
-    "111.249.1.1",  # HiNet 动态
-    "24.48.0.1",  # 美国住宅（Comcast/Charter 类）
-    "73.1.1.1",  # Comcast 住宅
-    "104.28.0.1",  # Cloudflare WARP
-    "154.3.40.1",  # 常见「广播」段
-    "38.180.0.1",  # 常见「广播」段
-    "45.67.32.1",
-    "103.149.0.1",
-    "23.106.1.1",
-    "2001:4860:4860::8888",  # IPv6
-    "192.0.2.1",  # 文档保留段
+    "8.8.8.8",  # Google 机房（已缓存）
+    "114.32.10.10",  # HiNet 住宅（已缓存）
+    "49.216.1.1",  # 台湾大哥大 移动（已缓存）
+    "2001:4860:4860::8888",  # 广播（已缓存）
+    "192.0.2.1",  # 保留段（已缓存）
+    "129.105.0.1",  # 美国高校 → education？
+    "137.82.0.1",  # 加拿大高校 → education？
+    "164.100.1.1",  # 印度 NIC → government？
 ]
 
 HEADERS = {"Accept": "application/json", "User-Agent": "MyIPChecker/1.0"}
@@ -106,6 +99,8 @@ def main() -> None:
         report = _parse_ipure_report(payload)
         print("parsed", json.dumps(report and report.get("network"), ensure_ascii=False))
         print("scores", json.dumps(_ipure_scores({"data": report}), ensure_ascii=False))
+        identity = _network_identity(ip, report and report.get("network"), {}, {})
+        print("record", json.dumps(identity, ensure_ascii=False))
         time.sleep(2)
     print("DISTINCT", {key: sorted(map(str, values)) for key, values in seen.items()})
 

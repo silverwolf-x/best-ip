@@ -355,15 +355,14 @@ def _parse_ipure_report(payload: Any) -> dict[str, Any] | None:
 #   asn.asn / asn.name / asn.org        AS 号 / AS 名（"GOOGLE - Google LLC, US"）/
 #                                       组织（"Google Public DNS"）
 #   registry.org / registry.country     RIR 登记的持有者与登记国
-#   usageType                           "hosting" 等使用类型
-#   nativeType                          "native" 等原生性判定
+#   usageType                           residential · mobile · business · hosting · education ·
+#                                       government · unknown（官方 /docs/api 枚举）
+#   nativeType                          native · broadcast（注册地与使用地不一致）· unknown
 # 字段缺失或类型不对一律记 None，由 collector 回落到 Coffee。
 _AS_NAME = re.compile(r"^\S+\s+-\s+(.+?)(?:,\s*[A-Z]{2})?$")
-# usageType / nativeType 只认能下结论的取值；其余（mobile、business 之类）不改 Coffee 的判断。
-_RESIDENTIAL_USAGE = {"residential", "isp", "home"}
-_DATACENTER_USAGE = {"hosting", "datacenter", "data_center", "cdn"}
-_NATIVE_TYPES = {"native"}
-_NON_NATIVE_TYPES = {"broadcast", "non-native", "nonnative", "non_native"}
+# 枚举外的取值与 unknown 一律当没说，由 Coffee 补。
+IPURE_USAGE_TYPES = ("residential", "mobile", "business", "hosting", "education", "government")
+_NATIVE_TYPES = {"native": True, "broadcast": False}
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -410,7 +409,9 @@ def _parse_ipure_network(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     usage = (_text_or_none(payload.get("usageType")) or "").lower()
+    usage = usage if usage in IPURE_USAGE_TYPES else ""
     native = (_text_or_none(payload.get("nativeType")) or "").lower()
+    native = native if native in _NATIVE_TYPES else ""
     registered = _text_or_none(registry.get("country"))
 
     return {
@@ -425,15 +426,10 @@ def _parse_ipure_network(payload: dict[str, Any]) -> dict[str, Any]:
         "registry_org": _text_or_none(registry.get("org")),
         "registered_country": registered.upper() if registered else None,
         "usage_type": usage or None,
-        "is_residential": (
-            True if usage in _RESIDENTIAL_USAGE else False if usage in _DATACENTER_USAGE else None
-        ),
+        # 「住宅」是 usageType 里的一档：residential 为 true，其余已知档位（含 mobile）为 false。
+        "is_residential": (usage == "residential") if usage else None,
         "native_type": native or None,
-        "is_native": True
-        if native in _NATIVE_TYPES
-        else False
-        if native in _NON_NATIVE_TYPES
-        else None,
+        "is_native": _NATIVE_TYPES.get(native),
     }
 
 
