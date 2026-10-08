@@ -512,6 +512,39 @@ code { font-family: var(--font-mono); }
   50% { opacity: 0.35; }
 }
 
+/* 完成后的折叠态：只剩一行「✓ 摘要 · 已用时 · 明细」。步骤条、进度条、逐节点格子都是一次性的
+   过程，收起来把粘性顶部条的高度还给表格；点「明细」再展开回看。 */
+.scan-toggle {
+  flex: none;
+  align-self: flex-end;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scan-toggle:hover { background: var(--surface-3); color: var(--ink); }
+.scan-toggle[hidden] { display: none; }
+.scan-panel[data-collapsed="true"] {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 10px;
+}
+.scan-panel[data-collapsed="true"] :is(.scan-steps, .scan-nodes, .scan-meter progress) { display: none; }
+/* 摘要只占一行：计数在前（最要紧），那句说明排后、放不下就省略号截断，手机上也不折行。 */
+.scan-panel[data-collapsed="true"] .scan-progress { order: 1; flex: 1 1 0; min-width: 0; flex-wrap: nowrap; gap: 8px; }
+.scan-panel[data-collapsed="true"] .scan-progress::before { content: "✓"; order: -2; color: var(--good); font-weight: 800; }
+.scan-panel[data-collapsed="true"] .scan-counts { order: -1; flex: none; white-space: nowrap; }
+.scan-panel[data-collapsed="true"] #scanProgress { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-panel[data-collapsed="true"] .scan-meter { order: 2; }
+.scan-panel[data-collapsed="true"] .scan-toggle { order: 3; align-self: center; }
+
 /* ------------------------------------------------------------ 结果计数行 --- */
 .result-count {
   margin: 0 0 10px;
