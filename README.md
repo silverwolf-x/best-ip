@@ -47,7 +47,7 @@ npm run dev:no-reload
 
 - 输入必须是顶部含 `proxies` 的 UTF-8 Mihomo/Clash YAML 公开 HTTP/HTTPS 地址。
 - 浏览器使用 AES-256-GCM 加密订阅 URL，再用 `frontend/scan-public.pem` 对应的 RSA-OAEP-3072 公钥包裹 AES key；明文 URL 不进入 Worker API、GitHub workflow input 或 artifact。
-- Worker 固定调度 `silverwolf-x/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
+- Worker 固定调度 `silverwolfxai/best-ip` 的 `main` 分支和 `scan.yml`，不提供通用 GitHub API 代理。
 - 每个节点尝试使用独立 Mihomo 进程、端口、连接池和临时目录；默认最多 `min(16, max(8, CPU 核数))` 个节点并发（上限为订阅节点数），每节点最多 3 次尝试。
 - Coffee 页面与 trace 并行；确认出口 IP 后，lookup、global ping、portscan、pingcheck、related、IPure 官方 `/api/lookup` 评分及 ChatGPT/Codex 探测按既定依赖并发执行。IPure 没有返回纯净度总分时，节点会如实标记为“部分”。
 - IPure 接入完全按官方 `/docs/api` 契约：`GET /api/lookup?ip={ip}` 无需 API key 或 Cookie。响应解析出 `risk.purity` 纯净度总分、`risk.level` / `risk.label` / `risk.verdict` 档位，以及 `scenarios[]` 的六项场景（`ai`、`social`、`streaming`、`gaming`、`ecommerce`、`email`）评分与档位，另附 `reportUrl`、`source`（fresh / cache / store）与 `stale`。上游档位只用于判断是否写哨兵，**不进入记录**（`ipure_level` / `ipure_verdict` / `ipure_scenario_levels` 已从落盘契约删除，读取时容忍旧 artifact）；前端不为 IPure 分数渲染任何档位或状态文案：六项评分一律显示成带颜色的数字，档位为 `restricted`（地区受限）的项按后端写入的 `-1` 哨兵显示为中性灰的 `-1`，既不参与数值排序也不被分数筛选命中。表格与详情卡里剩下的「受限 / 不可用」文字属于 GPT · Codex 可达性探针（chatgpt.com / api.openai.com 的连通状态），与 IPure 分数无关。
@@ -94,7 +94,7 @@ Worker 使用 Static Assets 托管 `frontend-next/`；当前配置不使用 Clou
 
 ## 平台配置
 
-1. 创建 GitHub App，只授予当前仓库 `Actions: Read and write` 与 `Metadata: Read`，并只安装到 `silverwolf-x/best-ip`。
+1. 创建 GitHub App，只授予当前仓库 `Actions: Read and write` 与 `Metadata: Read`，并只安装到 `silverwolfxai/best-ip`（仓库所有者变了就要在新所有者下重新安装，并更新 `GITHUB_APP_INSTALLATION_ID`）。
 2. 在 Worker 的 Settings → Variables and Secrets 添加 Secret `SITE_PASSWORD`：使用密码管理器生成至少 16 个字符的随机密码（最多 1024 字符）。无需 Cloudflare Access；如果之前启用了 Worker 域名的 Access 保护，请关闭该保护，并移除覆盖该域名的 Zero Trust Access Application。原来的三个 `ACCESS_*` 变量可以删除。
 3. 配置 Worker secrets/variables：
 
@@ -105,7 +105,7 @@ Worker 使用 Static Assets 托管 `frontend-next/`；当前配置不使用 Clou
    - `SCAN_TOKEN_SECRET`
    - `SITE_PASSWORD`
 
-4. 配置 Actions secrets `SCAN_PRIVATE_KEY_PEM`、`IPURE_CONFIG_YAML`，并配置 Actions variable `SCAN_KEY_ID`。`IPURE_CONFIG_YAML` 可选，保存与本地 `config/ipure.yml` 相同的请求头覆盖内容；Actions 扫描前生成该文件，结束时清理，不上传到结果 artifact。IPure 不需要凭据，因此该 Secret 为空也不影响评分。Worker 仅调度扫描，不查询 IPure，也不向前端提供任何第三方请求头。可用 `gh secret set IPURE_CONFIG_YAML --repo silverwolf-x/best-ip < config/ipure.yml` 同步本地配置到云端；修改本地文件不会自动更新 GitHub Secret。
+4. 配置 Actions secrets `SCAN_PRIVATE_KEY_PEM`、`IPURE_CONFIG_YAML`，并配置 Actions variable `SCAN_KEY_ID`。`IPURE_CONFIG_YAML` 可选，保存与本地 `config/ipure.yml` 相同的请求头覆盖内容；Actions 扫描前生成该文件，结束时清理，不上传到结果 artifact。IPure 不需要凭据，因此该 Secret 为空也不影响评分。Worker 仅调度扫描，不查询 IPure，也不向前端提供任何第三方请求头。可用 `gh secret set IPURE_CONFIG_YAML --repo silverwolfxai/best-ip < config/ipure.yml` 同步本地配置到云端；修改本地文件不会自动更新 GitHub Secret。
 
 打开网站后输入访问密码。登录会话有效期 12 小时，保存在 Secure、HttpOnly、SameSite=Strict 的主机专属 Cookie 中；页面提供退出登录入口。修改 `SITE_PASSWORD` 或 `SCAN_TOKEN_SECRET` 后旧会话失效。退出登录清除当前浏览器 Cookie，其他浏览器的会话不受影响。密码和签名密钥只放 Worker 运行时 Secrets，不放 Build variables 或仓库。
 
