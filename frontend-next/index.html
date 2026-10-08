@@ -51,7 +51,7 @@
           <button id="startScan" type="submit" class="btn btn-primary">开始扫描</button>
           <button id="stopScan" type="button" class="btn btn-ghost" hidden>停止</button>
         </div>
-        <!-- 扫描进度：五段步骤条 + 节点进度条 + 一行说明（app/progress.js 驱动）。默认 hidden，
+        <!-- 扫描进度：三段步骤条 + 节点进度条 + 一行说明（app/progress.js 驱动）。默认 hidden，
              只在发起扫描或跟进「最近一次还在跑的扫描」时出现。状态全部用 data-state 与 <progress>
              的属性表达，不写 style（CSP 是 style-src 'self'）。 -->
         <div class="scan-panel" id="scanPanel" hidden>
@@ -69,6 +69,9 @@
             <span class="scan-counts" id="scanCounts" hidden></span>
           </p>
           <ol class="scan-nodes" id="scanNodes" aria-label="每个节点的检测过程" hidden></ol>
+          <!-- 扫描一完成，面板就自己折成一行摘要（data-collapsed），把版面还给下面的表格；
+               步骤条与逐节点格子是一次性的过程，要回看再点这个按钮展开。 -->
+          <button class="scan-toggle" id="scanToggle" type="button" aria-controls="scanPanel" aria-expanded="true" hidden>收起</button>
         </div>
       </form>
 

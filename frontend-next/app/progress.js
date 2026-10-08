@@ -9,7 +9,9 @@
    三条约定：
    - 读数只是过程：格子里没有出口 IP 与评分，表格仍然只认终态 artifact，面板上的东西不进表、不进导出；
    - 读不到读数（Worker 没有进度存储、runner 没报上来）时退回不定进度条，不编数字；
-   - 只用 <progress> 与 data-* 属性表达状态，不写任何 style（生产 CSP 是 style-src 'self'）。
+   - 只用 <progress> 与 data-* 属性表达状态，不写任何 style（生产 CSP 是 style-src 'self'）；
+   - 过程是一次性的：扫描一完成，面板自己折成一行摘要（data-collapsed），版面还给下面的表格，
+     要回看步骤条与逐节点格子再点「明细」展开。出错时不折——那时用户要看的正是这些。
    ========================================================================== */
 
 // 细分的阶段：说明文字、阶段先后（不倒退）都按它算；步骤条上只画三格（STEP_OF）。
@@ -268,6 +270,7 @@ export function createScanPanel(doc = globalThis.document) {
   const message = doc?.getElementById("scanProgress");
   const elapsed = doc?.getElementById("scanElapsed");
   const nodeList = doc?.getElementById("scanNodes");
+  const toggle = doc?.getElementById("scanToggle");
   if (!root || steps.length !== STEPS.length || !meter || !counts || !message || !elapsed) {
     return { show() {}, hide() {}, tick() {}, get visible() { return false; } };
   }
@@ -275,6 +278,18 @@ export function createScanPanel(doc = globalThis.document) {
 
   let startedAt = 0;
   let finishedAt = 0;
+  let lastState = "";
+
+  // 折叠只在「完成」时有意义：别的状态下按钮藏起来、面板总是展开。
+  function setCollapsed(collapsed) {
+    root.dataset.collapsed = collapsed ? "true" : "false";
+    if (!toggle) return;
+    toggle.hidden = root.dataset.state !== "done";
+    toggle.textContent = collapsed ? "明细" : "收起";
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+  // 用 onclick 而不是 addEventListener：同一份骨架被绑定两次时，按钮也只翻一次。
+  if (toggle) toggle.onclick = () => setCollapsed(root.dataset.collapsed !== "true");
 
   function tick(now = Date.now()) {
     elapsed.textContent = startedAt ? `已用时 ${formatElapsed((finishedAt || now) - startedAt)}` : "";
@@ -298,6 +313,9 @@ export function createScanPanel(doc = globalThis.document) {
       else item.removeAttribute("aria-current");
     });
     root.dataset.state = state;
+    // 刚走进「完成」那一刻自动折起；之后同为完成的重绘不动它，用户手动展开的就保持展开。
+    if (state !== lastState) setCollapsed(state === "done");
+    lastState = state;
 
     const progress = view.progress || null;
     const known = Boolean(progress && progress.total > 0);
@@ -327,6 +345,7 @@ export function createScanPanel(doc = globalThis.document) {
 
   function hide() {
     root.hidden = true;
+    lastState = "";
     startedAt = 0;
     finishedAt = 0;
     grid.clear();
