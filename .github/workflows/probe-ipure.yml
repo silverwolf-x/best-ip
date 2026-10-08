@@ -1,0 +1,41 @@
+name: Probe IPure schema
+
+# 临时诊断（跑完即删）：开发容器出不去 ipure.dev，从 runner 抓官方 /docs/api 与几份公开 IP 的
+# /api/lookup 原始响应，只为确认地区 / 服务商 / ASN 字段的真实形状。
+on:
+  push:
+    branches: [claude/great-hamilton-lcp5sv]
+    paths: [.github/workflows/probe-ipure.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Docs
+        shell: bash
+        run: |
+          curl -sS -m 30 -A "MyIPChecker/1.0" https://ipure.dev/docs/api -o docs.html -w 'docs http=%{http_code} bytes=%{size_download}\n' || true
+          python3 - <<'PY'
+          import html, re
+          raw = open("docs.html", encoding="utf-8", errors="replace").read()
+          raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+          text = html.unescape(re.sub(r"(?s)<[^>]+>", "\n", raw))
+          text = re.sub(r"\n\s*\n+", "\n", text)
+          print(text[:60000])
+          PY
+          echo "--- json-ish snippets in raw html/scripts ---"
+          grep -o '"[A-Za-z_]*\(country\|Country\|isp\|Isp\|asn\|Asn\|org\|Org\|geo\|Geo\|network\|Network\|city\|region\)[A-Za-z_]*"' docs.html | sort | uniq -c | sort -rn | head -60
+      - name: Lookups
+        shell: bash
+        run: |
+          for ip in 8.8.8.8 1.1.1.1 114.32.10.10 104.28.0.1; do
+            echo "===== $ip"
+            curl -sS -m 40 -A "MyIPChecker/1.0" -H 'Accept: application/json' "https://ipure.dev/api/lookup?ip=$ip" -D head.txt -o body.json -w 'http=%{http_code}\n' || true
+            grep -i '^x-open\|^content-type' head.txt || true
+            python3 -m json.tool body.json 2>/dev/null | head -400 || head -c 4000 body.json
+            sleep 3
+          done
