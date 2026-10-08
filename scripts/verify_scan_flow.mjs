@@ -64,6 +64,14 @@ async function login() {
   return session;
 }
 
+/** 网关错误体（worker/responses.js 的 { error, detail }）→ 一句可排查的话；读不到就只给状态码。 */
+async function gatewayError(response) {
+  const body = await response.json().catch(() => null);
+  const code = typeof body?.error === "string" ? body.error : "";
+  const detail = typeof body?.detail === "string" ? body.detail : "";
+  return [`HTTP ${response.status}`, code, detail].filter(Boolean).join(" · ");
+}
+
 /** 浏览器里的 fetch：同源请求带会话 cookie 与 Origin，跨源（签名 blob）什么都不带。 */
 function browserFetch(session) {
   return (input, init = {}) => {
@@ -139,7 +147,10 @@ async function main() {
     const before = await fetchLatestScan({ fetchImpl });
     record(true, "读取最近一次扫描并逐字节校验", JSON.stringify(summarize(before.payload)));
   } catch (error) {
-    console.log(`      最近一次扫描不可读（${error?.code || "error"}：${error?.message}）——不影响本次实测`);
+    // 页面只说得出状态码；这里再原样问一次，把网关自己的错误码与原因打出来，排查时不用猜。
+    const raw = await fetchImpl("/api/scans/latest", { headers: { Accept: "application/json" } });
+    const why = raw.ok ? "" : `；网关：${await gatewayError(raw)}`;
+    console.log(`      最近一次扫描不可读（${error?.code || "error"}：${error?.message}${why}）——不影响本次实测`);
   }
 
   // ---- 发起：与页面同一个端点、同一个信封形状 ----
@@ -149,8 +160,9 @@ async function main() {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(dispatch),
   });
-  const created = await response.json().catch(() => null);
-  record(response.status === 202 && typeof created?.scan_token === "string", "Worker 接受扫描请求", `HTTP ${response.status}`);
+  const created = response.status === 202 ? await response.json().catch(() => null) : null;
+  record(response.status === 202 && typeof created?.scan_token === "string", "Worker 接受扫描请求",
+    response.status === 202 ? "HTTP 202" : await gatewayError(response));
   if (response.status !== 202 || !created?.scan_token) return;
 
   const scan = {
