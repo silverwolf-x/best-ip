@@ -262,7 +262,7 @@ async def _run_scan(
         )
         from backend.app.results.store import ResultStore, ResultStoreError
         from backend.app.scan.jobs import JobNotReadyError
-        from backend.app.scan.reporter import job_counts
+        from backend.app.scan.reporter import job_counts, live_nodes
         from backend.app.subscription import (
             SubscriptionError,
             SubscriptionSource,
@@ -276,6 +276,7 @@ async def _run_scan(
     job_id = None
     completed = False
     final_counts = None
+    final_nodes = None
     first_report: asyncio.Task[Any] | None = None
     follow_task: asyncio.Task[Any] | None = None
     source = SubscriptionSource()
@@ -317,6 +318,10 @@ async def _run_scan(
                 )
             if not isinstance(content, bytes) or len(content) > app_settings.subscription_max_bytes:
                 raise ScanCLIError("input_invalid")
+            # 与产物同一份「不许出现」的值：实时进度里的节点名含有其中任何一个就换成「节点 N」。
+            forbidden = {url, *credential_values(content), *subscription_url_values(url)}
+            if relay is not None:
+                forbidden.add(relay.token)
 
             async def snapshot_loader(
                 requested_url: str, *, max_bytes: int, timeout_seconds: float
@@ -338,16 +343,23 @@ async def _run_scan(
                 request_id=args.request_id,
             )
             job_id = args.request_id
+            # 逐节点的实时状态是可选能力：没有它的 manager（替身）照样只报计数。
+            read_live = getattr(manager, "live_nodes", None)
+
+            def read_nodes() -> Any:
+                return read_live(job_id) if callable(read_live) else None
+
             if reporter is not None:
                 follow_task = asyncio.create_task(
-                    reporter.follow(lambda: manager.jobs.get(job_id))
+                    reporter.follow(lambda: manager.jobs.get(job_id), read_nodes, forbidden)
                 )
             job = await manager.wait(job_id)
             await _stop_task(follow_task)
             follow_task = None
             final_counts = job_counts(manager.jobs.get(job_id))
+            final_nodes = live_nodes(read_nodes(), forbidden)
             if reporter is not None and job.get("status") == "completed":
-                await reporter.report("packaging", final_counts)
+                await reporter.report("packaging", final_counts, final_nodes)
             if job.get("cleanup_confirmed") is not True:
                 raise ScanCLIError("cleanup_failed")
             if job.get("status") != "completed":
@@ -366,9 +378,6 @@ async def _run_scan(
             if job.get("manifest_ready") is not True:
                 raise ScanCLIError("result_invalid")
             exported = manager.export(job_id)
-            forbidden = {url, *credential_values(content), *subscription_url_values(url)}
-            if relay is not None:
-                forbidden.add(relay.token)
             result, status = build_artifact(
                 exported, job_id, args.run_id, args.run_attempt, forbidden
             )
@@ -395,7 +404,7 @@ async def _run_scan(
             _remove_owned(owned)
     _publish(output, result, status)
     if reporter is not None:
-        await reporter.report("done", final_counts)
+        await reporter.report("done", final_counts, final_nodes)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,7 +6,7 @@ import { downloadArtifact } from "./artifacts.js";
 import { latestScanState } from "./latest.js";
 import { loginRoute, loginRedirect } from "./login.js";
 import { SUBSCRIPTION_RELAY_PATH, subscriptionRelay } from "./relay.js";
-import { SCAN_PROGRESS_PATH, scanProgressReport } from "./progress.js";
+import { SCAN_PROGRESS_PATH, scanProgressFeed, scanProgressReport } from "./progress.js";
 
 export async function api(request, env, auth) {
   const url = new URL(request.url);
@@ -17,7 +17,7 @@ export async function api(request, env, auth) {
   if (url.pathname === "/api/scans" && request.method === "POST") return createScan(request, env);
   // 必须排在下面那条 /api/scans/<id> 正则之前：否则 "latest" 会被当成一个 request_id 去验扫描 token。
   if (url.pathname === "/api/scans/latest" && request.method === "GET") return latestScanState(env);
-  const match = url.pathname.match(/^\/api\/scans\/([^/]+)(\/artifact)?$/u);
+  const match = url.pathname.match(/^\/api\/scans\/([^/]+)(\/artifact|\/progress)?$/u);
   if (!match) throw new HttpError(404, "API 路径不存在", "not_found");
   let requestId;
   try {
@@ -25,6 +25,8 @@ export async function api(request, env, auth) {
   } catch {
     throw new HttpError(400, "request_id 无效", "invalid_request");
   }
+  // 逐节点的实时读数：只读 Durable Object，不要求 scan token（见 worker/progress.js 的 scanProgressFeed）。
+  if (match[2] === "/progress" && request.method === "GET") return scanProgressFeed(request, env, requestId);
   if (match[2] === "/artifact" && request.method === "GET") {
     const run = await resolveScanRun(request, env, requestId);
     return downloadArtifact(env, run, requestId);
@@ -41,7 +43,7 @@ export async function fetchHandler(request, env, ctx) {
   if (url.pathname === SUBSCRIPTION_RELAY_PATH) {
     return secureResponse(await subscriptionRelay(request, env), { noStore: true });
   }
-  // 同上：runner 回报扫描进度（只有计数与阶段），凭同一把 runner 凭证。
+  // 同上：runner 回报扫描进度（计数与逐节点阶段，不含出口 IP 与评分），凭同一把 runner 凭证。
   if (url.pathname === SCAN_PROGRESS_PATH) {
     return secureResponse(await scanProgressReport(request, env), { noStore: true });
   }

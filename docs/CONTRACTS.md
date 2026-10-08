@@ -86,8 +86,19 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   `progress` is the runner's latest live reading for this exact run and attempt —
   `{phase,total,completed,success,partial,failed,updated_at}` with `phase` one of
   `subscription|scanning|packaging|done` — or null when none was reported (or the
-  progress store is unbound). It carries counts only; the table and every exported
-  number still come exclusively from the verified artifact.
+  progress store is unbound). Here it carries counts only (the per-node reading is
+  served by `/progress` below); the table and every exported number still come
+  exclusively from the verified artifact.
+- GET `/api/scans/{request_id}/progress?run_id={id}&run_attempt={attempt}`: session
+  only, no scan token (a reloaded page following `active` has none). Both query
+  parameters are required (400 `invalid_request` otherwise). Reads the Durable Object
+  only — no GitHub API call — so the page asks once per second. Returns
+  `{request_id,run_id,run_attempt,progress}` where `progress` is the same reading as above
+  plus `nodes` (or null when absent / the run or attempt does not match): one entry per
+  node in subscription order, `{n,t,s,a,ms,r}` — display name, protocol type, state
+  `wait|retry|start|connect|lookup|success|partial|failed`, highest attempt started,
+  elapsed ms (whole node, retries included; for an active node up to the report),
+  whitelisted reason or null.
 - GET `/api/scans/latest`: session only, no scan token. Picks the newest completed run
   (up to five probes back) whose artifact still exists and returns
   `{request_id,status,run,artifact_ready,artifact_id,artifact_name,artifact_url,scanned_at,active}`;
@@ -135,16 +146,24 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
 
 - POST `/api/scan-progress`: server-to-server progress report from the scan runner,
   outside the password session like the relay and authenticated by the same
-  `X-Best-IP-Relay-Token` / `SUBSCRIPTION_RELAY_TOKEN` pair. Body (≤ 2048 chars)
-  `{request_id,run_id,run_attempt,phase,total,completed,success,partial,failed}`;
+  `X-Best-IP-Relay-Token` / `SUBSCRIPTION_RELAY_TOKEN` pair. Body (≤ 256 KiB)
+  `{request_id,run_id,run_attempt,phase,total,completed,success,partial,failed,nodes?}`;
   every count is an integer 0..100000, `completed ≤ total` and
-  `success+partial+failed = completed`, otherwise 400 `invalid_request`. Accepted reports
+  `success+partial+failed = completed`. `nodes`, when present, has exactly `total`
+  entries (≤ 1000) of `{n,t,s,a,ms,r}`: `n` 1..80 chars without control characters,
+  `t` `[a-z0-9-]{0,24}`, `s` one of the eight states, `a` 0..10, `ms` 0..3600000,
+  `r` null or 1..60 chars; the number of `success`/`partial`/`failed` entries must equal
+  the three counts. Anything else is 400 `invalid_request`. Accepted reports
   return 204 and land in the `SCAN_PROGRESS` Durable Object (one instance per request ID,
   latest report only, purged six hours after the first write); a report for the same run
   that would move the phase backwards or lower `completed` is ignored. Missing binding is
-  503 `worker_not_configured`. Reports never contain node names, exit IPs or subscription
-  content, and the runner treats every failure as non-fatal (it prints
-  `progress_reports: sent=N failed=M` once at the end).
+  503 `worker_not_configured`. Reports never contain exit IPs, scores or subscription
+  content: a node name that contains any subscription URL/credential value (the
+  artifact's own forbidden set) is replaced by `节点 N`, and `r` is one of the fixed
+  category messages (`backend/app/scan/errors.py` `live_reason` / `live_record_reason`).
+  The runner reports roughly every 0.75 s when any node changes state (heartbeat 5 s),
+  treats every failure as non-fatal and prints `progress_reports: sent=N failed=M` once
+  at the end.
 
 Run title is `Best IP scan {request_id}`. Identity checks bind title, workflow,
 dispatch event, branch, creation window, run and attempt. Artifact name is
@@ -225,7 +244,7 @@ Validation boundaries:
 | Download | `BEST_IP_MIHOMO_TAG`, `BEST_IP_MIHOMO_ARCHIVE_SHA256` optional command defaults; workflow pins v1.19.30 and archive SHA-256 |
 | Local verifier | `BEST_IP_TEST_SUBSCRIPTION_URL`; `BEST_IP_API_BASE` http://127.0.0.1:8000; `BEST_IP_REAL_SCAN_TIMEOUT_SECONDS` 1800; `BEST_IP_REQUEST_ID`; `BEST_IP_ALLOW_PARTIAL` opt-in |
 | Worker | `SCAN_KEY_ID`, `SCAN_TOKEN_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `SITE_PASSWORD`, `SUBSCRIPTION_RELAY_TOKEN`; `ASSETS` binding |
-| Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`, `SCAN_RELAY_TOKEN`; variables `SCAN_KEY_ID`, `SCAN_RELAY_URL`; temporary `SCAN_PRIVATE_KEY_PATH`, `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `ENVELOPE`, `BEST_IP_SUBSCRIPTION_RELAY_URL`, `BEST_IP_SUBSCRIPTION_RELAY_TOKEN`; run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
+| Actions | secrets `SCAN_PRIVATE_KEY_PEM`, `IPURE_CONFIG_YAML`, `SCAN_RELAY_TOKEN`; variables `SCAN_KEY_ID`, `SCAN_RELAY_URL`; temporary (step-scoped) `BEST_IP_ENVELOPE`, `REQUEST_ID`, `KEY_ID`, `EXPECTED_KEY_ID`, `RELAY_URL`, `RELAY_TOKEN`, `IPURE_CONFIG_YAML`, `SCAN_PRIVATE_KEY_PEM` (written to `$RUNNER_TEMP/scan-private.pem` and deleted as soon as the envelope is decrypted), `BEST_IP_SUBSCRIPTION_RELAY_URL`, `BEST_IP_SUBSCRIPTION_RELAY_TOKEN`; job-level `BEST_IP_PYTHON_DIR`, `BEST_IP_MIHOMO_ARCHIVE_DIR` (the cached interpreter and Mihomo archive); run identity from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` |
 | Deployment CI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 
 ## Frontend transport boundary

@@ -7,17 +7,19 @@
 // 唯一的差别是加密那一步：订阅明文不能出现在 Actions 输入或日志里，所以信封由发起方事先用同一份
 // app/scan-crypto.js 封好（明文只在发起方本机出现过一次），这里原样 POST。
 //
-// 输出只有聚合数字（节点数、各状态计数、耗时分布、进度读数时间线），不打印节点名、出口 IP 或
-// 任何订阅内容——Actions 日志可能对外可见。
+// 输出只有聚合数字（节点数、各状态计数、耗时分布、进度读数时间线、按序号的逐节点耗时），不打印
+// 节点名、出口 IP 或任何订阅内容——Actions 日志可能对外可见。
 //
 // 用法：
 //   SITE_PASSWORD=... BEST_IP_DISPATCH='{"request_id":…,"key_id":…,"encrypted_subscription_url":…}' \
 //     node scripts/verify_scan_flow.mjs --site https://best-ip.silverwolfx.workers.dev
 // 退出码：0 全部通过；1 有失败项。
 
-import { pollScan, SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS } from "../frontend-next/app/scan.js";
+import {
+  pollScan, pollProgress, SCAN_POLL_FIRST_MS, SCAN_POLL_MAX_MS, SCAN_POLL_FINISH_MS, SCAN_PROGRESS_POLL_MS,
+} from "../frontend-next/app/scan.js";
 import { fetchLatestScan, pollLatestActive } from "../frontend-next/app/gateway.js";
-import { countText } from "../frontend-next/app/progress.js";
+import { countText, nodesAllFinal } from "../frontend-next/app/progress.js";
 
 const argv = process.argv.slice(2);
 const argOf = (name, fallback = "") => {
@@ -116,6 +118,51 @@ function summarize(payload) {
   };
 }
 
+const NODE_STATES = ["wait", "start", "connect", "lookup", "retry", "success", "partial", "failed"];
+
+/** 逐节点读数的直方图：「等待 3 · 启动 2 · 连接 5 …」，只有数字。 */
+function histogram(nodes) {
+  const tally = Object.fromEntries(NODE_STATES.map((state) => [state, 0]));
+  for (const node of nodes) tally[node.s] += 1;
+  return NODE_STATES.filter((state) => tally[state]).map((state) => `${state} ${tally[state]}`).join(" · ");
+}
+
+/**
+ * 页面的逐节点那一路：每 SCAN_PROGRESS_POLL_MS 问一次 /api/scans/<id>/progress，直到 stop()。
+ * 只记数字：读了几次、几次带节点、节点状态变了几次、同时在检测的最多几个，以及最后一份读数。
+ */
+function startFeed(target, fetchImpl, clickedAt) {
+  const stats = { reads: 0, withNodes: 0, changes: 0, maxActive: 0, firstNodesAt: 0, last: null, errors: 0 };
+  let stopped = false;
+  let lastShape = "";
+  const loop = (async () => {
+    while (!stopped) {
+      try {
+        const progress = await pollProgress(target, { fetchImpl });
+        stats.reads += 1;
+        if (progress?.nodes) {
+          stats.withNodes += 1;
+          if (!stats.firstNodesAt) stats.firstNodesAt = Date.now() - clickedAt;
+          const shape = histogram(progress.nodes);
+          const active = progress.nodes.filter((node) => ["start", "connect", "lookup", "retry"].includes(node.s)).length;
+          stats.maxActive = Math.max(stats.maxActive, active);
+          if (shape !== lastShape) {
+            stats.changes += 1;
+            lastShape = shape;
+            console.log(`      ${seconds(Date.now() - clickedAt).padStart(7)}  节点 | ${shape}`);
+          }
+          stats.last = progress;
+        }
+        if (progress?.phase === "done") break;
+      } catch {
+        stats.errors += 1;
+      }
+      await sleep(SCAN_PROGRESS_POLL_MS);
+    }
+  })();
+  return { stats, stop: async () => { stopped = true; await loop; } };
+}
+
 function dispatchInput() {
   const raw = process.env.BEST_IP_DISPATCH || "";
   let parsed;
@@ -184,21 +231,29 @@ async function main() {
   let scanningReadings = 0;
   let followChecked = false;
   let state = null;
+  let feed = null;
   for (;;) {
     await sleep(delay);
-    delay = Math.min(SCAN_POLL_MAX_MS, Math.round(delay * 1.5));
+    // 与页面同一个节奏：节点检测完（packaging/done）之后每秒一次，其余每次 ×1.5、封顶。
+    // 下一次间隔按「这一轮拿到的读数」算，所以放在轮询之后（见循环末尾）。
     try {
       state = await pollScan(scan, { fetchImpl });
     } catch (error) {
       if (error?.retryable === true) {
         console.log(`      ${seconds(Date.now() - clickedAt)}  轮询瞬时失败，重试：${error.message}`);
+        delay = Math.min(SCAN_POLL_MAX_MS, Math.round(delay * 1.5));
         continue;
       }
+      await feed?.stop();
       record(false, "扫描状态轮询", `${error?.code || "error"}：${error?.message}`);
       return;
     }
     const at = Date.now() - clickedAt;
     if (!reached[state.stage]) reached[state.stage] = at;
+    // 拿到运行身份就开始逐节点读数，与页面同一时机。
+    if (!feed && scan.runId && !state.done) {
+      feed = startFeed({ id: scan.id, runId: scan.runId, runAttempt: scan.runAttempt }, fetchImpl, clickedAt);
+    }
     if (state.progress) {
       progressReadings += 1;
       if (state.progress.phase === "scanning") scanningReadings += 1;
@@ -220,9 +275,12 @@ async function main() {
       }
     }
     if (state.done) break;
+    const finishing = [feed?.stats.last, state.progress].some((item) => ["packaging", "done"].includes(item?.phase));
+    delay = finishing ? SCAN_POLL_FINISH_MS : Math.min(SCAN_POLL_MAX_MS, Math.round(delay * 1.5));
   }
 
   const total = Date.now() - clickedAt;
+  await feed?.stop();
   if (state.failure) {
     record(false, "扫描成功结束", state.failure);
     return;
@@ -234,6 +292,20 @@ async function main() {
   record(!final || (final.total === summary.total && final.success === summary.success
     && final.partial === summary.partial && final.failed === summary.failed),
   "最后一次进度读数与终态产物计数一致", final ? countText(final) : "没有最后读数");
+  // 逐节点那一路：读到过、最后一份全部落定，且每个序号的终态与产物里同一个节点逐一相同。
+  const stats = feed?.stats;
+  record(Boolean(stats?.withNodes), "运行中读到逐节点的实时状态",
+    stats ? `${stats.reads} 次读数，${stats.withNodes} 次带节点，状态变化 ${stats.changes} 次，同时检测最多 ${stats.maxActive} 个，首次出现 ${seconds(stats.firstNodesAt)}` : "没有读数");
+  const results = Array.isArray(state.payload?.results) ? state.payload.results : [];
+  const byIndex = new Map(results.map((item) => [item.node_index, item]));
+  const lastNodes = stats?.last?.nodes || [];
+  const mismatched = lastNodes.filter((node, index) => byIndex.get(index)?.status !== node.s).length;
+  record(nodesAllFinal(lastNodes) && lastNodes.length === results.length && mismatched === 0,
+    "最后一份逐节点读数与产物逐一一致", `${lastNodes.length} 个节点，不一致 ${mismatched} 个`);
+  // 按序号的逐节点耗时（实时读数里的节点总用时，含重试）与尝试次数——只有数字，用来看长尾落在哪。
+  const rows = lastNodes.map((node, index) => ({ index, status: node.s, attempts: node.a, wall_ms: node.ms }))
+    .sort((left, right) => right.wall_ms - left.wall_ms);
+  console.log("逐节点（按用时降序，序号从 0 起）：" + rows.map((row) => `#${row.index} ${row.status} ×${row.attempts} ${seconds(row.wall_ms)}`).join(" · "));
   console.log(`\n本次结果：${JSON.stringify(summary)}`);
   console.log("阶段首次出现（自点击起）：" + Object.entries(reached).map(([stage, ms]) => `${stage} ${seconds(ms)}`).join(" · "));
   console.log(`点击 → 结果上屏：${seconds(total)}`);

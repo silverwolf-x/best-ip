@@ -2,17 +2,25 @@ import { HttpError, json } from "./responses.js";
 import { REQUEST_ID_PATTERN, isRecord, positiveInteger } from "./config.js";
 import { assertRelayConfigured, assertRelayToken } from "./relay.js";
 
-// 扫描进行中的实时进度：runner 每隔几秒把「已完成几个节点、各几个成功/部分/失败」报给 Worker，
-// 页面轮询时由 Worker 一并交回。为什么要这条通道：GitHub 在 job 结束前读不到日志（实测 404），
-// Actions API 只给得出步骤名，于是一次几十秒到几分钟的扫描在页面上只有一句「Run production scan」。
+// 扫描进行中的实时进度：runner 大约每秒把「每个节点此刻在做什么」和总计数报给 Worker，页面轮询时
+// 由 Worker 交回。为什么要这条通道：GitHub 在 job 结束前读不到日志（实测 404），Actions API 只给得出
+// 步骤名，于是一次几十秒到几分钟的扫描在页面上只有一句「Run production scan」。
 //
-// 它只是**过程中的读数**，不是结果：只有计数与阶段，不带节点名、出口 IP 或任何订阅内容；
-// 表格仍然只认终态 artifact（逐字节校验之后）。进度写坏了、丢了、Durable Object 不可用，
-// 都只会让页面退回「只显示步骤名」，绝不会让扫描或结果本身失败。
+// 它只是**过程中的读数**，不是结果：每个节点只有名字、协议类型、阶段、第几次尝试、用时与一句白名单
+// 原因（backend/app/scan/errors.py 的 live_reason）；出口 IP、评分与订阅内容一律不在这里，表格仍然只认
+// 终态 artifact（逐字节校验之后）。进度写坏了、丢了、Durable Object 不可用，都只会让页面退回「只显示
+// 步骤名」，绝不会让扫描或结果本身失败。
 export const SCAN_PROGRESS_PATH = "/api/scan-progress";
 
-const MAX_REPORT_CHARS = 2048;
+// 一条报告的上限：1000 个节点 × 每个约 150 字符。超过节点上限时 runner 只报计数。
+const MAX_REPORT_CHARS = 256 * 1024;
 const MAX_COUNT = 100_000;
+export const MAX_REPORT_NODES = 1000;
+// 节点的几档：等待 → 启动代理 / 连检测站 / 查 IP 质量（失败后进入「重试」再走一遍）→ 三种终态。
+const NODE_STATES = ["wait", "retry", "start", "connect", "lookup", "success", "partial", "failed"];
+const FINAL_STATES = ["success", "partial", "failed"];
+const NODE_TYPE_PATTERN = /^[a-z0-9-]{0,24}$/u;
+const MAX_NODE_MS = 3_600_000;
 // 一条进度只在扫描期间有意义：scan.yml 是 timeout-minutes: 30，artifact 只留 1 天。
 // 6 小时后整条清掉，存储里不留历史。
 const RETENTION_MS = 6 * 60 * 60 * 1000;
@@ -26,6 +34,39 @@ function invalidReport() {
 
 function count(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= MAX_COUNT ? value : null;
+}
+
+function shortText(value, max) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  // 控制字符一律不收：这些字符串最后会被页面当文本画出来。
+  return text.length >= 1 && text.length <= max && !/[\u0000-\u001f\u007f]/u.test(text) ? text : null;
+}
+
+/** 一个节点的读数；任何一项不合规返回 null（整条报告随之拒收）。 */
+function normalizeNode(raw) {
+  if (!isRecord(raw)) return null;
+  const name = shortText(raw.n, 80);
+  const type = typeof raw.t === "string" && NODE_TYPE_PATTERN.test(raw.t) ? raw.t : null;
+  const state = NODE_STATES.includes(raw.s) ? raw.s : null;
+  const attempt = Number.isSafeInteger(raw.a) && raw.a >= 0 && raw.a <= 10 ? raw.a : null;
+  const elapsed = Number.isSafeInteger(raw.ms) && raw.ms >= 0 && raw.ms <= MAX_NODE_MS ? raw.ms : null;
+  const reason = raw.r === null || raw.r === undefined ? null : shortText(raw.r, 60);
+  if (name === null || type === null || state === null || attempt === null || elapsed === null) return null;
+  if (raw.r !== null && raw.r !== undefined && reason === null) return null;
+  return { n: name, t: type, s: state, a: attempt, ms: elapsed, r: reason };
+}
+
+/** 节点列表必须与计数自洽：个数等于总数，三种终态的个数分别等于三个计数。 */
+function normalizeNodes(raw, counts) {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.length > MAX_REPORT_NODES || raw.length !== counts.total) throw invalidReport();
+  const nodes = raw.map(normalizeNode);
+  if (nodes.includes(null)) throw invalidReport();
+  for (const state of FINAL_STATES) {
+    if (nodes.filter((node) => node.s === state).length !== counts[state]) throw invalidReport();
+  }
+  return nodes;
 }
 
 /** 校验并规整 runner 的一条报告；任何一项不合规都整条拒收，不做部分采信。 */
@@ -45,6 +86,7 @@ export function normalizeReport(payload) {
   const failed = count(payload.failed);
   if ([total, completed, success, partial, failed].includes(null)) throw invalidReport();
   if (completed > total || success + partial + failed !== completed) throw invalidReport();
+  const nodes = normalizeNodes(payload.nodes, { total, success, partial, failed });
   return {
     request_id: requestId,
     run_id: runId,
@@ -55,6 +97,7 @@ export function normalizeReport(payload) {
     success,
     partial,
     failed,
+    nodes,
   };
 }
 
@@ -107,8 +150,9 @@ export async function scanProgressReport(request, env) {
 /**
  * 给页面的进度读数。只交回与这一次运行（run_id + attempt）对得上的那一条：重跑同一个
  * request_id 时，上一次 attempt 的计数不能被当成这一次的。读不到、超时、绑定缺失一律返回 null。
+ * withNodes 为 false（状态轮询与 latest 的 active）时只给计数；逐节点的那份走 /progress 端点。
  */
-export async function readScanProgress(env, requestId, run) {
+export async function readScanProgress(env, requestId, run, { withNodes = false } = {}) {
   const runId = positiveInteger(run?.id);
   const runAttempt = positiveInteger(run?.run_attempt);
   if (!runId || !runAttempt || !REQUEST_ID_PATTERN.test(String(requestId || ""))) return null;
@@ -131,12 +175,28 @@ export async function readScanProgress(env, requestId, run) {
       partial: stored.partial,
       failed: stored.failed,
       updated_at: typeof stored.updated_at === "string" ? stored.updated_at : null,
+      ...(withNodes ? { nodes: Array.isArray(stored.nodes) ? stored.nodes : null } : {}),
     };
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * GET /api/scans/{request_id}/progress?run_id=&run_attempt=：页面约每秒问一次的逐节点读数。
+ * 只读 Durable Object、不碰 GitHub API，所以可以问得勤。门是站点会话（与 /api/scans/latest 的
+ * active 同一道门、同一份数据），不要求 scan token：刷新后跟进的页面手里没有它。
+ */
+export async function scanProgressFeed(request, env, requestId) {
+  if (!REQUEST_ID_PATTERN.test(requestId)) throw new HttpError(400, "request_id 无效", "invalid_request");
+  const url = new URL(request.url);
+  const runId = positiveInteger(url.searchParams.get("run_id"));
+  const runAttempt = positiveInteger(url.searchParams.get("run_attempt"));
+  if (!runId || !runAttempt) throw new HttpError(400, "缺少 run_id 或 run_attempt", "invalid_request");
+  const progress = await readScanProgress(env, requestId, { id: runId, run_attempt: runAttempt }, { withNodes: true });
+  return json({ request_id: requestId, run_id: runId, run_attempt: runAttempt, progress }, 200, { "Cache-Control": "no-store" });
 }
 
 /** 同一次运行里，新报告不能比已存的那条「更早」：阶段不倒退，同阶段完成数不减少。 */
@@ -151,7 +211,8 @@ function isStale(stored, incoming) {
 }
 
 /**
- * 每个 request_id 一个实例，只存一条最新报告。存储是 Worker 已经校验过的规整对象，
+ * 每个 request_id 一个实例，只存一条最新报告（含逐节点读数，最大约 150KB，远低于 SQLite 后端
+ * 单值 2MB 的上限）。存储是 Worker 已经校验过的规整对象，
  * 这里不再信任调用方之外的任何输入（只有本 Worker 能拿到这个 namespace）。
  */
 export class ScanProgress {

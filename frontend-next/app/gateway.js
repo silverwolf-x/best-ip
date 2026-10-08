@@ -104,10 +104,15 @@ function activeOf(raw) {
   if (raw.status !== "queued" && raw.status !== "running") return null;
   if (typeof raw.request_id !== "string" || !raw.request_id) return null;
   const startedAt = Date.parse(String(raw.run?.created_at || ""));
+  const runId = Number.isSafeInteger(raw.run?.id) && raw.run.id > 0 ? raw.run.id : 0;
+  const runAttempt = Number.isSafeInteger(raw.run?.run_attempt) && raw.run.run_attempt > 0 ? raw.run.run_attempt : 0;
   return {
     requestId: raw.request_id,
     status: raw.status,
     startedAt: Number.isFinite(startedAt) ? startedAt : 0,
+    // 逐节点读数（scan.js 的 pollProgress）要靠 run 身份去问；跟进的页面手里只有这一份。
+    runId,
+    runAttempt,
     progress: normalizeProgress(raw.progress),
   };
 }
