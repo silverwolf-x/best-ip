@@ -6,6 +6,7 @@ import { downloadArtifact } from "./artifacts.js";
 import { latestScanState } from "./latest.js";
 import { loginRoute, loginRedirect } from "./login.js";
 import { SUBSCRIPTION_RELAY_PATH, subscriptionRelay } from "./relay.js";
+import { SCAN_PROGRESS_PATH, scanProgressReport } from "./progress.js";
 
 export async function api(request, env, auth) {
   const url = new URL(request.url);
@@ -39,6 +40,10 @@ export async function fetchHandler(request, env, ctx) {
   // takes the browser same-origin check, because the caller is an Actions runner.
   if (url.pathname === SUBSCRIPTION_RELAY_PATH) {
     return secureResponse(await subscriptionRelay(request, env), { noStore: true });
+  }
+  // 同上：runner 回报扫描进度（只有计数与阶段），凭同一把 runner 凭证。
+  if (url.pathname === SCAN_PROGRESS_PATH) {
+    return secureResponse(await scanProgressReport(request, env), { noStore: true });
   }
   const login = await loginRoute(request, env);
   if (login) return secureResponse(login, { noStore: true });

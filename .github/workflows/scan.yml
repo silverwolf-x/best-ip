@@ -119,9 +119,14 @@ jobs:
           [[ -n "$RELAY_URL" && "$RELAY_URL" == https://* ]]
           [[ -n "$RELAY_TOKEN" && ${#RELAY_TOKEN} -ge 16 ]]
 
+      # 这一步也会把扫描进度（只有计数与阶段）回报给 Worker 的 /api/scan-progress，
+      # 与订阅中继同一个 Worker、同一把 SCAN_RELAY_TOKEN；回报失败不影响扫描。
       - name: Run production scan
         env:
           BEST_IP_MIHOMO_PATH: ${{ github.workspace }}/runtime/mihomo/mihomo
+          # 托管 runner 只有 2~4 核，默认公式 min(16, max(8, CPU)) 落在 8 并发；节点检测几乎全是等网络，
+          # 同一条 25 节点订阅 8→16 并发的墙钟实测从 50.9s/70.9s 降到 30.4s/31.2s（见 backend/app/config.py）。
+          BEST_IP_MAX_PARALLEL_NODES: "16"
           BEST_IP_SUBSCRIPTION_RELAY_URL: ${{ vars.SCAN_RELAY_URL }}
           BEST_IP_SUBSCRIPTION_RELAY_TOKEN: ${{ secrets.SCAN_RELAY_TOKEN }}
           REQUEST_ID: ${{ inputs.request_id }}

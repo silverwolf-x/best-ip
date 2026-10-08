@@ -3,6 +3,7 @@ import { HttpError, json } from "./responses.js";
 import { assertSameOrigin, signScanToken, verifyScanToken } from "./auth.js";
 import { githubJson } from "./github.js";
 import { findArtifact } from "./artifacts.js";
+import { readScanProgress } from "./progress.js";
 
 export async function readJsonBody(request) {
   const contentLength = Number(request.headers.get("Content-Length"));
@@ -205,19 +206,25 @@ export async function scanState(request, env, requestId) {
         jobs_total_count: null,
         jobs_warning: null,
         artifact_ready: false,
+        progress: null,
       },
       200,
       { "Cache-Control": "no-store" },
     );
   }
-  let jobsResult = { available: false, jobs: [], totalCount: null, warning: null };
-  try {
-    jobsResult = await listRunJobs(env, run);
-  } catch (error) {
-    jobsResult.warning = error instanceof HttpError ? error.message : "读取 Actions job 失败";
-  }
-  let artifact = null;
-  if (run.status === "completed" && run.conclusion === "success") artifact = await findArtifact(env, run, requestId);
+  // 三路读数互不依赖，并行取：轮询每一轮都走这里，串行只会把页面上的进度一轮轮拖慢。
+  // job 明细与进度读数都只是「过程中的说明」，各自失败只降级；产物探测失败照旧整轮报错。
+  const succeeded = run.status === "completed" && run.conclusion === "success";
+  const [jobsResult, progress, artifact] = await Promise.all([
+    listRunJobs(env, run).catch((error) => ({
+      available: false,
+      jobs: [],
+      totalCount: null,
+      warning: error instanceof HttpError ? error.message : "读取 Actions job 失败",
+    })),
+    readScanProgress(env, requestId, run),
+    succeeded ? findArtifact(env, run, requestId) : null,
+  ]);
   const status = run.status === "completed" && run.conclusion === "success" && !artifact
     ? "artifact_pending"
     : runStatus(run);
@@ -233,6 +240,7 @@ export async function scanState(request, env, requestId) {
       artifact_ready: Boolean(artifact),
       artifact_id: artifact?.id || null,
       artifact_name: artifact?.name || null,
+      progress,
     },
     200,
     { "Cache-Control": "no-store" },

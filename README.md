@@ -55,7 +55,9 @@ npm run dev:no-reload
 - mixed-port 与 controller 只监听 `127.0.0.1`；所有请求固定 `trust_env=False` 并禁用重定向。IPure 不读取也不保存任何凭据，因此不存在凭据回退或验证会话；宿主侧直连查询是记录在案的例外，必须与节点出口证据一起落盘（见 `docs/CONTRACTS.md`）。
 - 每个真实节点恰好产生一条 `success`、`partial` 或 `failed` 记录。失败记录的 `exit_ip` 必须为 JSON `null`。
 - 节点文件原子写入；只有节点集合、字段、状态、出口 IP、代理证据、文件大小和 SHA-256 全部通过后才生成 manifest。
-- Actions 运行期间前端只显示 Job/Step，不伪造节点 `0/0` 进度；节点统计以终态 artifact 为唯一事实源。
+- 扫描进度画成五段步骤条（提交 → 排队 → 准备环境 → 扫描节点 → 校验结果），配每秒走的用时。扫描节点那一段的「已完成 N / 总数、各几个完整/部分/失败」来自 runner 每 2 秒的实时回报（`POST /api/scan-progress`，只有计数与阶段，存在 Worker 的 `SCAN_PROGRESS` Durable Object 里）；读不到回报时进度条退回不定状态，不伪造数字。完成那一刻面板改用终态 artifact 的计数——表格与导出仍以校验过的 artifact 为唯一事实源。
+- 刷新页面或换标签页后，若最近一次扫描还在排队/执行，页面会自动跟进它的进度（`/api/scans/latest` 的 `active`），跑完自动换上新结果；跟进只读，不能停止（停止需要发起时内存里的 scan token）。
+- 页面轮询首轮 1.5 秒、每次 ×1.5、上限 4 秒；`scan.yml` 把单任务节点并发设为 16（托管 runner 默认公式只给 8）。
 
 ## 部署
 
@@ -86,7 +88,9 @@ $env:SITE_PASSWORD="…"; npm run verify:deploy   # 核对线上内容与当前 
 
 Worker 没有第三方运行时 npm 依赖；密码会话和 GitHub App RS256 签名都使用原生 Web Crypto。`package.json` 与锁文件保留模块声明、语法检查命令和 Wrangler 部署工具。
 
-Worker 使用 Static Assets 托管 `frontend-next/`；当前配置不使用 Cloudflare Pages 或 GitHub Pages。
+Worker 使用 Static Assets 托管 `frontend-next/`；当前配置不使用 Cloudflare Pages 或 GitHub Pages。实时进度用一个 SQLite 后端的 Durable Object（`wrangler.jsonc` 的 `SCAN_PROGRESS` 绑定与 `v1` 迁移），首次发布时由迁移自动创建，Workers 免费计划可用，不需要在控制台事先建资源；绑定缺失时页面只是退回「只显示步骤」。
+
+端到端实测走 `Verify scan flow`（`.github/workflows/verify-scan.yml`，人工派发）：先在本机用 `frontend-next/app/scan-crypto.js` 把订阅地址封成信封（明文不进 Actions 输入），再把 `request_id`、`key_id`、`encrypted_subscription_url` 三项交给该工作流。它用 `SITE_PASSWORD` 登录线上站点、经 Worker 发起真实扫描，直接复用前端的 `scan.js` / `gateway.js` / artifact reader 跟进度与逐字节校验，日志只打印聚合计数与耗时。
 
 ## 平台配置
 

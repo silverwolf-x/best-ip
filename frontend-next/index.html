@@ -51,7 +51,26 @@
           <button id="startScan" type="submit" class="btn btn-primary">开始扫描</button>
           <button id="stopScan" type="button" class="btn btn-ghost" hidden>停止</button>
         </div>
-        <p class="scan-progress" id="scanProgress" role="status" aria-live="polite" hidden></p>
+        <!-- 扫描进度：五段步骤条 + 节点进度条 + 一行说明（app/progress.js 驱动）。默认 hidden，
+             只在发起扫描或跟进「最近一次还在跑的扫描」时出现。状态全部用 data-state 与 <progress>
+             的属性表达，不写 style（CSP 是 style-src 'self'）。 -->
+        <div class="scan-panel" id="scanPanel" hidden>
+          <ol class="scan-steps" aria-label="扫描进度">
+            <li data-step="submit" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">提交</span></li>
+            <li data-step="queue" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">排队</span></li>
+            <li data-step="prepare" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">准备环境</span></li>
+            <li data-step="scan" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">扫描节点</span></li>
+            <li data-step="verify" data-state="todo"><span class="step-dot" aria-hidden="true"></span><span class="step-label">校验结果</span></li>
+          </ol>
+          <div class="scan-meter">
+            <progress id="scanMeter" max="1" value="0" aria-label="已检测的节点"></progress>
+            <span class="scan-elapsed" id="scanElapsed"></span>
+          </div>
+          <p class="scan-progress">
+            <span id="scanProgress" role="status" aria-live="polite"></span>
+            <span class="scan-counts" id="scanCounts" hidden></span>
+          </p>
+        </div>
       </form>
 
       <div class="topbar-controls">

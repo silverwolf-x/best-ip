@@ -159,6 +159,35 @@ def _publish(output: Path, result: bytes, status: bytes) -> None:
             _remove_owned(staging)
 
 
+def _progress_reporter(
+    args: argparse.Namespace, relay_url: str, relay_token: str, factory: Any
+) -> Any:
+    """进度回报与订阅中继同属一个 Worker、同一把 runner 凭证；没配中继（本地）就不回报。"""
+
+    if not relay_url:
+        return None
+    try:
+        from backend.app.scan.reporter import ProgressReporter, progress_url_from_relay
+    except Exception as exc:
+        raise ScanCLIError("environment_not_ready") from exc
+
+    factory = factory or ProgressReporter
+    return factory(
+        progress_url_from_relay(relay_url),
+        relay_token,
+        request_id=args.request_id,
+        run_id=args.run_id,
+        run_attempt=args.run_attempt,
+    )
+
+
+async def _stop_task(task: asyncio.Task[Any] | None) -> None:
+    if task is None or task.done():
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 def _relay_settings() -> tuple[str, str]:
     """订阅中继配置。两半要么都给，要么都不给；只给一半按配置错误处理，
     避免 runner 直连被订阅主机拒绝时静默退化。"""
@@ -176,6 +205,7 @@ async def run(
     app_settings: Any = None,
     manager_factory: Any = None,
     download: Any = None,
+    reporter_factory: Any = None,
 ) -> None:
     _validate_args(args)
     url = _read_subscription_url(args.subscription_file)
@@ -184,21 +214,8 @@ async def run(
         raise ScanCLIError("output_failed")
     try:
         from backend.app.config import settings
-        from backend.app.mihomo import MihomoNotReadyError
-        from backend.app.results.artifact import (
-            build_artifact,
-            credential_values,
-            subscription_url_values,
-        )
-        from backend.app.results.store import ResultStore, ResultStoreError
-        from backend.app.scan.jobs import JobNotReadyError, ScanJobManager
-        from backend.app.subscription import (
-            SubscriptionError,
-            SubscriptionRelay,
-            SubscriptionSource,
-            download_subscription,
-            subscription_failure_reason,
-        )
+        from backend.app.scan.jobs import ScanJobManager
+        from backend.app.subscription import SubscriptionRelay, download_subscription
     except Exception as exc:
         raise ScanCLIError("environment_not_ready") from exc
     app_settings = app_settings or settings
@@ -207,13 +224,65 @@ async def run(
     try:
         relay_url, relay_token = _relay_settings()
         relay = SubscriptionRelay(relay_url, relay_token) if relay_url else None
+        reporter = _progress_reporter(args, relay_url, relay_token, reporter_factory)
     except ValueError as exc:
         raise ScanCLIError("environment_not_ready") from exc
+    if reporter is None:
+        await _run_scan(args, url, output, app_settings, manager_factory, download, relay, None)
+        return
+    # 进度回报是尽力而为：开关连接、发送失败都不影响扫描本身，最后只留一行计数作证据。
+    async with reporter:
+        try:
+            await _run_scan(
+                args, url, output, app_settings, manager_factory, download, relay, reporter
+            )
+        finally:
+            print(
+                f"progress_reports: sent={reporter.sent} failed={reporter.failed}",
+                file=sys.stderr,
+            )
+
+
+async def _run_scan(
+    args: argparse.Namespace,
+    url: str,
+    output: Path,
+    app_settings: Any,
+    manager_factory: Any,
+    download: Any,
+    relay: Any,
+    reporter: Any,
+) -> None:
+    try:
+        from backend.app.mihomo import MihomoNotReadyError
+        from backend.app.results.artifact import (
+            build_artifact,
+            credential_values,
+            subscription_url_values,
+        )
+        from backend.app.results.store import ResultStore, ResultStoreError
+        from backend.app.scan.jobs import JobNotReadyError
+        from backend.app.scan.reporter import job_counts
+        from backend.app.subscription import (
+            SubscriptionError,
+            SubscriptionSource,
+            subscription_failure_reason,
+        )
+    except Exception as exc:
+        raise ScanCLIError("environment_not_ready") from exc
+
     owned = None
     manager = None
     job_id = None
     completed = False
+    final_counts = None
+    first_report: asyncio.Task[Any] | None = None
+    follow_task: asyncio.Task[Any] | None = None
     source = SubscriptionSource()
+    if reporter is not None:
+        # 不等这一条：订阅下载不该排在一次进度上报后面。它和后面的跟报并发也无妨——
+        # Worker 只收「阶段不倒退」的报告。
+        first_report = asyncio.create_task(reporter.report("subscription"))
     try:
         async with asyncio.timeout(args.timeout):
             try:
@@ -269,7 +338,16 @@ async def run(
                 request_id=args.request_id,
             )
             job_id = args.request_id
+            if reporter is not None:
+                follow_task = asyncio.create_task(
+                    reporter.follow(lambda: manager.jobs.get(job_id))
+                )
             job = await manager.wait(job_id)
+            await _stop_task(follow_task)
+            follow_task = None
+            final_counts = job_counts(manager.jobs.get(job_id))
+            if reporter is not None and job.get("status") == "completed":
+                await reporter.report("packaging", final_counts)
             if job.get("cleanup_confirmed") is not True:
                 raise ScanCLIError("cleanup_failed")
             if job.get("status") != "completed":
@@ -309,11 +387,15 @@ async def run(
     except Exception as exc:
         raise ScanCLIError("scan_unavailable") from exc
     finally:
+        await _stop_task(first_report)
+        await _stop_task(follow_task)
         if manager is not None:
             await _confirmed_shutdown(manager, job_id, not completed)
         if owned is not None:
             _remove_owned(owned)
     _publish(output, result, status)
+    if reporter is not None:
+        await reporter.report("done", final_counts)
 
 
 def main(argv: list[str] | None = None) -> int:

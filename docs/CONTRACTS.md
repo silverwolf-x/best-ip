@@ -83,6 +83,18 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   normalized status, run, jobs, jobs availability/count/warning, artifact readiness
   and (once resolved) artifact ID/name. Unresolved run is `dispatching`, run null,
   jobs empty, job total null. Successful run without artifact is `artifact_pending`.
+  `progress` is the runner's latest live reading for this exact run and attempt —
+  `{phase,total,completed,success,partial,failed,updated_at}` with `phase` one of
+  `subscription|scanning|packaging|done` — or null when none was reported (or the
+  progress store is unbound). It carries counts only; the table and every exported
+  number still come exclusively from the verified artifact.
+- GET `/api/scans/latest`: session only, no scan token. Picks the newest completed run
+  (up to five probes back) whose artifact still exists and returns
+  `{request_id,status,run,artifact_ready,artifact_id,artifact_name,artifact_url,scanned_at,active}`;
+  without a readable artifact `status` is `none`, `artifact_expired`, or the newest
+  run's own state. `active` is the newest run while it is still queued/running —
+  `{request_id,status,run,progress}` — so a reloaded page can follow it to completion;
+  otherwise null. It exposes no jobs and grants no cancel right.
 - GET `/api/scans/{request_id}/artifact?run_id={id}&run_attempt={attempt}`:
   `{artifact_id,artifact_name,artifact_url}` only after exact run and artifact checks.
   `artifact_url` must be an `https` URL on `*.blob.core.windows.net`; it is GitHub's
@@ -120,6 +132,19 @@ two-hour token bound to request ID and dispatch time. Mutations are same-origin.
   `invalid_request`, 405 `method_not_allowed`, 413 `response_too_large`, 502
   `upstream_unreachable`, 504 `upstream_timeout`. The Worker never echoes the target
   URL, never logs it, and forwards no inbound headers or cookies.
+
+- POST `/api/scan-progress`: server-to-server progress report from the scan runner,
+  outside the password session like the relay and authenticated by the same
+  `X-Best-IP-Relay-Token` / `SUBSCRIPTION_RELAY_TOKEN` pair. Body (≤ 2048 chars)
+  `{request_id,run_id,run_attempt,phase,total,completed,success,partial,failed}`;
+  every count is an integer 0..100000, `completed ≤ total` and
+  `success+partial+failed = completed`, otherwise 400 `invalid_request`. Accepted reports
+  return 204 and land in the `SCAN_PROGRESS` Durable Object (one instance per request ID,
+  latest report only, purged six hours after the first write); a report for the same run
+  that would move the phase backwards or lower `completed` is ignored. Missing binding is
+  503 `worker_not_configured`. Reports never contain node names, exit IPs or subscription
+  content, and the runner treats every failure as non-fatal (it prints
+  `progress_reports: sent=N failed=M` once at the end).
 
 Run title is `Best IP scan {request_id}`. Identity checks bind title, workflow,
 dispatch event, branch, creation window, run and attempt. Artifact name is
